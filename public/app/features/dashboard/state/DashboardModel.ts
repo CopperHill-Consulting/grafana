@@ -128,6 +128,7 @@ export class DashboardModel {
     meta = meta || {};
 
     meta.canShare = meta.canShare !== false;
+    meta.canExport = meta.canExport !== false;
     meta.canSave = meta.canSave !== false;
     meta.canStar = meta.canStar !== false;
     meta.canEdit = meta.canEdit !== false;

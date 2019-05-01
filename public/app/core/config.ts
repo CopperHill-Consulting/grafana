@@ -12,6 +12,7 @@ export interface BuildInfo {
 }
 
 export class Settings {
+  appName: string;
   datasources: any;
   panels: PanelPlugin[];
   appSubUrl: string;
@@ -43,8 +44,9 @@ export class Settings {
     this.theme = options.bootData.user.lightTheme ? getTheme(GrafanaThemeType.Light) : getTheme(GrafanaThemeType.Dark);
 
     const defaults = {
+      appName: 'CopperHill AIR',
       datasources: {},
-      windowTitlePrefix: 'Grafana - ',
+      windowTitlePrefix: 'CopperHill AIR - ',
       panels: {},
       newPanelTitle: 'Panel Title',
       playlist_timespan: '1m',

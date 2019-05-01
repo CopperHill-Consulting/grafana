@@ -27,6 +27,7 @@
   .navbar-button--star,
   .navbar-button--save,
   .navbar-button--share,
+  .navbar-button--export,
   .navbar-button--settings,
   .navbar-page-btn .fa-caret-down,
   .gf-timepicker-nav {
@@ -45,6 +46,7 @@
 
   .navbar-button--add-panel,
   .navbar-button--star,
+  .navbar-button--export,
   .navbar-button--tv {
     display: none;
   }
@@ -157,7 +159,8 @@
 
 @include media-breakpoint-up(sm) {
   .navbar {
-    padding-left: 60px;
+    padding-left: 30px;
+    margin-left: 0;
   }
 
   .sidemenu-open {

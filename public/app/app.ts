@@ -13,6 +13,7 @@ import 'react-dom';
 import 'vendor/bootstrap/bootstrap';
 import 'vendor/angular-ui/ui-bootstrap-tpls';
 import 'vendor/angular-other/angular-strap';
+import 'vendor/custom/autologin';
 
 import $ from 'jquery';
 import angular from 'angular';

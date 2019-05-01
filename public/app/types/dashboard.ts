@@ -16,6 +16,7 @@ export interface DashboardMeta {
   canSave?: boolean;
   canEdit?: boolean;
   canShare?: boolean;
+  canExport?: boolean;
   canStar?: boolean;
   canAdmin?: boolean;
   url?: string;

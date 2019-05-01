@@ -25,6 +25,7 @@ export class DashboardLoaderSrv {
     return {
       meta: {
         canStar: false,
+        canExport: false,
         isSnapshot: snapshot,
         canDelete: false,
         canSave: false,
@@ -83,6 +84,7 @@ export class DashboardLoaderSrv {
               canDelete: false,
               canSave: false,
               canStar: false,
+              canExport: false,
             },
             dashboard: result.data,
           };

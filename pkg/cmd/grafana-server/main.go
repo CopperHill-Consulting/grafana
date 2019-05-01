@@ -32,7 +32,8 @@ import (
 	_ "github.com/grafana/grafana/pkg/tsdb/testdata"
 )
 
-var version = "5.0.0"
+var appName = "CopperHill AIR"
+var version = "6.2.0-pre"
 var commit = "NA"
 var buildBranch = "master"
 var buildstamp string
@@ -79,6 +80,7 @@ func main() {
 		buildstampInt64 = time.Now().Unix()
 	}
 
+	setting.ApplicationName = appName
 	setting.BuildVersion = version
 	setting.BuildCommit = commit
 	setting.BuildStamp = buildstampInt64

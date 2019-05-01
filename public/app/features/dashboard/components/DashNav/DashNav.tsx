@@ -17,6 +17,8 @@ import { updateLocation } from 'app/core/actions';
 // Types
 import { DashboardModel } from '../../state';
 
+import customConstants from 'customConstants';
+
 export interface Props {
   dashboard: DashboardModel;
   editview: string;
@@ -123,6 +125,42 @@ export class DashNav extends PureComponent<Props> {
     });
   };
 
+  onExport = () => {
+    //set consts
+    const gridLayout = document.querySelector('.react-grid-layout');
+    const castedGridLayout = gridLayout as HTMLElement;
+    const domainParts = window.location.href.split('/');
+    const protocol = domainParts[0];
+    const domain = domainParts[2];
+
+    //login creds
+    const passObj = {
+      user: customConstants.user,
+      pass: customConstants.pass,
+    };
+    const base64Obj = Buffer.from(JSON.stringify(passObj)).toString('base64');
+
+    //open a new window to a lambda func that screenshots the passed URL
+    window.open(
+      customConstants.screenshotURL +
+        `?viewWidth=` +
+        customConstants.defaultScreenshotWidth +
+        `&viewHeight=` +
+        (castedGridLayout.offsetHeight + 150) +
+        `&urlBase64=` +
+        Buffer.from(
+          protocol +
+            `//` +
+            domain +
+            `/login?t=` +
+            base64Obj +
+            `&redirect=` +
+            encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv'),
+          'utf-8'
+        ).toString('base64')
+    );
+  };
+
   renderDashboardTitleSearchButton() {
     const { dashboard } = this.props;
 
@@ -162,7 +200,7 @@ export class DashNav extends PureComponent<Props> {
 
   render() {
     const { dashboard, onAddPanel } = this.props;
-    const { canStar, canSave, canShare, showSettings, isStarred } = dashboard.meta;
+    const { canStar, canSave, canShare, canExport, showSettings, isStarred } = dashboard.meta;
     const { snapshot } = dashboard;
 
     const snapshotUrl = snapshot && snapshot.originalUrl;
@@ -220,6 +258,15 @@ export class DashNav extends PureComponent<Props> {
               classSuffix="share"
               icon="fa fa-share-square-o"
               onClick={this.onOpenShare}
+            />
+          )}
+
+          {canExport && (
+            <DashNavButton
+              tooltip="Export dashboard to PNG"
+              classSuffix="export"
+              icon="fa fa-file-image-o"
+              onClick={this.onExport}
             />
           )}
 

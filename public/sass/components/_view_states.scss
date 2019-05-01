@@ -29,6 +29,10 @@
 .view-mode--tv {
   @extend .view-mode--inactive;
 
+  .navbar {
+    padding-left: $side-menu-width + 20px;
+  }
+
   .submenu-controls {
     display: none;
   }

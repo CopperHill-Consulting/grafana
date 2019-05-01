@@ -73,6 +73,7 @@ async function fetchDashboard(
         dashDTO.meta.canSave = false;
         dashDTO.meta.canShare = false;
         dashDTO.meta.canStar = false;
+        dashDTO.meta.canExport = false;
         return dashDTO;
       }
       case DashboardRouteInfo.Normal: {
@@ -210,6 +211,7 @@ function getNewDashboardModelData(urlFolderId?: string): any {
     meta: {
       canStar: false,
       canShare: false,
+      canExport: false,
       isNew: true,
       folderId: 0,
     },

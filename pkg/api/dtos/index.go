@@ -13,6 +13,7 @@ type IndexViewData struct {
 	Theme                   string
 	NewGrafanaVersionExists bool
 	NewGrafanaVersion       string
+	ApplicationName         string
 	AppName                 string
 	AppNameBodyClass        string
 }
