@@ -81,7 +81,11 @@ export interface PluginExports {
 
   // Panel plugin
   PanelCtrl?: any;
+<<<<<<< HEAD
   reactPanel: ReactPanelPlugin;
+=======
+  reactPanel?: ReactPanelPlugin;
+>>>>>>> cf9cb45fe84cfab8d2580d163c1f653c5d5a96b5
 }
 
 export interface PluginMeta {
@@ -91,6 +95,7 @@ export interface PluginMeta {
   includes: PluginInclude[];
 
   // Datasource-specific
+  builtIn?: boolean;
   metrics?: boolean;
   tables?: boolean;
   logs?: boolean;
