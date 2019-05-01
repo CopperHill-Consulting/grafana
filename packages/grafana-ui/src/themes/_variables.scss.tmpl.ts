@@ -193,7 +193,7 @@ $btn-padding-y-xl: 11px !default;
 $btn-semi-transparent: rgba(0, 0, 0, 0.2) !default;
 
 // sidemenu
-$side-menu-width: 100px; 
+$side-menu-width: 100px;
 
 // dashboard
 $dashboard-padding: $space-md;
