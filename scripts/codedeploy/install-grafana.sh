@@ -1,5 +1,6 @@
 #!/bin/bash
 
+yum -y install git 
 yum -y localinstall /home/ec2-user/grafana-dist.rpm
 
 if [ "$DEPLOYMENT_GROUP_NAME" == "DEV" ]
