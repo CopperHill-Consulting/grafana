@@ -2,6 +2,16 @@
 
 rpm -Uvh --force /home/ec2-user/grafana-dist.rpm
 
+if [ "$DEPLOYMENT_GROUP_NAME" == "DEV" ]
+then
+  aws s3 cp s3://ch-grafana-resources/grafana.ini.dev /etc/grafana/grafana.ini
+fi
+
+if [ "$DEPLOYMENT_GROUP_NAME" == "PROD" ]
+then
+  aws s3 cp s3://ch-grafana-resources/grafana.ini.prod /etc/grafana/grafana.ini
+fi
+
 yum install git -y
 
 /usr/sbin/grafana-cli plugins install briangann-gauge-panel
@@ -24,7 +34,7 @@ cd /var/lib/grafana/plugins
 
 if [! -d grafana-chartjs-panel]
 then
-	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-funnelChart-panel.git
+	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-chartjs-panel.git
 else
 	cd grafana-chartjs-panel
 	git pull
@@ -40,7 +50,7 @@ else
 	cd /var/lib/grafana/plugins
 fi	
 
-if [! -d grafana-funnelChart-panel-master]
+if [! -d grafana-funnelChart-panel]
 then
 	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-funnelChart-panel.git
 else
