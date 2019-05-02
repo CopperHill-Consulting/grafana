@@ -54,7 +54,7 @@ if [! -d grafana-funnelChart-panel]
 then
 	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-funnelChart-panel.git
 else
-	cd grafana-funnelChart-panel-master
+	cd grafana-funnelChart-panel
 	git pull
 	cd /var/lib/grafana/plugins
 fi
