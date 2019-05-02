@@ -32,7 +32,7 @@ yum install git -y
 
 cd /var/lib/grafana/plugins
 
-if [! -d grafana-chartjs-panel]
+if [ ! -d grafana-chartjs-panel ]
 then
 	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-chartjs-panel.git
 else
@@ -41,7 +41,7 @@ else
 	cd /var/lib/grafana/plugins
 fi
 
-if [! -d grafana-customTables-panel]
+if [ ! -d grafana-customTables-panel ]
 then
 	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-customTables-panel.git
 else
@@ -50,7 +50,7 @@ else
 	cd /var/lib/grafana/plugins
 fi	
 
-if [! -d grafana-funnelChart-panel]
+if [ ! -d grafana-funnelChart-panel ]
 then
 	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-funnelChart-panel.git
 else
