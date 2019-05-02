@@ -1,6 +1,6 @@
 #!/bin/bash
 
-rpm -Uvh --force /home/ec2-user/grafana-dist.rpm
+yum -y localinstall /home/ec2-user/grafana-dist.rpm
 
 if [ "$DEPLOYMENT_GROUP_NAME" == "DEV" ]
 then
@@ -11,8 +11,6 @@ if [ "$DEPLOYMENT_GROUP_NAME" == "PROD" ]
 then
   aws s3 cp s3://ch-grafana-resources/grafana.ini.prod /etc/grafana/grafana.ini
 fi
-
-yum install git -y
 
 /usr/sbin/grafana-cli plugins install briangann-gauge-panel
 /usr/sbin/grafana-cli plugins install digrich-bubblechart-panel
