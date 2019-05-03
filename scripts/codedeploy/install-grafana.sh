@@ -57,3 +57,12 @@ else
 	git pull
 	cd /var/lib/grafana/plugins
 fi
+
+if [ ! -d grafana-vuehtml-panel ]
+then
+	git clone -b latest --depth 1 https://github.com/CopperHill-Consulting/grafana-vuehtml-panel.git
+else
+	cd grafana-vuehtml-panel
+	git pull
+	cd /var/lib/grafana/plugins
+fi
