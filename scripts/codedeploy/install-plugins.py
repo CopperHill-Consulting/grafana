@@ -5,7 +5,7 @@ import boto3
 from boto3.dynamodb.conditions import Attr
 
 # set up dynamodb session for getting grafana table
-session = boto3.Session(profile_name='chc')
+session = boto3.Session()
 dynamodb = session.resource('dynamodb', 'us-east-1')
 table = dynamodb.Table('grafana_plugins_config')
 
