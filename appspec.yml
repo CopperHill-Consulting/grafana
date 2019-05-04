@@ -20,6 +20,10 @@ hooks:
   AfterInstall:
     - location: install-grafana.sh
       runas: root
+    - location: install-plugin-deps.sh
+      runas: root
+    - location: install-plugins.py
+      runas: root
   ApplicationStart:
     - location: app-start.sh
       runas: root

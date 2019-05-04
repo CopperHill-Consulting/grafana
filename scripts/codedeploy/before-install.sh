@@ -1,3 +1,3 @@
 #!/bin/bash
 
-cd /home/ec2-user && rm -f grafana-dist.rpm
+rm -f /home/ec2-user/grafana-dist.rpm
