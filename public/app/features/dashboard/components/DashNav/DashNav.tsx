@@ -150,14 +150,17 @@ export class DashNav extends PureComponent<Props> {
         `&urlBase64=` +
         Buffer.from(
           protocol +
-            `//` +
-            domain +
-            `/login?t=` +
-            base64Obj +
-            `&redirect=` +
-            encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv'),
-          'utf-8'
-        ).toString('base64')
+          `//` +
+          domain +
+          `/login?t=` +
+          base64Obj +
+          `&redirect=` +
+          encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv'),
+        'utf-8'
+        ).toString('base64') +
+        `&deleteCookieName=grafana_session` +
+        `&deleteCookieDomain=` + domain +
+        `&deleteCookiePath=/`
     );
   };
 
