@@ -49,7 +49,7 @@ func notAuthorized(c *m.ReqContext) {
 
 	c.SetCookie("redirect_to", url.QueryEscape(setting.AppSubUrl+c.Req.RequestURI), 0, setting.AppSubUrl+"/", nil, false, true)
 
-	c.Redirect(setting.AppSubUrl + "/login")
+	c.Redirect(setting.AppSubUrl + "/login?" + c.Req.URL.RawQuery)
 }
 
 func EnsureEditorOrViewerCanEdit(c *m.ReqContext) {

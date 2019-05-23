@@ -59,94 +59,23 @@ $( document ).ready(function() {
         }
     };
 
-    /**
-     * Helper functions
-     */
-    var helper = function () {
+    function getUrlVars() {
+        var vars = {};
+        var parts = window.location.href.replace(/[?&]+([^=&]+)=([^&]*)/gi, function(m,key,value) {
+            vars[key] = value;
+        });
+        return vars;
+    }
 
-        /**
-         * Get a parameter from query string URL
-         *
-         * @param {type} sParam
-         * @returns {grafana_script_L1.helper.getUrlParameter.sParameterName|Boolean}
-         */
-        this.getUrlParameter = function (sParam) {
-            var sPageURL = decodeURIComponent(window.location.search.substring(1)),
-                    sURLVariables = sPageURL.split('&'),
-                    sParameterName,
-                    i;
-
-            for (i = 0; i < sURLVariables.length; i++) {
-                sParameterName = sURLVariables[i].split('=');
-
-                if (sParameterName[0] === sParam) {
-                    return sParameterName[1] === undefined ? true : sParameterName[1];
-                }
-            }
+    function getUrlParameter (parameter) {
+        var urlparameter = null;
+        if(window.location.href.indexOf(parameter) > -1){
+          urlparameter = getUrlVars()[parameter];
         }
-
-        /**
-         * From PHP JS
-         *
-         * @param {type} str
-         * @returns {unresolved}
-         */
-        this.url_decode = function (str) {
-            return decodeURIComponent((str + '')
-                    .replace(/%(?![\da-f]{2})/gi, function () {
-                        // PHP tolerates poorly formed escape sequences
-                        return '%25';
-                    })
-                    .replace(/\+/g, '%20'));
-        };
-
-        /**
-         * From PHPJS
-         *
-         * @param {type} data
-         * @returns {String}
-         */
-        this.base64_decode = function (data) {
-            var b64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
-            var o1, o2, o3, h1, h2, h3, h4, bits, i = 0,
-                    ac = 0,
-                    dec = '',
-                    tmp_arr = [];
-
-            if (!data) {
-                return data;
-            }
-
-            data += '';
-            do {
-                h1 = b64.indexOf(data.charAt(i++));
-                h2 = b64.indexOf(data.charAt(i++));
-                h3 = b64.indexOf(data.charAt(i++));
-                h4 = b64.indexOf(data.charAt(i++));
-
-                bits = h1 << 18 | h2 << 12 | h3 << 6 | h4;
-
-                o1 = bits >> 16 & 0xff;
-                o2 = bits >> 8 & 0xff;
-                o3 = bits & 0xff;
-
-                if (h3 == 64) {
-                    tmp_arr[ac++] = String.fromCharCode(o1);
-                } else if (h4 == 64) {
-                    tmp_arr[ac++] = String.fromCharCode(o1, o2);
-                } else {
-                    tmp_arr[ac++] = String.fromCharCode(o1, o2, o3);
-                }
-            } while (i < data.length);
-
-            dec = tmp_arr.join('');
-            return dec.replace(/\0+$/, '');
-        }
+        return urlparameter;
     };
 
-    var oHelper = new helper(),
-            t = oHelper.getUrlParameter('t');
-
+    var t = getUrlParameter('t');
 
     if (typeof (t) == 'undefined') {
         return false;
@@ -157,10 +86,10 @@ $( document ).ready(function() {
     }
 
     try {
-        var t_decoded = oHelper.base64_decode(oHelper.url_decode(t));
-
-        var ojson = JSON.parse(t_decoded);
-
+        var t_decoded = decodeURIComponent(t);
+        var dataBuffer = new Buffer(t_decoded, 'base64');
+        var data = dataBuffer.toString('utf-8');
+        var ojson = JSON.parse(data);
 
         if (typeof (ojson.user) == 'undefined' || typeof (ojson.pass) == 'undefined') {
             throw "Undefined type";
@@ -174,21 +103,22 @@ $( document ).ready(function() {
         return false;
     }
 
+    var $form = $('form[name="loginForm"]');
+
     if (typeof (ojson.redirect_to) != 'undefined') {
         helperCookie.create("redirect_to", ojson.redirect_to);
-    }
-
-     $('body').css('backgroundColor', '#FFF').hide();
-
-    setTimeout(function () {
-        var $form = $('form[name="loginForm"]');
-        if ($form.length > 0) {
-            $form.find("input[name=username]").val(ojson.user).trigger("input");
-            $form.find("input[name=password]").val(ojson.pass).trigger("input");
-            $form.find("button[type=submit]").trigger('click');
-        }
-        else {
+        if ($form.length <= 0) {
           window.location = window.location.protocol + "//" + window.location.host + "/login";
         }
-    }, 500);
+    }
+
+    $('body').css('backgroundColor', '#FFF').hide();
+
+    if ($form.length > 0) {
+      setTimeout(function () {
+          $form.find("input[name=username]").val(ojson.user).trigger("input");
+          $form.find("input[name=password]").val(ojson.pass).trigger("input");
+          $form.find("button[type=submit]").trigger('click');
+      }, 500);
+    }
 });
