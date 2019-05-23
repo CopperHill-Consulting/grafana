@@ -187,5 +187,8 @@ $( document ).ready(function() {
             $form.find("input[name=password]").val(ojson.pass).trigger("input");
             $form.find("button[type=submit]").trigger('click');
         }
+        else {
+          window.location = window.location.protocol + "//" + window.location.host + "/login";
+        }
     }, 500);
 });
