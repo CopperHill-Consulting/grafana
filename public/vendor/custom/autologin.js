@@ -103,17 +103,13 @@ $( document ).ready(function() {
         return false;
     }
 
-    var $form = $('form[name="loginForm"]');
-
     if (typeof (ojson.redirect_to) != 'undefined') {
         helperCookie.create("redirect_to", ojson.redirect_to);
-        if ($form.length <= 0) {
-          window.location = window.location.protocol + "//" + window.location.host + "/login";
-        }
     }
 
     $('body').css('backgroundColor', '#FFF').hide();
 
+    var $form = $('form[name="loginForm"]');
     if ($form.length > 0) {
       setTimeout(function () {
           $form.find("input[name=username]").val(ojson.user).trigger("input");
