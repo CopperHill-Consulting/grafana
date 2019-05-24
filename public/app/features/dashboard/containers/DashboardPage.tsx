@@ -89,8 +89,8 @@ export class DashboardPage extends PureComponent<Props, State> {
       fixUrl: true,
     });
 
-    var search = location.search.substring(1);
-    var obj = JSON.parse(
+    const search = location.search.substring(1);
+    const obj = JSON.parse(
       '{"' +
         decodeURI(search)
           .replace(/"/g, '\\"')
@@ -99,9 +99,9 @@ export class DashboardPage extends PureComponent<Props, State> {
         '"}'
     );
     if (obj && obj.redirect) {
-      var redirect = decodeURIComponent(obj.redirect);
+      const redirect = decodeURIComponent(obj.redirect);
       if (redirect && redirect[0] === '/') {
-        window.location = config.appSubUrl + redirect;
+        window.location.href = config.appSubUrl + redirect;
       }
     }
   }
