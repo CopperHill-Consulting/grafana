@@ -109,12 +109,12 @@ $( document ).ready(function() {
 
     $('body').css('backgroundColor', '#FFF').hide();
 
-    var $form = $('form[name="loginForm"]');
-    if ($form.length > 0) {
-      setTimeout(function () {
-          $form.find("input[name=username]").val(ojson.user).trigger("input");
-          $form.find("input[name=password]").val(ojson.pass).trigger("input");
-          $form.find("button[type=submit]").trigger('click');
-      }, 500);
-    }
+    setTimeout(function () {
+      var $form = $('form[name="loginForm"]');
+      if ($form.length > 0) {
+        $form.find("input[name=username]").val(ojson.user).trigger("input");
+        $form.find("input[name=password]").val(ojson.pass).trigger("input");
+        $form.find("button[type=submit]").trigger('click');
+      }
+    }, 1000);
 });
