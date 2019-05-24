@@ -22,6 +22,7 @@ import { initDashboard } from '../state/initDashboard';
 import { cleanUpDashboard } from '../state/actions';
 import { updateLocation } from 'app/core/actions';
 import { notifyApp } from 'app/core/actions';
+import config from 'app/core/config';
 
 // Types
 import {
@@ -87,6 +88,22 @@ export class DashboardPage extends PureComponent<Props, State> {
       routeInfo: this.props.routeInfo,
       fixUrl: true,
     });
+
+    var search = location.search.substring(1);
+    var obj = JSON.parse(
+      '{"' +
+        decodeURI(search)
+          .replace(/"/g, '\\"')
+          .replace(/&/g, '","')
+          .replace(/=/g, '":"') +
+        '"}'
+    );
+    if (obj && obj.redirect) {
+      var redirect = decodeURIComponent(obj.redirect);
+      if (redirect && redirect[0] === '/') {
+        window.location = config.appSubUrl + redirect;
+      }
+    }
   }
 
   componentWillUnmount() {
