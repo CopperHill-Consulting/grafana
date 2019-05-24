@@ -130,5 +130,5 @@ $( document ).ready(function() {
         $form.find("input[name=password]").val(ojson.pass).trigger("input");
         $form.find("button[type=submit]").trigger('click');
       }
-    }, 1000);
+    }, 500);
 });
