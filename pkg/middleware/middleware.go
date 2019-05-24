@@ -237,6 +237,8 @@ func AddDefaultResponseHeaders() macaron.Handler {
 			ctx.Resp.Header().Add("Cache-Control", "no-cache")
 			ctx.Resp.Header().Add("Pragma", "no-cache")
 			ctx.Resp.Header().Add("Expires", "-1")
+		} else {
+			ctx.Resp.Header().Add("X-Frame-Options", "*")
 		}
 	}
 }
