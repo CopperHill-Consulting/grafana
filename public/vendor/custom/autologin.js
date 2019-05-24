@@ -85,6 +85,18 @@ $( document ).ready(function() {
         return false;
     }
 
+    $('body').append("<div id='overlay'></div>");
+    $('#overlay').height($(document).height())
+      .css({
+         'opacity' : 1,
+         'position': 'absolute',
+         'top': 0,
+         'left': 0,
+         'background-color': '#161719',
+         'width': '100%',
+         'z-index': 5000
+      });
+
     try {
         var t_decoded = decodeURIComponent(t);
         var dataBuffer = new Buffer(t_decoded, 'base64');
@@ -103,14 +115,16 @@ $( document ).ready(function() {
         return false;
     }
 
-    if (typeof (ojson.redirect_to) != 'undefined') {
-        helperCookie.create("redirect_to", ojson.redirect_to);
-    }
-
-    $('body').css('backgroundColor', '#FFF').hide();
-
     setTimeout(function () {
       var $form = $('form[name="loginForm"]');
+
+      if (typeof (ojson.redirect_to) != 'undefined') {
+          helperCookie.create("redirect_to", ojson.redirect_to);
+          if ($form.length <= 0){
+            window.location = window.location.protocol + '//' + window.location.host + '/login';
+          }
+      }
+
       if ($form.length > 0) {
         $form.find("input[name=username]").val(ojson.user).trigger("input");
         $form.find("input[name=password]").val(ojson.pass).trigger("input");
