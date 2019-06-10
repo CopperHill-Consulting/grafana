@@ -196,7 +196,7 @@ li.sidemenu-org-switcher {
 }
 
 .sidemenu__logo {
-  display: block;
+  display: none; //block;
   padding: 6px 14px 6px 9px;
   min-height: $navbarHeight;
   position: relative;
