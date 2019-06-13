@@ -1,4 +1,14 @@
 .chc-banner {
+  display: block;
+  position: absolute;
+  width: 100%;
+  height: auto;
+  top: 0;
+  left: 0;
+  background-color: #0b5288;
+}
+
+.banner-link {
   display: flex;
   align-items: stretch;
   position: absolute;
