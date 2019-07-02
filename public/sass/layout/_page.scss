@@ -24,14 +24,14 @@
   background-size: contain;
   background-repeat: no-repeat;
   width: 25%;
-  height: 5vw;
+  height: 4vw;
 }
 
 .text-container {
   width: 50%;
-  height: 5vw;
+  height: 4vw;
   font-family: 'Roboto Condensed', sans-serif;
-  font-size: 2.5vw;
+  font-size: 2vw;
   font-weight: 700;
   color: rgba(255, 255, 255, 0.3);
   overflow: visible;
@@ -43,14 +43,14 @@
   background-image: url('../img/db-right.jpg');
   background-size: contain;
   background-repeat: no-repeat;
-  width: 37%;
-  height: 5vw;
+  width: 33%;
+  height: 4vw;
   position: absolute;
   right: 0;
   top: 0;
   color: #fff;
   font-family: 'Roboto Condensed', sans-serif;
-  font-size: 1vw;
+  font-size: 0.8vw;
   padding: 1% 10% 1% 10%;
 }
 
@@ -59,8 +59,8 @@
   align-items: stretch;
   position: absolute;
   width: 100%;
-  height: calc(100% - 5vw);
-  top: 5vw;
+  height: calc(100% - 4vw);
+  top: 4vw;
   left: 0;
 }
 
