@@ -17,7 +17,7 @@
 
   <link rel="stylesheet" href="public/build/grafana.[[ .Theme ]].<%= webpack.hash %>.css">
 
-  <link href="https://fonts.googleapis.com/css?family=Roboto+Condensed:400,700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css?family=Roboto+Condensed:400,700|Libre+Franklin&display=swap" rel="stylesheet">
 
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black">
@@ -187,17 +187,8 @@
     </div>
   </div>
 
-  <div class="chc-banner">
-    <a class="banner-link" target="_blank" href="http://go.pardot.com/l/480031/2019-06-11/h971cs">
-      <div class="chc-logo">
-      </div>
-      <div class="text-container">
-        Save time. Prevent errors. Take Action.
-      </div>
-      <div class="transparent-logo">
-        Contact us or visit our website to learn more about our CopperHill AIR solutions.
-      </div>
-    </a>
+  <div class="banner">
+    <div id="banner-include"></div>
   </div>
 
   <grafana-app class="grafana-app" ng-cloak>
@@ -259,6 +250,12 @@
       if (preloader.length) {
         preloader[0].className = "preloader preloader--done";
       }
+      $.get("public/views/banner/[[.User.OrgName]].html")
+        .done(function() {
+          $("#banner-include").load("public/views/banner/[[.User.OrgName]].html"); 
+        }).fail(function() {
+          $("#banner-include").load("public/views/banner/CopperHill.html"); 
+        });
     };
   </script>
 
