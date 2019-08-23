@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"github.com/go-xorm/xorm"
 	"github.com/grafana/grafana/pkg/bus"
 	"github.com/grafana/grafana/pkg/log"
 	m "github.com/grafana/grafana/pkg/models"
@@ -21,12 +23,8 @@ import (
 	"github.com/grafana/grafana/pkg/services/sqlstore/migrator"
 	"github.com/grafana/grafana/pkg/services/sqlstore/sqlutil"
 	"github.com/grafana/grafana/pkg/setting"
-	"github.com/grafana/grafana/pkg/util"
-
-	"github.com/go-sql-driver/mysql"
-	"github.com/go-xorm/xorm"
-
 	_ "github.com/grafana/grafana/pkg/tsdb/mssql"
+	"github.com/grafana/grafana/pkg/util"
 	_ "github.com/lib/pq"
 	sqlite3 "github.com/mattn/go-sqlite3"
 )
@@ -41,6 +39,11 @@ var (
 const ContextSessionName = "db-session"
 
 func init() {
+	// This change will make xorm use an empty default schema for postgres and
+	// by that mimic the functionality of how it was functioning before
+	// xorm's changes above.
+	xorm.DefaultPostgresSchema = ""
+
 	registry.Register(&registry.Descriptor{
 		Name:         "SqlStore",
 		Instance:     &SqlStore{},
@@ -90,12 +93,12 @@ func (ss *SqlStore) inTransactionWithRetryCtx(ctx context.Context, callback dbTr
 
 	err = callback(sess)
 
-	// special handling of database locked errors for sqlite, then we can retry 3 times
+	// special handling of database locked errors for sqlite, then we can retry 5 times
 	if sqlError, ok := err.(sqlite3.Error); ok && retry < 5 {
-		if sqlError.Code == sqlite3.ErrLocked {
+		if sqlError.Code == sqlite3.ErrLocked || sqlError.Code == sqlite3.ErrBusy {
 			sess.Rollback()
 			time.Sleep(time.Millisecond * time.Duration(10))
-			sqlog.Info("Database table locked, sleeping then retrying", "retry", retry)
+			sqlog.Info("Database locked, sleeping then retrying", "error", err, "retry", retry)
 			return ss.inTransactionWithRetryCtx(ctx, callback, retry+1)
 		}
 	}

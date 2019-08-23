@@ -94,8 +94,8 @@ class TablePanelCtrl extends MetricsPanelCtrl {
           panel: this.panel,
           range: this.range,
         })
-        .then(annotations => {
-          return { data: annotations };
+        .then((anno: any) => {
+          return { data: anno };
         });
     }
 

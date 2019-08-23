@@ -15,6 +15,7 @@ export interface DashboardDTO {
 export interface DashboardMeta {
   canSave?: boolean;
   canEdit?: boolean;
+  canDelete?: boolean;
   canShare?: boolean;
   canExport?: boolean;
   canStar?: boolean;
@@ -26,7 +27,8 @@ export interface DashboardMeta {
   canMakeEditable?: boolean;
   submenuEnabled?: boolean;
   provisioned?: boolean;
-  focusPanelId?: boolean;
+  provisionedExternalId?: string;
+  focusPanelId?: number;
   isStarred?: boolean;
   showSettings?: boolean;
   expires?: string;

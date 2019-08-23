@@ -1,10 +1,15 @@
 package setting
 
 import (
+	"bufio"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+
+	"gopkg.in/ini.v1"
 
 	. "github.com/smartystreets/goconvey/convey"
 )
@@ -21,6 +26,22 @@ func TestLoadingSettings(t *testing.T) {
 
 			So(AdminUser, ShouldEqual, "admin")
 			So(cfg.RendererCallbackUrl, ShouldEqual, "http://localhost:3000/")
+		})
+
+		Convey("default.ini should have no semi-colon commented entries", func() {
+			file, err := os.Open("../../conf/defaults.ini")
+			if err != nil {
+				t.Errorf("failed to load defaults.ini file: %v", err)
+			}
+			defer file.Close()
+
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				// This only catches values commented out with ";" and will not catch those that are commented out with "#".
+				if strings.HasPrefix(scanner.Text(), ";") {
+					t.Errorf("entries in defaults.ini must not be commented or environment variables will not work: %v", scanner.Text())
+				}
+			}
 		})
 
 		Convey("Should be able to override via environment variables", func() {
@@ -187,6 +208,30 @@ func TestLoadingSettings(t *testing.T) {
 			})
 
 			So(cfg.RendererCallbackUrl, ShouldEqual, "http://myserver/renderer/")
+		})
+	})
+
+	Convey("Test reading string values from .ini file", t, func() {
+
+		iniFile, err := ini.Load(path.Join(HomePath, "pkg/setting/testdata/invalid.ini"))
+		So(err, ShouldBeNil)
+
+		Convey("If key is found - should return value from ini file", func() {
+			value, err := valueAsString(iniFile.Section("server"), "alt_url", "")
+			So(err, ShouldBeNil)
+			So(value, ShouldEqual, "https://grafana.com/")
+		})
+
+		Convey("If key is not found - should return default value", func() {
+			value, err := valueAsString(iniFile.Section("server"), "extra_url", "default_url_val")
+			So(err, ShouldBeNil)
+			So(value, ShouldEqual, "default_url_val")
+		})
+
+		Convey("In case of panic - should return user-friendly error", func() {
+			value, err := valueAsString(iniFile.Section("server"), "root_url", "")
+			So(err.Error(), ShouldEqual, "Invalid value for key 'root_url' in configuration file")
+			So(value, ShouldEqual, "")
 		})
 
 	})

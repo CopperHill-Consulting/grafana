@@ -9,6 +9,7 @@ import { PlaylistSrv } from 'app/features/playlist/playlist_srv';
 
 // Components
 import { DashNavButton } from './DashNavButton';
+import { DashNavTimeControls } from './DashNavTimeControls';
 import { Tooltip } from '@grafana/ui';
 
 // State
@@ -16,10 +17,11 @@ import { updateLocation } from 'app/core/actions';
 
 // Types
 import { DashboardModel } from '../../state';
+import { StoreState } from 'app/types';
 
 import customConstants from 'customConstants';
 
-export interface Props {
+export interface OwnProps {
   dashboard: DashboardModel;
   editview: string;
   isEditing: boolean;
@@ -28,6 +30,12 @@ export interface Props {
   updateLocation: typeof updateLocation;
   onAddPanel: () => void;
 }
+
+export interface StateProps {
+  location: any;
+}
+
+type Props = StateProps & OwnProps;
 
 export class DashNav extends PureComponent<Props> {
   timePickerEl: HTMLElement;
@@ -41,7 +49,6 @@ export class DashNav extends PureComponent<Props> {
 
   componentDidMount() {
     const loader = getAngularLoader();
-
     const template =
       '<gf-time-picker class="gf-timepicker-nav" dashboard="dashboard" ng-if="!dashboard.timepicker.hidden" />';
     const scopeProps = { dashboard: this.props.dashboard };
@@ -55,8 +62,14 @@ export class DashNav extends PureComponent<Props> {
     }
   }
 
-  onOpenSearch = () => {
+  onDahboardNameClick = () => {
     appEvents.emit('show-dash-search');
+  };
+
+  onFolderNameClick = () => {
+    appEvents.emit('show-dash-search', {
+      query: 'folder:current',
+    });
   };
 
   onClose = () => {
@@ -174,13 +187,22 @@ export class DashNav extends PureComponent<Props> {
     return (
       <>
         <div>
-          <a className="navbar-page-btn" onClick={this.onOpenSearch}>
+          <div className="navbar-page-btn">
             {!this.isInFullscreenOrSettings && <i className="gicon gicon-dashboard" />}
-            {haveFolder && <span className="navbar-page-btn--folder">{folderTitle} / </span>}
-            {dashboard.title}
-            <i className="fa fa-caret-down" />
-          </a>
+            {haveFolder && (
+              <>
+                <a className="navbar-page-btn__folder" onClick={this.onFolderNameClick}>
+                  {folderTitle}
+                </a>
+                <i className="fa fa-chevron-right navbar-page-btn__folder-icon" />
+              </>
+            )}
+            <a onClick={this.onDahboardNameClick}>
+              {dashboard.title} <i className="fa fa-caret-down navbar-page-btn__search" />
+            </a>
+          </div>
         </div>
+        {this.isSettings && <span className="navbar-settings-title">&nbsp;/ Settings</span>}
         <div className="navbar__spacer" />
       </>
     );
@@ -188,6 +210,10 @@ export class DashNav extends PureComponent<Props> {
 
   get isInFullscreenOrSettings() {
     return this.props.editview || this.props.isFullscreen;
+  }
+
+  get isSettings() {
+    return this.props.editview;
   }
 
   renderBackButton() {
@@ -203,12 +229,10 @@ export class DashNav extends PureComponent<Props> {
   }
 
   render() {
-    const { dashboard, onAddPanel } = this.props;
+    const { dashboard, onAddPanel, location } = this.props;
     const { canStar, canSave, canShare, canExport, showSettings, isStarred } = dashboard.meta;
     const { snapshot } = dashboard;
-
     const snapshotUrl = snapshot && snapshot.originalUrl;
-
     return (
       <div className="navbar">
         {this.isInFullscreenOrSettings && this.renderBackButton()}
@@ -282,7 +306,7 @@ export class DashNav extends PureComponent<Props> {
             <DashNavButton
               tooltip="Open original dashboard"
               classSuffix="snapshot-origin"
-              icon="fa fa-link"
+              icon="gicon gicon-link"
               href={snapshotUrl}
             />
           )}
@@ -291,7 +315,7 @@ export class DashNav extends PureComponent<Props> {
             <DashNavButton
               tooltip="Dashboard settings"
               classSuffix="settings"
-              icon="fa fa-cog"
+              icon="gicon gicon-cog"
               onClick={this.onOpenSettings}
             />
           )}
@@ -306,13 +330,20 @@ export class DashNav extends PureComponent<Props> {
           />
         </div>
 
-        <div className="gf-timepicker-nav" ref={element => (this.timePickerEl = element)} />
+        {!dashboard.timepicker.hidden && (
+          <div className="navbar-buttons">
+            <div className="gf-timepicker-nav" ref={element => (this.timePickerEl = element)} />
+            <DashNavTimeControls dashboard={dashboard} location={location} updateLocation={updateLocation} />
+          </div>
+        )}
       </div>
     );
   }
 }
 
-const mapStateToProps = () => ({});
+const mapStateToProps = (state: StoreState) => ({
+  location: state.location,
+});
 
 const mapDispatchToProps = {
   updateLocation,
