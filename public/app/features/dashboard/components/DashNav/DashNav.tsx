@@ -159,7 +159,7 @@ export class DashNav extends PureComponent<Props> {
         `?viewWidth=` +
         customConstants.defaultScreenshotWidth +
         `&viewHeight=` +
-        (castedGridLayout.offsetHeight + 150) +
+        (castedGridLayout.offsetHeight + 200) +
         `&urlBase64=` +
         Buffer.from(
           protocol +
@@ -168,7 +168,7 @@ export class DashNav extends PureComponent<Props> {
             `?t=` +
             base64Obj +
             `&redirect=` +
-            encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv'),
+            encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv&__noanimation=true'),
           'utf-8'
         ).toString('base64') +
         `&deleteCookieName=grafana_session` +
