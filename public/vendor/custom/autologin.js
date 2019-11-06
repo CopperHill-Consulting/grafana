@@ -107,8 +107,12 @@ $( document ).ready(function() {
             throw "Undefined type";
         }
 
-        if (ojson.user.lenght == 0 || ojson.pass.lenght == 0) {
+        if (ojson.user.length == 0 || ojson.pass.length == 0) {
             throw "User or password empty";
+        }
+
+        if (typeof (ojson.clearCookie) != 'undefined'){
+            helperCookie.destroy(clearCookie);
         }
 
     } catch (e) {
