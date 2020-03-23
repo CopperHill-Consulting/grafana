@@ -2,7 +2,6 @@ package middleware
 
 import (
 	"fmt"
-	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -219,6 +218,10 @@ func WriteSessionCookie(ctx *m.ReqContext, value string, maxLifetimeDays int) {
 	}
 
 	ctx.Resp.Header().Del("Set-Cookie")
+	ctx.Resp.Header().Add("Set-Cookie", setting.LoginCookieName+"="+url.QueryEscape(value)+"; HttpOnly; Path="+setting.AppSubUrl + "/; Secure; Max-Age="+strconv.Itoa(maxAge)+"; SameSite=None")
+
+	ctx.Logger.Info(setting.LoginCookieName+"="+url.QueryEscape(value)+"; HttpOnly; Path="+setting.AppSubUrl + "/; Secure; Max-Age="+strconv.Itoa(maxAge)+"; SameSite=None")
+	/*
 	cookie := http.Cookie{
 		Name:     setting.LoginCookieName,
 		Value:    url.QueryEscape(value),
@@ -230,6 +233,7 @@ func WriteSessionCookie(ctx *m.ReqContext, value string, maxLifetimeDays int) {
 	}
 
 	http.SetCookie(ctx.Resp, &cookie)
+	*/
 }
 
 func AddDefaultResponseHeaders() macaron.Handler {

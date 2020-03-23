@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/url"
 	"strings"
+	"strconv"
 
 	macaron "gopkg.in/macaron.v1"
 
@@ -47,7 +48,8 @@ func notAuthorized(c *m.ReqContext) {
 		return
 	}
 
-	c.SetCookie("redirect_to", url.QueryEscape(setting.AppSubUrl+c.Req.RequestURI), 0, setting.AppSubUrl+"/", nil, false, true)
+	c.Resp.Header().Add("Set-Cookie", "redirect_to="+url.QueryEscape(setting.AppSubUrl+c.Req.RequestURI)+"; HttpOnly; Path="+setting.AppSubUrl + "/; Secure; Max-Age="+strconv.Itoa(0)+"; SameSite=None")
+	//c.SetCookie("redirect_to", url.QueryEscape(setting.AppSubUrl+c.Req.RequestURI), 0, setting.AppSubUrl+"/", nil, false, true)
 
 	queryString := ""
 	if c.Req.URL.RawQuery != "" {
