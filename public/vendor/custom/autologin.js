@@ -14,7 +14,9 @@ $( document ).ready(function() {
             var cookie = _.map({
                 name: escape(value),
                 expires: expires_at.toGMTString(),
-                path: '/'
+                path: '/',
+                samesite: 'none',
+                secure: true
             }, function (value, key) {
                 return [(key == 'name') ? name : key, value].join('=');
             }).join(';');
