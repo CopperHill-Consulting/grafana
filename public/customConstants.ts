@@ -1,5 +1,5 @@
 export default {
-  screenshotURL: `https://paoz5hyfn6.execute-api.us-east-1.amazonaws.com/prod/`,
+  screenshotURL: `https://r7p8f93omh.execute-api.us-east-1.amazonaws.com/prod/`,
   defaultScreenshotWidth: 1920,
 
   user: `cphair`,
