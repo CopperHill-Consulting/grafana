@@ -17,6 +17,7 @@ import { Alert, Button, CustomScrollbar, HorizontalGroup, Icon, VerticalGroup } 
 // Redux
 import { initDashboard } from '../state/initDashboard';
 import { notifyApp, updateLocation } from 'app/core/actions';
+import config from 'app/core/config';
 // Types
 import {
   AppNotificationSeverity,
@@ -88,6 +89,23 @@ export class DashboardPage extends PureComponent<Props, State> {
       routeInfo: this.props.routeInfo,
       fixUrl: true,
     });
+
+    // tvadakin-chc: needed for autologin
+    const search = location.search.substring(1);
+    const obj = JSON.parse(
+      '{"' +
+        decodeURI(search)
+          .replace(/"/g, '\\"')
+          .replace(/&/g, '","')
+          .replace(/=/g, '":"') +
+        '"}'
+    );
+    if (obj && obj.redirect) {
+      const redirect = decodeURIComponent(obj.redirect);
+      if (redirect && redirect[0] === '/') {
+        window.location.href = config.appSubUrl + redirect;
+      }
+    }
   }
 
   componentWillUnmount() {

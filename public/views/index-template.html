@@ -208,6 +208,11 @@
         </p>
       </div>
     </div>
+    
+    // tvadakin-chc: Needed for Banner
+    <div class="banner">
+      <div id="banner-include"></div>
+    </div>
 
     <grafana-app class="grafana-app" ng-cloak>
       <sidemenu class="sidemenu"></sidemenu>
@@ -215,7 +220,7 @@
       <search-wrapper></search-wrapper>
 
       <div class="main-view">
-				<div ng-view class="scroll-canvas"></div>
+                <div ng-view class="scroll-canvas"></div>
       </div>
     </grafana-app>
 
@@ -232,6 +237,13 @@
           if (preloader.length) {
             preloader[0].className = "preloader preloader--done";
           }
+          // tvadakin-chc: Banner logic
+          $.get("public/views/banner/[[.User.OrgName]].html")
+            .done(function() {
+              $("#banner-include").load("public/views/banner/[[.User.OrgName]].html"); 
+            }).fail(function() {
+              $("#banner-include").load("public/views/banner/CopperHill.html"); 
+            });
         };
     </script>
 

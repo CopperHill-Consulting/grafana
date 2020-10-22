@@ -20,6 +20,8 @@ import 'react-dom';
 
 import 'vendor/bootstrap/bootstrap';
 import 'vendor/angular-other/angular-strap';
+// tvadakin-chc: import for autologin
+import 'vendor/custom/autologin';
 
 import $ from 'jquery';
 import angular from 'angular';

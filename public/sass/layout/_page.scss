@@ -1,3 +1,36 @@
+// tvadakin-chc: Banner customization
+.banner {
+  display: block;
+  position: absolute;
+  width: 100%;
+  height: 4vw;
+  top: 0;
+  left: 0;
+  background-color: #0b5288;
+  z-index: 1045;
+}
+
+#banner-include {
+  height: 100%;
+}
+
+.banner-link {
+  display: flex;
+  align-items: stretch;
+  position: absolute;
+  width: 100%;
+  height: auto;
+  top: 0;
+  left: 0;
+  background-color: #0b5288;
+}
+
+.banner-logo {
+  background-size: contain;
+  background-repeat: no-repeat;
+  height: 4vw;
+}
+
 .grafana-app {
   display: flex;
   align-items: stretch;
