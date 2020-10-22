@@ -64,7 +64,7 @@ export const getLoginStyles = (theme: GrafanaTheme) => {
     `,
     loginLogo: css`
       width: 100%;
-      max-width: 100px;
+      max-width: 150px;
       margin-bottom: 15px;
     `,
     loginLogoWrapper: css`

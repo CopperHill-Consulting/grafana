@@ -8,7 +8,12 @@ export interface BrandComponentProps {
 }
 
 const LoginLogo: FC<BrandComponentProps> = ({ className }) => {
-  return <img className={className} src="public/img/grafana_icon.svg" alt="Grafana" />;
+  // tvadakin-chc: Branding
+  return (
+    <div>
+      <img className={className} src="public/img/ch_icon_white.svg" alt="AIR" />
+    </div>
+  );
 };
 
 const LoginBackground: FC<BrandComponentProps> = ({ className, children }) => {
@@ -22,7 +27,8 @@ const LoginBackground: FC<BrandComponentProps> = ({ className, children }) => {
 };
 
 const MenuLogo: FC<BrandComponentProps> = ({ className }) => {
-  return <img className={className} src="public/img/grafana_icon.svg" alt="Grafana" />;
+  // tvadakin-chc: Branding
+  return <img className={className} src="public/img/ch_fav32.png" alt="CopperHill" />;
 };
 
 const LoginBoxBackground = () => {
@@ -38,15 +44,11 @@ export class Branding {
   static LoginBackground = LoginBackground;
   static MenuLogo = MenuLogo;
   static LoginBoxBackground = LoginBoxBackground;
-  static AppTitle = 'Grafana';
-  static LoginTitle = 'Welcome to Grafana';
+  // tvadakin-chc: Branding
+  static AppTitle = 'CopperHill AIR';
+  static LoginTitle = 'Welcome to AIR';
   static GetLoginSubTitle = () => {
-    const slogans = [
-      "Don't get in the way of the data",
-      'Your single pane of glass',
-      'Built better together',
-      'Democratising data',
-    ];
+    const slogans = ['Save time.', 'Prevent errors.', 'Take Action.'];
     const count = slogans.length;
     return slogans[Math.floor(Math.random() * count)];
   };

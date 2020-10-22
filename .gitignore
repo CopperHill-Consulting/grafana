@@ -14,7 +14,6 @@ awsconfig
 /e2e/tmp
 .yarnrc
 .yarn/
-vendor/
 
 # Enterprise emails
 /emails/templates/enterprise_*

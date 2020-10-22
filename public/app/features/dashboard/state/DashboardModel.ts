@@ -163,6 +163,8 @@ export class DashboardModel {
     meta = meta || {};
 
     meta.canShare = meta.canShare !== false;
+    // tvadakin-chc: canExport needed for screenshot service
+    meta.canExport = meta.canExport !== false;
     meta.canSave = meta.canSave !== false;
     meta.canStar = meta.canStar !== false;
     meta.canEdit = meta.canEdit !== false;

@@ -208,6 +208,10 @@
         </p>
       </div>
     </div>
+    
+    <div class="banner">
+      <div id="banner-include"></div>
+    </div>
 
     <grafana-app class="grafana-app" ng-cloak>
       <sidemenu class="sidemenu"></sidemenu>
@@ -215,7 +219,7 @@
       <search-wrapper></search-wrapper>
 
       <div class="main-view">
-				<div ng-view class="scroll-canvas"></div>
+                <div ng-view class="scroll-canvas"></div>
       </div>
     </grafana-app>
 
@@ -231,6 +235,13 @@
           var preloader = document.getElementsByClassName("preloader");
           if (preloader.length) {
             preloader[0].className = "preloader preloader--done";
+          }
+          // tvadakin-chc: Banner logic
+          var html = $.get("public/views/banner/[[.User.OrgName]].html");
+          if (!html.responseText || html.responseText.includes("If you're seeing this Grafana has failed")) {
+            $("#banner-include").load("public/views/banner/CopperHill.html");
+          } else {
+            $("#banner-include").load("public/views/banner/[[.User.OrgName]].html");
           }
         };
     </script>

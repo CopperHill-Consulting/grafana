@@ -20,6 +20,9 @@ import { CoreEvents, StoreState } from 'app/types';
 import { ShareModal } from 'app/features/dashboard/components/ShareModal';
 import { SaveDashboardModalProxy } from 'app/features/dashboard/components/SaveDashboard/SaveDashboardModalProxy';
 
+// tvadakin-chc: import constants for screenshot api
+import customConstants from 'customConstants';
+
 export interface OwnProps {
   dashboard: DashboardModel;
   isFullscreen: boolean;
@@ -109,6 +112,47 @@ class DashNav extends PureComponent<Props> {
   onPlaylistStop = () => {
     this.playlistSrv.stop();
     this.forceUpdate();
+  };
+
+  // tvadakin-chc: Allow for screenshot service code
+  onExport = () => {
+    //set consts
+    const gridLayout = document.querySelector('.react-grid-layout');
+    const castedGridLayout = gridLayout as HTMLElement;
+    const domainParts = window.location.href.split('/');
+    const protocol = domainParts[0];
+    const domain = domainParts[2];
+
+    //login creds
+    const passObj = {
+      user: customConstants.user,
+      pass: customConstants.pass,
+    };
+    const base64Obj = Buffer.from(JSON.stringify(passObj)).toString('base64');
+
+    //open a new window to a lambda func that screenshots the passed URL
+    window.open(
+      customConstants.screenshotURL +
+        `?viewWidth=` +
+        customConstants.defaultScreenshotWidth +
+        `&viewHeight=` +
+        (castedGridLayout.offsetHeight + 200) +
+        `&urlBase64=` +
+        Buffer.from(
+          protocol +
+            `//` +
+            domain +
+            `?t=` +
+            base64Obj +
+            `&redirect=` +
+            encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv&__noanimation=true'),
+          'utf-8'
+        ).toString('base64') +
+        `&deleteCookieName=grafana_session` +
+        `&deleteCookieDomain=` +
+        domain +
+        `&deleteCookiePath=/`
+    );
   };
 
   onDashboardNameClick = () => {
@@ -217,7 +261,7 @@ class DashNav extends PureComponent<Props> {
 
   renderRightActionsButton() {
     const { dashboard, onAddPanel } = this.props;
-    const { canSave, showSettings } = dashboard.meta;
+    const { canSave, showSettings, canExport } = dashboard.meta;
     const { snapshot } = dashboard;
     const snapshotUrl = snapshot && snapshot.originalUrl;
 
@@ -273,6 +317,19 @@ class DashNav extends PureComponent<Props> {
           icon="cog"
           onClick={this.onOpenSettings}
           key="button-settings"
+        />
+      );
+    }
+
+    // tvadakin-chc: add screenshot service button
+    if (canExport) {
+      buttons.push(
+        <DashNavButton
+          tooltip="Export dashboard to PNG"
+          classSuffix="export"
+          icon="camera"
+          onClick={this.onExport}
+          key="button-export"
         />
       );
     }
