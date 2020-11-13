@@ -1,3 +1,4 @@
+// Useless comment
 $( document ).ready(function() {
 
     /**
