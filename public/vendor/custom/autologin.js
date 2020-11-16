@@ -1,3 +1,4 @@
+// Useless comment //
 $( document ).ready(function() {
 
     /**
@@ -9,18 +10,20 @@ $( document ).ready(function() {
         create: function (name, value, time) {
             var today = new Date(),
                     offset = (typeof time == 'undefined') ? (1000 * 60 * 60 * 24) : (time * 1000),
-                    expires_at = new Date(today.getTime() + offset);
+                    expiresAt = new Date(today.getTime() + offset);
 
-            var cookie = _.map({
-                name: escape(value),
-                expires: expires_at.toGMTString(),
-                path: '/',
-                samesite: 'none',
-                secure: true
-            }, function (value, key) {
-                return [(key == 'name') ? name : key, value].join('=');
-            }).join(';');
-
+            var cookieValues = {
+              name: encodeURIComponent(name),
+              value: encodeURIComponent([value].toString()),
+              expires: expiresAt.toGMTString()
+            };
+            var cookie = '@name=@value;expires=@expires;path=/;samesite=none;secure'.replace(
+              /@(\w+)/g,
+              function(m, key) {
+                return cookieValues[key];
+              }
+            );
+            console.log('helperCookie.create()', {name:name, value:value, time:time, cookie:cookie});
             document.cookie = cookie;
             return this;
         }
