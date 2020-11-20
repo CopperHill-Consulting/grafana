@@ -1,0 +1,82 @@
+<style>body { background-color: #000; }</style>
+<script>
+  (function() {
+    var redirectTo;
+
+    function main() {
+      var qs = getUrlParams();
+      if (qs.t) {
+        var tData = JSON.parse(atob(qs.t));
+        redirectTo = tData && tData.redirect;
+        postJSON(
+          '/login',
+          { user: tData.user, password: tData.pass },
+          function(responseText, xhr) {
+            try {
+              var jsonResponse = JSON.parse(responseText);
+              if (jsonResponse.error) {
+                throw new Error(jsonResponse.error);
+              }
+              setCookie('redirect_to', null, -99999);
+              location.href = decodeURIComponent(tData.redirect || '/');
+            }
+            catch (e) {
+              console.error(e);
+              logout();
+            }
+          }
+        );
+      }
+      else {
+        logout();
+      }
+    }
+
+    function logout() {
+      setCookie('redirect_to', redirectTo || '/');
+      location.href = '/logout';
+    }
+
+    function getUrlParams() {
+      var params = {};
+      location.search.replace(/[\?&]([^=&]+)=([^&]*)/, function(m, key, value) {
+        params[decodeURIComponent(key)] = decodeURIComponent(value);
+      });
+      return params;
+    }
+
+    function setCookie(name, value, time) {
+      var today = new Date(),
+          offset = (typeof time == 'undefined') ? (1000 * 60 * 60 * 24) : (time * 1000),
+          expiresAt = new Date(today.getTime() + offset);
+
+      var cookieValues = {
+        name: encodeURIComponent(name),
+        value: encodeURIComponent([value].toString()),
+        expires: expiresAt.toGMTString()
+      };
+      var cookie = '@name=@value;expires=@expires;path=/;samesite=none;secure'.replace(
+        /@(\w+)/g,
+        function(m, key) {
+          return cookieValues[key];
+        }
+      );
+      document.cookie = cookie;
+    }
+
+    function postJSON(url, data, callback) {
+      var xhr = new XMLHttpRequest();
+      xhr.withCredentials = true;
+      xhr.addEventListener("readystatechange", function() {
+        if(xhr.readyState === 4) {
+          callback(this.responseText, xhr);
+        }
+      });
+      xhr.open("POST", url);
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.send(JSON.stringify(data));
+    }
+
+    main();
+  })();
+</script>
