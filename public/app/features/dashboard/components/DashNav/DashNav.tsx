@@ -142,7 +142,7 @@ class DashNav extends PureComponent<Props> {
           protocol +
             `//` +
             domain +
-            `?t=` +
+            `/login?t=` +
             base64Obj +
             `&redirect=` +
             encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv&__noanimation=true'),
