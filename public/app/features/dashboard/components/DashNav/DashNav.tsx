@@ -119,16 +119,14 @@ class DashNav extends PureComponent<Props> {
     //set consts
     const gridLayout = document.querySelector('.react-grid-layout');
     const castedGridLayout = gridLayout as HTMLElement;
-    const domainParts = window.location.href.split('/');
-    const protocol = domainParts[0];
-    const domain = domainParts[2];
+    const domain = window.location.host;
 
-    //login creds
-    const passObj = {
-      user: customConstants.user,
-      pass: customConstants.pass,
-    };
-    const base64Obj = Buffer.from(JSON.stringify(passObj)).toString('base64');
+    const tData = btoa(
+      JSON.stringify(
+        Object.assign(atob(customConstants.tData), { r: `${window.location.href}&kiosk=tv&__noanimation=true` })
+      )
+    );
+    const urlBase64 = `${window.location.origin}/public/views/auto-login.html?t=${tData}`;
 
     //open a new window to a lambda func that screenshots the passed URL
     window.open(
@@ -138,16 +136,7 @@ class DashNav extends PureComponent<Props> {
         `&viewHeight=` +
         (castedGridLayout.offsetHeight + 200) +
         `&urlBase64=` +
-        Buffer.from(
-          protocol +
-            `//` +
-            domain +
-            `/login?t=` +
-            base64Obj +
-            `&redirect=` +
-            encodeURIComponent(window.location.pathname + window.location.search + '&kiosk=tv&__noanimation=true'),
-          'utf-8'
-        ).toString('base64') +
+        btoa(urlBase64) +
         `&deleteCookieName=grafana_session` +
         `&deleteCookieDomain=` +
         domain +

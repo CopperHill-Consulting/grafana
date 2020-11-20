@@ -7,10 +7,10 @@
       var qs = getUrlParams();
       if (qs.t) {
         var tData = JSON.parse(atob(qs.t));
-        redirectTo = tData && tData.redirect;
+        redirectTo = tData && (tData.redirect || tData.r);
         postJSON(
           '/login',
-          { user: tData.user, password: tData.pass },
+          { user: tData.user || tData.u, password: tData.pass || tData.p },
           function(responseText, xhr) {
             try {
               var jsonResponse = JSON.parse(responseText);
@@ -18,7 +18,7 @@
                 throw new Error(jsonResponse.error);
               }
               setCookie('redirect_to', null, -99999);
-              location.href = decodeURIComponent(tData.redirect || '/');
+              location.href = redirectTo || '/';
             }
             catch (e) {
               console.error(e);
