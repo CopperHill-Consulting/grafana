@@ -123,7 +123,9 @@ class DashNav extends PureComponent<Props> {
 
     const tData = btoa(
       JSON.stringify(
-        Object.assign(atob(customConstants.tData), { r: `${window.location.href}&kiosk=tv&__noanimation=true` })
+        Object.assign(JSON.parse(atob(customConstants.tData)), {
+          r: `${window.location.pathname}${window.location.search}&kiosk=tv&__noanimation=true`,
+        })
       )
     );
     const urlBase64 = `${window.location.origin}/public/views/auto-login.html?t=${tData}`;
