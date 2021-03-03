@@ -237,12 +237,16 @@
             preloader[0].className = "preloader preloader--done";
           }
           // tvadakin-chc: Banner logic
-          var html = $.get("public/views/banner/[[.User.OrgName]].html");
-          if (!html.responseText || html.responseText.includes("If you're seeing this Grafana has failed")) {
-            $("#banner-include").load("public/views/banner/CopperHill.html");
-          } else {
-            $("#banner-include").load("public/views/banner/[[.User.OrgName]].html");
+          var user = grafanaBootData.user;
+          var proposedBanner = "public/views/banner/" + user.orgName + ".html";
+          var banner = "public/views/banner/CopperHill.html";
+          if (user.isSignedIn) {
+            var html = $.get(proposedBanner);
+            if (html.responseText && !html.responseText.includes("If you're seeing this Grafana has failed")) {
+              banner = proposedBanner;
+            }
           }
+          $("#banner-include").load(banner);
         };
     </script>
 
