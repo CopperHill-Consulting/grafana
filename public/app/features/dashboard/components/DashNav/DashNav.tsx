@@ -1,3 +1,4 @@
+import customConstants from 'customConstants';
 import React, { FC, ReactNode } from 'react';
 import { connect, ConnectedProps } from 'react-redux';
 import { useLocation } from 'react-router-dom';
@@ -20,6 +21,8 @@ import { DashboardModel } from '../../state';
 
 import { DashNavButton } from './DashNavButton';
 import { DashNavTimeControls } from './DashNavTimeControls';
+
+// CHC: import constants for screenshot API
 
 const mapDispatchToProps = {
   setStarred,
@@ -94,6 +97,38 @@ export const DashNav = React.memo<Props>((props) => {
   const onPlaylistStop = () => {
     playlistSrv.stop();
     forceUpdate();
+  };
+
+  // CHC: Allow for screenshot service code
+  const onExport = () => {
+    //set consts
+    const gridLayout = document.querySelector('.react-grid-layout');
+    const castedGridLayout = gridLayout as HTMLElement;
+    const domain = window.location.host;
+
+    const tData = btoa(
+      JSON.stringify(
+        Object.assign(JSON.parse(atob(customConstants.tData)), {
+          r: `${window.location.pathname}${window.location.search}&kiosk=tv&__noanimation=true`,
+        })
+      )
+    );
+    const urlBase64 = `${window.location.origin}/public/views/auto-login.html?t=${tData}`;
+
+    //open a new window to a lambda func that screenshots the passed URL
+    window.open(
+      customConstants.screenshotURL +
+        `?viewWidth=` +
+        customConstants.defaultScreenshotWidth +
+        `&viewHeight=` +
+        (castedGridLayout.offsetHeight + 200) +
+        `&urlBase64=` +
+        btoa(urlBase64) +
+        `&deleteCookieName=grafana_session` +
+        `&deleteCookieDomain=` +
+        domain +
+        `&deleteCookiePath=/`
+    );
   };
 
   const addCustomContent = (actions: DashNavButtonModel[], buttons: ReactNode[]) => {
@@ -200,7 +235,7 @@ export const DashNav = React.memo<Props>((props) => {
 
   const renderRightActionsButton = () => {
     const { dashboard, onAddPanel, isFullscreen, kioskMode } = props;
-    const { canSave, canEdit, showSettings } = dashboard.meta;
+    const { canSave, canEdit, showSettings, canExport } = dashboard.meta;
     const { snapshot } = dashboard;
     const snapshotUrl = snapshot && snapshot.originalUrl;
     const buttons: ReactNode[] = [];
@@ -253,6 +288,13 @@ export const DashNav = React.memo<Props>((props) => {
     if (showSettings) {
       buttons.push(
         <ToolbarButton tooltip="Dashboard settings" icon="cog" onClick={onOpenSettings} key="button-settings" />
+      );
+    }
+
+    // tvadakin-chc: add screenshot service button
+    if (canExport) {
+      buttons.push(
+        <ToolbarButton tooltip="Export dashboard to PNG" icon="camera" onClick={() => onExport()} key="button-export" />
       );
     }
 

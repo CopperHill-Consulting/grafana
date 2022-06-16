@@ -13,6 +13,9 @@ import _ from 'lodash'; // eslint-disable-line lodash/import-scope
 import React from 'react';
 import ReactDOM from 'react-dom';
 
+// CHC: import for autologin
+import 'vendor/custom/autologin';
+
 import {
   locationUtil,
   monacoLanguageRegistry,

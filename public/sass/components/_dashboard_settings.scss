@@ -1,8 +1,8 @@
 .dashboard-settings {
   position: fixed;
-  height: 100%;
+  height: calc(100% - 3vw); /* CHC Update */
   width: 100%;
-  top: 0;
+  top: 3vw; /* CHC Update */
   left: 0;
   right: 0;
   bottom: 0;

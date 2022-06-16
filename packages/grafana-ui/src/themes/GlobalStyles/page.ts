@@ -7,14 +7,56 @@ export function getPageStyles(theme: GrafanaTheme2) {
     theme.breakpoints.values.xxl + theme.spacing.gridSize * 2 + theme.components.sidemenu.width;
 
   return css`
+    // CHC: Banner customization
+    .banner {
+      display: block;
+      position: absolute;
+      width: 100%;
+      height: 3vw;
+      top: 0;
+      left: 0;
+      background-color: #0b5288;
+      z-index: 1045;
+    }
+
+    #banner-include {
+      height: 100%;
+    }
+
+    .banner-link {
+      display: flex;
+      align-items: stretch;
+      position: absolute;
+      width: 100%;
+      height: auto;
+      top: 0;
+      left: 0;
+      background-color: #0b5288;
+    }
+
+    .banner-logo {
+      background-size: contain;
+      background-repeat: no-repeat;
+      height: 3vw;
+    }
+
     .grafana-app {
       display: flex;
       align-items: stretch;
       position: absolute;
       width: 100%;
-      height: 100%;
-      top: 0;
+      height: calc(100% - 3vw);
+      top: 3vw;
       left: 0;
+    }
+
+    search-wrapper > * {
+      top: 3vw !important;
+    }
+
+    .dashboard-container > .dashboard-scroll + div {
+      height: calc(100% - 3vw);
+      top: 3vw;
     }
 
     .main-view {

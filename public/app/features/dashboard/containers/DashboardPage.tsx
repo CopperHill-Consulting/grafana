@@ -9,6 +9,7 @@ import { locationService } from '@grafana/runtime';
 import { CustomScrollbar, stylesFactory, Themeable2, withTheme2 } from '@grafana/ui';
 import { notifyApp } from 'app/core/actions';
 import { Branding } from 'app/core/components/Branding/Branding';
+import config from 'app/core/config';
 import { createErrorNotification } from 'app/core/copy/appNotification';
 import { getKioskMode } from 'app/core/navigation/kiosk';
 import { GrafanaRouteComponentProps } from 'app/core/navigation/types';
@@ -100,6 +101,20 @@ export class UnthemedDashboardPage extends PureComponent<Props, State> {
   componentDidMount() {
     this.initDashboard();
     this.forceRouteReloadCounter = (this.props.history.location.state as any)?.routeReloadCounter || 0;
+
+    // CHC: needed for autologin
+    const search = location.search.substring(1);
+    if (search && search.length > 0) {
+      const obj = JSON.parse(
+        '{"' + decodeURI(search).replace(/"/g, '\\"').replace(/&/g, '","').replace(/=/g, '":"') + '"}'
+      );
+      if (obj && obj.redirect) {
+        const redirect = decodeURIComponent(obj.redirect);
+        if (redirect && redirect[0] === '/') {
+          window.location.href = config.appSubUrl + redirect;
+        }
+      }
+    }
   }
 
   componentWillUnmount() {

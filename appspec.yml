@@ -1,0 +1,29 @@
+version: 0.0
+os: linux
+files:
+    - source: grafana-dist.rpm
+      destination: /home/ec2-user
+permissions:
+    - object: /home/ec2-user/grafana-dist.rpm
+      owner: ec2-user
+      group: ec2-user
+      mode: 755
+      type:
+        - file
+hooks:
+  ApplicationStop:
+    - location: app-stop.sh
+      runas: root
+  BeforeInstall:
+    - location: before-install.sh
+      runas: root
+  AfterInstall:
+    - location: install-grafana.sh
+      runas: root
+    - location: install-plugin-deps.sh
+      runas: root
+    - location: install-plugins.py
+      runas: root
+  ApplicationStart:
+    - location: app-start.sh
+      runas: root

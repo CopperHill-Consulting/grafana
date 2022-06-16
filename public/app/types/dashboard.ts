@@ -15,6 +15,8 @@ export interface DashboardMeta {
   canEdit?: boolean;
   canDelete?: boolean;
   canShare?: boolean;
+  // CHC: canExport needed for screenshot service
+  canExport?: boolean;
   canStar?: boolean;
   canAdmin?: boolean;
   url?: string;

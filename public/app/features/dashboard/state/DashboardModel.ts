@@ -201,6 +201,8 @@ export class DashboardModel implements TimeModel {
     meta = meta || {};
 
     meta.canShare = meta.canShare !== false;
+    // CHC: canExport needed for screenshot service
+    meta.canExport = meta.canExport !== false;
     meta.canSave = meta.canSave !== false;
     meta.canStar = meta.canStar !== false;
     meta.canEdit = meta.canEdit !== false;
