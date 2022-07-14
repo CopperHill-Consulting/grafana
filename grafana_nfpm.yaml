@@ -1,5 +1,5 @@
 name: "grafana"
-arch: "ppc64le"
+arch: "linux-amd64"
 platform: "linux"
 version: "${GRAFANA_VERSION}"
 section: "default"
@@ -19,9 +19,9 @@ vendor: "Grafana"
 homepage: "https://grafana.com"
 license: "Apache 2"
 contents:
-        - src: ./bin/linux-ppc64le/grafana-server
+        - src: ./bin/linux-amd64/grafana-server
           dst: /usr/sbin/grafana-server
-        - src: ./bin/linux-ppc64le/grafana-cli
+        - src: ./bin/linux-amd64/grafana-cli
           dst: /usr/sbin/grafana-cli
         - src: ./packaging/rpm/init.d/grafana-server
           dst: /etc/init.d/grafana-server
