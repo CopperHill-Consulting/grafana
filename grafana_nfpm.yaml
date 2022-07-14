@@ -34,9 +34,8 @@ contents:
           dst: /usr/share/grafana/public
         - src: ./conf/
           dst: /usr/share/grafana/conf
-
-empty_folders:
-  - /etc/grafana
+        - dst: /etc/grafana
+          type: dir
 
 scripts:
     postinstall: ./packaging/rpm/control/postinst
