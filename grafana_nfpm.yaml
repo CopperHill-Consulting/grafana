@@ -1,5 +1,5 @@
 name: "grafana"
-arch: "rpm_arch"
+arch: "amd64"
 platform: "linux"
 version: "${GRAFANA_VERSION}"
 section: "default"
