@@ -53,14 +53,18 @@ ENV PATH="/usr/share/grafana/bin:$PATH" \
   GF_PATHS_HOME="/usr/share/grafana" \
   GF_PATHS_LOGS="/var/log/grafana" \
   GF_PATHS_PLUGINS="/var/lib/grafana/plugins" \
-  GF_PATHS_PROVISIONING="/etc/grafana/provisioning"
+  GF_PATHS_PROVISIONING="/etc/grafana/provisioning" \
+  PYTHONUNBUFFERED=1
 
 WORKDIR $GF_PATHS_HOME
 
-RUN apk add --no-cache ca-certificates bash tzdata musl-utils
+RUN apk add --no-cache ca-certificates bash tzdata musl-utils git
 RUN apk add --no-cache openssl ncurses-libs ncurses-terminfo-base --repository=http://dl-cdn.alpinelinux.org/alpine/edge/main
 RUN apk upgrade ncurses-libs ncurses-terminfo-base --repository=http://dl-cdn.alpinelinux.org/alpine/edge/main
 RUN apk info -vv | sort
+RUN apk add --update --no-cache python3 && ln -sf python3 /usr/bin/python
+RUN python3 -m ensurepip
+RUN pip3 install --no-cache --upgrade pip setuptools
 
 COPY conf ./conf
 
@@ -87,6 +91,11 @@ RUN export GF_GID_NAME=$(getent group $GF_GID | cut -d':' -f1) && \
 COPY --from=go-builder /grafana/bin/*/grafana-server /grafana/bin/*/grafana-cli ./bin/
 COPY --from=js-builder /grafana/public ./public
 COPY --from=js-builder /grafana/tools ./tools
+COPY --chown=$GF_UID:$GF_GID grafana.ini /etc/grafana/
+WORKDIR /grafana
+COPY plugins.json /grafana
+COPY install-plugins-docker.py /grafana
+RUN python3 /grafana/install-plugins-docker.py
 
 EXPOSE 3000
 
