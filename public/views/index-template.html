@@ -206,10 +206,6 @@
         </p>
       </div>
 
-      <div class="banner">
-        <div id="banner-include"></div>
-      </div>
-
       <script nonce="[[.Nonce]]">
         // Check to see if browser is not supported by Grafana
         // Source file in app/core/utils/browser.ts & tests make edits there and copy compiled typescript here
@@ -268,7 +264,10 @@
         if (preloader.length) {
           preloader[0].className = "preloader preloader--done";
         }
-        // CHC: Banner logic
+      }
+
+      // CHC: Banner logic
+      window.__chc_load_banner = function() {
         var user = grafanaBootData.user;
         var proposedBanner = "public/views/banner/" + user.orgName + ".html";
         var banner = "public/views/banner/CopperHill.html";
@@ -278,11 +277,22 @@
             banner = proposedBanner;
           }
         }
-        $("#banner-include").load(banner);
+        
+        // Create a div within a div in the DOM for the banner.
+        const elGrafanaApp = document.querySelector('.grafana-app');
+        const elBanner = Object.assign(document.createElement('div'), {className: 'banner'});
+        const elBannerInclude = Object.assign(document.createElement('div'), {id: 'banner-include'});
+        elBanner.appendChild(elBannerInclude);
+        elGrafanaApp.parentNode.insertBefore(elBanner, elGrafanaApp);
+
+        // Load the banner contents into the corresponding element.
+        $(elBannerInclude).load(banner);
+        console.log({user, proposedBanner, banner});
       }
 
       // In case the js files fails to load the code below will show an info message.
       window.onload = function() {
+        window.__chc_load_banner();
         if (window.__grafana_app_bundle_loaded) {
           return;
         }
