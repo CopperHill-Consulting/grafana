@@ -205,6 +205,11 @@
           >.
         </p>
       </div>
+
+      <div class="banner">
+        <div id="banner-include"></div>
+      </div>
+
       <script nonce="[[.Nonce]]">
         // Check to see if browser is not supported by Grafana
         // Source file in app/core/utils/browser.ts & tests make edits there and copy compiled typescript here
@@ -263,6 +268,17 @@
         if (preloader.length) {
           preloader[0].className = "preloader preloader--done";
         }
+        // CHC: Banner logic
+        var user = grafanaBootData.user;
+        var proposedBanner = "public/views/banner/" + user.orgName + ".html";
+        var banner = "public/views/banner/CopperHill.html";
+        if (user.isSignedIn) {
+          var html = $.get(proposedBanner);
+          if (html.responseText && !html.responseText.includes("If you're seeing this Grafana has failed")) {
+            banner = proposedBanner;
+          }
+        }
+        $("#banner-include").load(banner);
       }
 
       // In case the js files fails to load the code below will show an info message.

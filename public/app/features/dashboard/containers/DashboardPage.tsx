@@ -109,6 +109,20 @@ export class UnthemedDashboardPage extends PureComponent<Props, State> {
   componentDidMount() {
     this.initDashboard();
     this.forceRouteReloadCounter = (this.props.history.location.state as any)?.routeReloadCounter || 0;
+
+    // CHC: needed for autologin
+    const search = location.search.substring(1);
+    if (search && search.length > 0) {
+      const obj = JSON.parse(
+        '{"' + decodeURI(search).replace(/"/g, '\\"').replace(/&/g, '","').replace(/=/g, '":"') + '"}'
+      );
+      if (obj && obj.redirect) {
+        const redirect = decodeURIComponent(obj.redirect);
+        if (redirect && redirect[0] === '/') {
+          window.location.href = config.appSubUrl + redirect;
+        }
+      }
+    }
   }
 
   componentWillUnmount() {

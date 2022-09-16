@@ -35,27 +35,29 @@ export let getFooterLinks = (): FooterLink[] => {
 };
 
 export let getVersionLinks = (): FooterLink[] => {
-  const { buildInfo, licenseInfo } = config;
+  const { buildInfo /*licenseInfo*/ } = config;
   const links: FooterLink[] = [];
-  const stateInfo = licenseInfo.stateInfo ? ` (${licenseInfo.stateInfo})` : '';
+  // const stateInfo = licenseInfo.stateInfo ? ` (${licenseInfo.stateInfo})` : '';
 
-  links.push({ text: `${buildInfo.edition}${stateInfo}`, url: licenseInfo.licenseUrl });
+  // CHC: Branding
+  // links.push({ text: `${buildInfo.edition}${stateInfo}`, url: licenseInfo.licenseUrl });
 
   if (buildInfo.hideVersion) {
     return links;
   }
 
-  links.push({ text: `v${buildInfo.version} (${buildInfo.commit})` });
+  // CHC: Branding
+  links.push({ text: `v${buildInfo.version}` });
 
-  if (buildInfo.hasUpdate) {
-    links.push({
-      id: 'updateVersion',
-      text: `New version available!`,
-      icon: 'download-alt',
-      url: 'https://grafana.com/grafana/download?utm_source=grafana_footer',
-      target: '_blank',
-    });
-  }
+  // if (buildInfo.hasUpdate) {
+  //   links.push({
+  //     id: 'updateVersion',
+  //     text: `New version available!`,
+  //     icon: 'download-alt',
+  //     url: 'https://grafana.com/grafana/download?utm_source=grafana_footer',
+  //     target: '_blank',
+  //   });
+  // }
 
   return links;
 };
@@ -69,7 +71,8 @@ export function setVersionLinkFn(fn: typeof getFooterLinks) {
 }
 
 export const Footer: FC = React.memo(() => {
-  const links = getFooterLinks().concat(getVersionLinks());
+  // CHC: Branding
+  const links = getVersionLinks();
 
   return (
     <footer className="footer">

@@ -191,7 +191,8 @@ describe('DashboardPage', () => {
     });
 
     it('Should update title', () => {
-      expect(document.title).toBe('My dashboard - Dashboards - Grafana');
+      // CHC: Branding
+      expect(document.title).toBe('My dashboard - CopperHill AIR');
     });
   });
 
