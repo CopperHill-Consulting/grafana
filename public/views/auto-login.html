@@ -5,6 +5,27 @@
 
     function main() {
       var qs = getUrlParams();
+
+      // If URL params other than "t" are specified make sure to keep track of
+      // them to add them to redirectTo.  All instances of a dollar sign
+      // followed by another character will be replaced with just the character
+      // that followed (eg. "$$money" will become "$money" while "$t" will
+      // become "t").  The dollar sign notation makes it possible to pass a "t"
+      // param to the redirected page.
+      let additionalQS = "";
+      const qsKeys = Object.keys(qs);
+      if (qsKeys.length > (qsKeys.includes('t') ? 1 : 0)) {
+        for (const qsKey of qsKeys) {
+          // Keep track of all aditional params that are not the "t" param.
+          if (qsKey !== 't') {
+            additionalQS += (additionalQS ? '&' : '?')
+              + encodeURIComponent(qsKey.replace(/\$(.)/g, '$1'))
+              + `=${encodeURIComponent(qs[qsKey])}`;
+          }
+        }
+      }
+      additionalQS = additionalQS.replace(/%20/g, '+');
+
       if (qs.t) {
         var tData = JSON.parse(atob(qs.t));
         redirectTo = tData && (tData.redirect || tData.r);
@@ -18,28 +39,71 @@
                 throw new Error(jsonResponse.error);
               }
               setCookie('redirect_to', null, -99999);
-              location.href = redirectTo || '/';
+              location.href = dedupeUrlParams(
+                ((redirectTo || '/') + additionalQS).replace(/\?/g, '&').replace('&', '?')
+              );
             }
             catch (e) {
               console.error(e);
-              logout();
+              logout(additionalQS);
             }
           }
         );
       }
       else {
-        logout();
+        logout(additionalQS);
       }
     }
 
-    function logout() {
-      setCookie('redirect_to', redirectTo || '/');
+    /**
+     * @param {string} additionalQS
+     */
+    function logout(additionalQS) {
+      setCookie(
+        'redirect_to',
+        dedupeUrlParams(
+          ((redirectTo || '/') + additionalQS).replace(/\?/g, '&').replace('&', '?')
+        )
+      );
       location.href = '/logout';
+    }
+
+    /**
+     * Removes duplicate URL params by just keeping the last one.
+     * @param {string} url
+     * @returns {string}
+     */
+    function dedupeUrlParams(url) {
+      return url.replace(
+        /\?([^#]*)(?=#|$)/,
+        /**
+         * @param {string} m
+         * @param {string} qs
+         */
+        (m, qs) => {
+          if (qs) {
+            const strPairs = qs.split('&');
+            /** @type {{[k: string]: string}} */
+            const strPairsByKey = strPairs.reduce(
+              (strPairsByKey, strPair) => Object.assign(
+                strPairsByKey,
+                {[strPair.split("=", 1)[0]]: strPair}
+              ),
+              {}
+            );
+            m = '';
+            for (const strPair of Object.values(strPairsByKey)) {
+              m += `${m ? '&' : '?'}${strPair}`;
+            }
+          }
+          return m;
+        }
+      );
     }
 
     function getUrlParams() {
       var params = {};
-      location.search.replace(/[\?&]([^=&]+)=([^&]*)/, function(m, key, value) {
+      location.search.replace(/\+/g, ' ').replace(/[\?&]([^=&]+)=([^&]*)/g, function(m, key, value) {
         params[decodeURIComponent(key)] = decodeURIComponent(value);
       });
       return params;
