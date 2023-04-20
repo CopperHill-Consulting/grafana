@@ -95,7 +95,7 @@
     "@grafana/api-documenter": "7.11.2",
     "@grafana/e2e": "workspace:*",
     "@grafana/eslint-config": "4.0.0",
-    "@grafana/toolkit": "workspace:*",
+    "@grafana/toolkit": "workspace:^",
     "@grafana/tsconfig": "^1.2.0-rc1",
     "@lingui/cli": "3.14.0",
     "@lingui/macro": "3.14.0",

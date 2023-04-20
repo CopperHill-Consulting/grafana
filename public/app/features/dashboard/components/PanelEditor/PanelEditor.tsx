@@ -458,7 +458,6 @@ export const getStyles = stylesFactory((theme: GrafanaTheme2, props: Props) => {
   return {
     wrapper: css`
       width: 100%;
-      height: 100%;
       position: fixed;
       z-index: ${theme.zIndex.sidemenu};
       top: 3vw;
