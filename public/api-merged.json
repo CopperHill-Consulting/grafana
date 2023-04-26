@@ -12317,25 +12317,6 @@
         }
       }
     },
-    "AddTeamRoleCommand": {
-      "type": "object",
-      "properties": {
-        "roleUid": {
-          "type": "string"
-        }
-      }
-    },
-    "AddUserRoleCommand": {
-      "type": "object",
-      "properties": {
-        "global": {
-          "type": "boolean"
-        },
-        "roleUid": {
-          "type": "string"
-        }
-      }
-    },
     "Address": {
       "type": "object",
       "properties": {
@@ -14428,42 +14409,6 @@
         }
       }
     },
-    "CreateRoleForm": {
-      "type": "object",
-      "properties": {
-        "description": {
-          "type": "string"
-        },
-        "displayName": {
-          "type": "string"
-        },
-        "global": {
-          "type": "boolean"
-        },
-        "group": {
-          "type": "string"
-        },
-        "hidden": {
-          "type": "boolean"
-        },
-        "name": {
-          "type": "string"
-        },
-        "permissions": {
-          "type": "array",
-          "items": {
-            "$ref": "#/definitions/Permission"
-          }
-        },
-        "uid": {
-          "type": "string"
-        },
-        "version": {
-          "type": "integer",
-          "format": "int64"
-        }
-      }
-    },
     "CreateServiceAccountForm": {
       "type": "object",
       "properties": {
@@ -15165,11 +15110,6 @@
     },
     "DsAccess": {
       "type": "string"
-    },
-    "DsPermissionType": {
-      "description": "Datasource permission\nDescription:\n`0` - No Access\n`1` - Query\n`2` - Edit\nEnum: 0,1,2",
-      "type": "integer",
-      "format": "int64"
     },
     "Duration": {
       "description": "A Duration represents the elapsed time between two instants\nas an int64 nanosecond count. The representation limits the\nlargest representable duration to approximately 290 years.",
@@ -19684,17 +19624,10 @@
         }
       }
     },
-    "RelativeTimeRange": {
-      "description": "RelativeTimeRange is the per query start and end time\nfor requests.",
+    "Regexp": {
+      "description": "A Regexp is safe for concurrent use by multiple goroutines,\nexcept for configuration methods, such as Longest.",
       "type": "object",
-      "properties": {
-        "from": {
-          "$ref": "#/definitions/Duration"
-        },
-        "to": {
-          "$ref": "#/definitions/Duration"
-        }
-      }
+      "title": "Regexp is the representation of a compiled regular expression."
     },
     "RelativeTimeRangeExport": {
       "type": "object",
@@ -22072,6 +22005,28 @@
         "$ref": "#/definitions/Transformation"
       }
     },
+    "TrimDashboardCommand": {
+      "type": "object",
+      "properties": {
+        "dashboard": {
+          "$ref": "#/definitions/Json"
+        },
+        "meta": {
+          "$ref": "#/definitions/Json"
+        }
+      }
+    },
+    "TrimDashboardFullWithMeta": {
+      "type": "object",
+      "properties": {
+        "dashboard": {
+          "$ref": "#/definitions/Json"
+        },
+        "meta": {
+          "$ref": "#/definitions/Json"
+        }
+      }
+    },
     "Type": {
       "description": "+enum",
       "type": "string"
@@ -23846,16 +23801,6 @@
         "$ref": "#/definitions/ErrorResponseBody"
       }
     },
-    "contentResponse": {
-      "description": "(empty)",
-      "schema": {
-        "type": "array",
-        "items": {
-          "type": "integer",
-          "format": "uint8"
-        }
-      }
-    },
     "createCorrelationResponse": {
       "description": "(empty)",
       "schema": {
@@ -24352,12 +24297,6 @@
       "description": "(empty)",
       "schema": {
         "$ref": "#/definitions/LibraryElementSearchResponse"
-      }
-    },
-    "getLicenseTokenResponse": {
-      "description": "(empty)",
-      "schema": {
-        "$ref": "#/definitions/Token"
       }
     },
     "getOrgByIDResponse": {
@@ -24916,9 +24855,6 @@
           }
         }
       }
-    },
-    "postRenewLicenseTokenResponse": {
-      "description": "(empty)"
     },
     "preconditionFailedError": {
       "description": "PreconditionFailedError",

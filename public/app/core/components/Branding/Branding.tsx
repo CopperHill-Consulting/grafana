@@ -13,7 +13,11 @@ export interface BrandComponentProps {
 }
 
 export const LoginLogo: FC<BrandComponentProps & { logo?: string }> = ({ className, logo }) => {
-  return <img className={className} src={`${logo ? logo : grafanaIconSvg}`} alt="Grafana" />;
+  return (
+    <div>
+      <img className={className} src="public/img/ch_icon_white.svg" alt="AIR" />
+    </div>
+  );
 };
 
 const LoginBackground: FC<BrandComponentProps> = ({ className, children }) => {
@@ -46,7 +50,8 @@ const LoginBackground: FC<BrandComponentProps> = ({ className, children }) => {
 };
 
 const MenuLogo: FC<BrandComponentProps> = ({ className }) => {
-  return <img className={className} src={grafanaIconSvg} alt="Grafana" />;
+  // CHC: Branding
+  return <img className={className} src="public/img/ch_fav32.png" alt="CopperHill" />;
 };
 
 const LoginBoxBackground = () => {
@@ -62,9 +67,9 @@ export class Branding {
   static LoginBackground = LoginBackground;
   static MenuLogo = MenuLogo;
   static LoginBoxBackground = LoginBoxBackground;
-  static AppTitle = 'Grafana';
-  static LoginTitle = 'Welcome to Grafana';
-  static HideEdition = false;
+  static AppTitle = 'CopperHill AIR';
+  static LoginTitle = 'Welcome to AIR';
+  static HideEdition = true;
   static GetLoginSubTitle = (): null | string => {
     return null;
   };
