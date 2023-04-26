@@ -204,7 +204,7 @@ describe('DashboardPage', () => {
     });
 
     it('Should update title', () => {
-      expect(document.title).toBe('My dashboard - Dashboards - Grafana');
+      expect(document.title).toBe('My dashboard - CopperHill AIR');
     });
   });
 

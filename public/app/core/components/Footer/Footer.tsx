@@ -49,16 +49,17 @@ export function getVersionMeta(version: string) {
 }
 
 export let getVersionLinks = (): FooterLink[] => {
-  const { buildInfo, licenseInfo } = config;
+  const { buildInfo /*, licenseInfo*/ } = config;
   const links: FooterLink[] = [];
-  const stateInfo = licenseInfo.stateInfo ? ` (${licenseInfo.stateInfo})` : '';
+  // const stateInfo = licenseInfo.stateInfo ? ` (${licenseInfo.stateInfo})` : '';
 
-  links.push({
-    target: '_blank',
-    id: 'version',
-    text: `${buildInfo.edition}${stateInfo}`,
-    url: licenseInfo.licenseUrl,
-  });
+  // CHC: Branding
+  // links.push({
+  //   target: '_blank',
+  //   id: 'version',
+  //   text: `${buildInfo.edition}${stateInfo}`,
+  //   url: licenseInfo.licenseUrl,
+  // });
 
   if (buildInfo.hideVersion) {
     return links;
@@ -73,15 +74,16 @@ export let getVersionLinks = (): FooterLink[] => {
     url: hasReleaseNotes ? `https://github.com/grafana/grafana/blob/main/CHANGELOG.md` : undefined,
   });
 
-  if (buildInfo.hasUpdate) {
-    links.push({
-      target: '_blank',
-      id: 'updateVersion',
-      text: `New version available!`,
-      icon: 'download-alt',
-      url: 'https://grafana.com/grafana/download?utm_source=grafana_footer',
-    });
-  }
+  // CHC: Branding
+  // if (buildInfo.hasUpdate) {
+  //   links.push({
+  //     target: '_blank',
+  //     id: 'updateVersion',
+  //     text: `New version available!`,
+  //     icon: 'download-alt',
+  //     url: 'https://grafana.com/grafana/download?utm_source=grafana_footer',
+  //   });
+  // }
 
   return links;
 };

@@ -53,7 +53,7 @@ const getStyles = stylesFactory((theme: GrafanaTheme2) => {
   return {
     overlay: css`
       left: 0;
-      top: 0;
+      top: 3vw; /* CHC Update */
       right: 0;
       bottom: 0;
       z-index: ${theme.zIndex.sidemenu};
