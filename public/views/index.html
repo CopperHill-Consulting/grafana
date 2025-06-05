@@ -305,27 +305,101 @@
         }
       }
 
-            // CHC: Banner logic
+      // CHC: Banner logic
       window.__chc_load_banner = function() {
         var user = grafanaBootData.user;
-        var proposedBanner = "public/views/banner/" + user.orgName + ".html";
-        var banner = "public/views/banner/CopperHill.html";
-        if (user.isSignedIn) {
-          var html = $.get(proposedBanner);
-          if (html.responseText && !html.responseText.includes("If you're seeing this Grafana has failed")) {
-            banner = proposedBanner;
-          }
+        
+        const elemReactRoot = document.getElementById('reactRoot');
+
+        for (const elemBanner of elemReactRoot.querySelectorAll(':scope > .banner')) {
+          elemBanner.parentNode.removeChild(elemBanner);
         }
 
-        // Create a div within a div in the DOM for the banner.
-        const elGrafanaApp = document.querySelector('.grafana-app');
-        const elBanner = Object.assign(document.createElement('div'), {className: 'banner'});
-        const elBannerInclude = Object.assign(document.createElement('div'), {id: 'banner-include'});
-        elBanner.appendChild(elBannerInclude);
-        elGrafanaApp.parentNode.insertBefore(elBanner, elGrafanaApp);
+        // Create a new wrapper div
+        const wrapperDiv = Object.assign(document.createElement('div'), {
+          id: "chc-wrapper",
+          innerHTML: `
+            <a id="chc-banner" href="https://go.copperhillconsulting.com/air-platform" target="_blank">
+              <div></div>
+              <div>Advanced Intelligent Reporting</div>
+              <div>Contact us or visit our website to learn more about our CopperHill AIR solutions.</div>
+            </a>
+          `
+        });
 
-        // Load the banner contents into the corresponding element.
-        $(elBannerInclude).load(banner);
+        const style = Object.assign(document.createElement('style'), {type: 'text/css'});
+        style.appendChild(document.createTextNode(`
+          [data-testid*="navigation mega-menu"] {
+            position: absolute !important;
+          }
+
+          #reactRoot {
+            flex: 1 !important;
+            overflow-y: auto !important;
+          }
+
+          .grafana-app {
+            height: 100% !important;
+          }
+
+          #chc-wrapper {
+            display: flex;
+            flex-direction: column;
+            inset: 0;
+            position: fixed;
+          }
+
+          #chc-banner {
+            --banner-height: 3vw;
+
+            background-color: #075287;
+            background-image: url('/public/img/CopperHill/db-left.jpg'), url('/public/img/CopperHill/db-right.jpg');
+            background-position: left center, right center;
+            background-repeat: no-repeat, no-repeat;
+            background-size: contain, contain;
+            display: flex;
+            flex-direction: row;
+            height: var(--banner-height);
+            font-family: 'Roboto Condensed', sans-serif;
+          }
+          #chc-banner > :first-child,
+          #chc-banner > :last-child {
+            align-self: center;
+            font-size: calc(var(--banner-height) / 4.5);
+            line-height: 1.4em;
+            width: calc(var(--banner-height) * 1200 / 240);
+          }
+          #chc-banner > :nth-child(2) {
+            align-self: center;
+            color: #FFF4;
+            flex: 1;
+            font-size: calc(var(--banner-height) / 1.5);
+            font-weight: bold;
+            text-align: center;
+          }
+
+          @media (max-width: 768px) {
+            #chc-banner {
+              --banner-height: 30px;
+            }
+            #chc-banner > :nth-child(2) {
+              filter: drop-shadow(0 0 10px #FFF);
+            }
+            #chc-banner > :first-child,
+            #chc-banner > :last-child {
+              display: none;
+            }
+          }
+        `));
+        document.head.appendChild(style);
+
+        // Insert wrapper before elemReactRoot
+        elemReactRoot.parentNode.insertBefore(wrapperDiv, elemReactRoot);
+
+        const bannerWrapper = document.createElement('div');
+
+        // Move elemReactRoot inside wrapperDiv
+        wrapperDiv.appendChild(elemReactRoot);
       }
 
       // In case the js files fails to load the code below will show an info message.
