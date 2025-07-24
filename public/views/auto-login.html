@@ -1,9 +1,8 @@
 <style>body { background-color: #000; }</style>
 <script>
-  (function() {
-    var redirectTo;
-
-    function main() {
+  (async() => {
+    async function main() {
+      // Parses the URL query string.
       var qs = getUrlParams();
 
       // If URL params other than "t" are specified make sure to keep track of
@@ -14,58 +13,62 @@
       // param to the redirected page.
       let additionalQS = "";
       const qsKeys = Object.keys(qs);
-      if (qsKeys.length > (qsKeys.includes('t') ? 1 : 0)) {
-        for (const qsKey of qsKeys) {
-          // Keep track of all aditional params that are not the "t" param.
-          if (qsKey !== 't') {
-            additionalQS += (additionalQS ? '&' : '?')
-              + encodeURIComponent(qsKey.replace(/\$(.)/g, '$1'))
-              + `=${encodeURIComponent(qs[qsKey])}`;
-          }
+      for (const qsKey of qsKeys) {
+        // Keep track of all aditional params that are not the "t" param.
+        if (qsKey !== 't') {
+          additionalQS += (additionalQS ? '&' : '?')
+            + encodeURIComponent(qsKey.replace(/\$(.)/g, '$1'))
+            + `=${encodeURIComponent(qs[qsKey])}`;
         }
       }
       additionalQS = additionalQS.replace(/%20/g, '+');
 
-      if (qs.t) {
-        var tData = JSON.parse(atob(qs.t));
-        redirectTo = tData && (tData.redirect || tData.r);
-        postJSON(
-          '/login',
-          { user: tData.user || tData.u, password: tData.pass || tData.p },
-          function(responseText, xhr) {
-            try {
-              var jsonResponse = JSON.parse(responseText);
-              if (jsonResponse.error) {
-                throw new Error(jsonResponse.error);
-              }
-              setCookie('redirect_to', null, -99999);
-              location.href = dedupeUrlParams(
-                ((redirectTo || '/') + additionalQS).replace(/\?/g, '&').replace('&', '?')
-              );
-            }
-            catch (e) {
-              console.error(e);
-              logout(additionalQS);
-            }
+      // Parses out the "t" parameter from the URL.
+      const tData = qs.t ? JSON.parse(atob(qs.t)) : {};
+
+      try {
+        // Logs the user out if the "t" parameter says to.
+        if (tData.logout) {
+          await logout();
+        }
+
+        // Logs the user in if creds are found in the "t" parameter.
+        const username = tData.user ?? tData.u;
+        const password = tData.pass ?? tData.p;
+        if (username) {
+          const loginResult = await login(username, password);
+          if (!loginResult.response.ok) {
+            const errorMsg = loginResult.json?.message ?? 'Authentication was unsuccessful for an unknown reason.';
+            throw new Error(errorMsg);
           }
-        );
+        }
       }
-      else {
-        logout(additionalQS);
+      catch (err) {
+        alert(err.message);
+        console.error(err);
       }
+
+      // Gets the redirect URL.
+      const redirectTo = dedupeUrlParams(
+        ((tData.redirect ?? tData.r ?? '/') + additionalQS).replace(/\?/g, '&').replace('&', '?')
+      );
+
+      // If the "debug" URL parameter is set then turn on the debugger while the
+      // console is showing.
+      if (qs.debug) {
+        debugger;
+      }
+
+      // Navigates to the redirect URL.
+      window.location.href = redirectTo;
     }
 
-    /**
-     * @param {string} additionalQS
-     */
-    function logout(additionalQS) {
-      setCookie(
-        'redirect_to',
-        dedupeUrlParams(
-          ((redirectTo || '/') + additionalQS).replace(/\?/g, '&').replace('&', '?')
-        )
-      );
-      location.href = '/logout';
+    async function login(username, password) {
+      return postJSON('/login', { user: username, password });
+    }
+
+    async function logout() {
+      await fetch('/logout');
     }
 
     /**
@@ -109,38 +112,25 @@
       return params;
     }
 
-    function setCookie(name, value, time) {
-      var today = new Date(),
-          offset = (typeof time == 'undefined') ? (1000 * 60 * 60 * 24) : (time * 1000),
-          expiresAt = new Date(today.getTime() + offset);
-
-      var cookieValues = {
-        name: encodeURIComponent(name),
-        value: encodeURIComponent([value].toString()),
-        expires: expiresAt.toGMTString()
-      };
-      var cookie = '@name=@value;expires=@expires;path=/;samesite=none;secure'.replace(
-        /@(\w+)/g,
-        function(m, key) {
-          return cookieValues[key];
-        }
-      );
-      document.cookie = cookie;
-    }
-
-    function postJSON(url, data, callback) {
-      var xhr = new XMLHttpRequest();
-      xhr.withCredentials = true;
-      xhr.addEventListener("readystatechange", function() {
-        if(xhr.readyState === 4) {
-          callback(this.responseText, xhr);
-        }
+    async function postJSON(url, data) {
+      const response = await fetch(url, {
+        method: 'POST',
+        credentials: 'include', // same as xhr.withCredentials = true
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data)
       });
-      xhr.open("POST", url);
-      xhr.setRequestHeader("Content-Type", "application/json");
-      xhr.send(JSON.stringify(data));
+
+      const text = await response.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch (err) {}
+      return { json, text, response };
     }
 
-    main();
+    // Run all of the code.
+    await main();
   })();
 </script>
