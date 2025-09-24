@@ -566,6 +566,10 @@ func (st *Manager) processMissingSeriesStates(logger log.Logger, evaluatedAt tim
 			}
 
 			staleStatesCount++
+		} else if s.State == eval.Alerting {
+			// We need to update EndsAt for the state so that it will not be resolved by the
+			// Alertmanager automatically.
+			s.Maintain(alertRule.IntervalSeconds, evaluatedAt)
 		}
 
 		record := StateTransition{
@@ -583,13 +587,13 @@ func (st *Manager) processMissingSeriesStates(logger log.Logger, evaluatedAt tim
 
 // stateIsStale determines whether the evaluation state is considered stale.
 // A state is considered stale if the data has been missing for at least missingSeriesEvalsToResolve evaluation intervals.
-func stateIsStale(evaluatedAt time.Time, lastEval time.Time, intervalSeconds int64, missingSeriesEvalsToResolve int) bool {
+func stateIsStale(evaluatedAt time.Time, lastEval time.Time, intervalSeconds int64, missingSeriesEvalsToResolve int64) bool {
 	// If the last evaluation time equals the current evaluation time, the state is not stale.
 	if evaluatedAt.Equal(lastEval) {
 		return false
 	}
 
-	resolveIfMissingDuration := time.Duration(int64(missingSeriesEvalsToResolve)*intervalSeconds) * time.Second
+	resolveIfMissingDuration := time.Duration(missingSeriesEvalsToResolve*intervalSeconds) * time.Second
 
 	// timeSinceLastEval >= resolveIfMissingDuration
 	return evaluatedAt.Sub(lastEval) >= resolveIfMissingDuration

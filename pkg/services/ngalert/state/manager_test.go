@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -15,13 +16,12 @@ import (
 	"github.com/benbjohnson/clock"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
-	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/grafana/grafana/pkg/expr"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
@@ -40,13 +40,16 @@ import (
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
 	"github.com/grafana/grafana/pkg/util"
+	tutil "github.com/grafana/grafana/pkg/util/testutil"
 )
 
 func TestMain(m *testing.M) {
 	testsuite.Run(m)
 }
 
-func TestWarmStateCache(t *testing.T) {
+func TestIntegrationWarmStateCache(t *testing.T) {
+	tutil.SkipIntegrationTestInShortMode(t)
+
 	evaluationTime, err := time.Parse("2006-01-02", "2021-03-25")
 	require.NoError(t, err)
 	ctx := context.Background()
@@ -271,7 +274,9 @@ func TestWarmStateCache(t *testing.T) {
 	})
 }
 
-func TestDashboardAnnotations(t *testing.T) {
+func TestIntegrationDashboardAnnotations(t *testing.T) {
+	tutil.SkipIntegrationTestInShortMode(t)
+
 	evaluationTime, err := time.Parse("2006-01-02", "2022-01-01")
 	require.NoError(t, err)
 
@@ -1450,8 +1455,12 @@ func printAllAnnotations(annos map[int64]annotations.Item) string {
 	return b.String()
 }
 
-func TestStaleResultsHandler(t *testing.T) {
-	evaluationTime := time.Now().Truncate(time.Second).UTC() // Truncate to the second since we don't store sub-second precision.
+func TestIntegrationStaleResultsHandler(t *testing.T) {
+	tutil.SkipIntegrationTestInShortMode(t)
+
+	// Truncate to the second since we don't store sub-second precision.
+
+	evaluationTime := time.Now().Truncate(time.Second).UTC()
 	interval := time.Minute
 
 	ctx := context.Background()
@@ -1737,7 +1746,9 @@ func TestStaleResults(t *testing.T) {
 	})
 }
 
-func TestDeleteStateByRuleUID(t *testing.T) {
+func TestIntegrationDeleteStateByRuleUID(t *testing.T) {
+	tutil.SkipIntegrationTestInShortMode(t)
+
 	interval := time.Minute
 	ctx := context.Background()
 	ng, dbstore := tests.SetupTestEnv(t, 1)
@@ -1883,7 +1894,9 @@ func TestDeleteStateByRuleUID(t *testing.T) {
 	}
 }
 
-func TestResetStateByRuleUID(t *testing.T) {
+func TestIntegrationResetStateByRuleUID(t *testing.T) {
+	tutil.SkipIntegrationTestInShortMode(t)
+
 	interval := time.Minute
 	ctx := context.Background()
 	ng, dbstore := tests.SetupTestEnv(t, 1)

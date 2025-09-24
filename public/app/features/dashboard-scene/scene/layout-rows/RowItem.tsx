@@ -9,15 +9,14 @@ import {
   VariableDependencyConfig,
   VizPanel,
 } from '@grafana/scenes';
-import { RowsLayoutRowKind } from '@grafana/schema/dist/esm/schema/dashboard/v2alpha1/types.spec.gen';
+import { RowsLayoutRowKind } from '@grafana/schema/dist/esm/schema/dashboard/v2';
 import appEvents from 'app/core/app_events';
 import { LS_ROW_COPY_KEY } from 'app/core/constants';
 import store from 'app/core/store';
 import kbn from 'app/core/utils/kbn';
-import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneCategoryDescriptor';
 import { ShowConfirmModalEvent } from 'app/types/events';
 
-import { ConditionalRendering } from '../../conditional-rendering/ConditionalRendering';
+import { ConditionalRenderingGroup } from '../../conditional-rendering/group/ConditionalRenderingGroup';
 import { serializeRow } from '../../serialization/layoutSerializers/RowsLayoutSerializer';
 import { getElements } from '../../serialization/layoutSerializers/utils';
 import { getDashboardSceneFor } from '../../utils/utils';
@@ -32,7 +31,6 @@ import { LayoutParent } from '../types/LayoutParent';
 
 import { useEditOptions } from './RowItemEditor';
 import { RowItemRenderer } from './RowItemRenderer';
-import { RowItemRepeaterBehavior } from './RowItemRepeaterBehavior';
 import { RowItems } from './RowItems';
 import { RowsLayoutManager } from './RowsLayoutManager';
 
@@ -43,7 +41,11 @@ export interface RowItemState extends SceneObjectState {
   hideHeader?: boolean;
   fillScreen?: boolean;
   isDropTarget?: boolean;
-  conditionalRendering?: ConditionalRendering;
+  conditionalRendering?: ConditionalRenderingGroup;
+  repeatByVariable?: string;
+  repeatedRows?: RowItem[];
+  /** Marks object as a repeated object and a key pointer to source object */
+  repeatSourceKey?: string;
 }
 
 export class RowItem
@@ -65,7 +67,7 @@ export class RowItem
       ...state,
       title: state?.title ?? t('dashboard.rows-layout.row.new', 'New row'),
       layout: state?.layout ?? AutoGridLayoutManager.createEmpty(),
-      conditionalRendering: state?.conditionalRendering ?? ConditionalRendering.createEmpty(),
+      conditionalRendering: state?.conditionalRendering ?? ConditionalRenderingGroup.createEmpty(),
     });
 
     this.addActivationHandler(() => this._activationHandler());
@@ -86,8 +88,11 @@ export class RowItem
       typeName: t('dashboard.edit-pane.elements.row', 'Row'),
       instanceName: sceneGraph.interpolate(this, this.state.title, undefined, 'text'),
       icon: 'list-ul',
-      isContainer: true,
     };
+  }
+
+  public getOutlineChildren(): SceneObject[] {
+    return this.state.layout.getOutlineChildren();
   }
 
   public getLayout(): DashboardLayoutManager {
@@ -102,9 +107,7 @@ export class RowItem
     this.setState({ layout });
   }
 
-  public useEditPaneOptions(isNewElement: boolean): OptionsPaneCategoryDescriptor[] {
-    return useEditOptions(this, isNewElement);
-  }
+  public useEditPaneOptions = useEditOptions.bind(this);
 
   public onDelete() {
     this.getParentLayout().removeRow(this);
@@ -176,10 +179,6 @@ export class RowItem
     this.setIsDropTarget(false);
   }
 
-  public getRepeatVariable(): string | undefined {
-    return this._getRepeatBehavior()?.state.variableName;
-  }
-
   public onChangeTitle(title: string) {
     this.setState({ title });
   }
@@ -197,19 +196,10 @@ export class RowItem
   }
 
   public onChangeRepeat(repeat: string | undefined) {
-    let repeatBehavior = this._getRepeatBehavior();
-
     if (repeat) {
-      // Remove repeat behavior if it exists to trigger repeat when adding new one
-      if (repeatBehavior) {
-        repeatBehavior.removeBehavior();
-      }
-
-      repeatBehavior = new RowItemRepeaterBehavior({ variableName: repeat });
-      this.setState({ $behaviors: [...(this.state.$behaviors ?? []), repeatBehavior] });
-      repeatBehavior.activate();
+      this.setState({ repeatByVariable: repeat });
     } else {
-      repeatBehavior?.removeBehavior();
+      this.setState({ repeatedRows: undefined, $variables: undefined, repeatByVariable: undefined });
     }
   }
 
@@ -219,10 +209,6 @@ export class RowItem
 
   public getParentLayout(): RowsLayoutManager {
     return sceneGraph.getAncestor(this, RowsLayoutManager);
-  }
-
-  private _getRepeatBehavior(): RowItemRepeaterBehavior | undefined {
-    return this.state.$behaviors?.find((b) => b instanceof RowItemRepeaterBehavior);
   }
 
   public scrollIntoView() {

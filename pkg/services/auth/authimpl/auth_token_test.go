@@ -26,6 +26,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
+	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 func TestMain(m *testing.M) {
@@ -33,6 +34,8 @@ func TestMain(m *testing.M) {
 }
 
 func TestIntegrationUserAuthToken(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	ctx := createTestContext(t)
 	usr := &user.User{ID: int64(10)}
 
@@ -787,6 +790,8 @@ func (c *testContext) updateRotatedAt(id, rotatedAt int64) (bool, error) {
 }
 
 func TestIntegrationTokenCount(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	ctx := createTestContext(t)
 	user := &user.User{ID: int64(10)}
 
@@ -823,7 +828,9 @@ func TestIntegrationTokenCount(t *testing.T) {
 	require.Equal(t, int64(0), count)
 }
 
-func TestRevokeAllUserTokens(t *testing.T) {
+func TestIntegrationRevokeAllUserTokens(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	t.Run("should not fail if the external sessions could not be removed", func(t *testing.T) {
 		ctx := createTestContext(t)
 		usr := &user.User{ID: int64(10)}
@@ -856,7 +863,9 @@ func TestRevokeAllUserTokens(t *testing.T) {
 	})
 }
 
-func TestRevokeToken(t *testing.T) {
+func TestIntegrationRevokeToken(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	t.Run("should not fail if the external sessions could not be removed", func(t *testing.T) {
 		ctx := createTestContext(t)
 		usr := &user.User{ID: int64(10)}
@@ -887,7 +896,9 @@ func TestRevokeToken(t *testing.T) {
 	})
 }
 
-func TestBatchRevokeAllUserTokens(t *testing.T) {
+func TestIntegrationBatchRevokeAllUserTokens(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
 	t.Run("should not fail if the external sessions could not be removed", func(t *testing.T) {
 		ctx := createTestContext(t)
 		userIds := []int64{1, 2, 3}

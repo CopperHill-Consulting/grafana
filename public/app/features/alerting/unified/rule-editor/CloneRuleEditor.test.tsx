@@ -5,7 +5,7 @@ import { byRole, byTestId } from 'testing-library-selector';
 
 import { MIMIR_DATASOURCE_UID } from 'app/features/alerting/unified/mocks/server/constants';
 import { DashboardSearchItemType } from 'app/features/search/types';
-import { AccessControlAction } from 'app/types';
+import { AccessControlAction } from 'app/types/accessControl';
 import { RuleWithLocation } from 'app/types/unified-alerting';
 import {
   RulerAlertingRuleDTO,
@@ -24,7 +24,7 @@ import {
   mockRulerGrafanaRule,
   mockRulerRuleGroup,
 } from '../mocks';
-import { grafanaRulerRule } from '../mocks/grafanaRulerApi';
+import { grafanaRulerRule, mockPreviewApiResponse } from '../mocks/grafanaRulerApi';
 import { mockRulerRulesApiResponse, mockRulerRulesGroupApiResponse } from '../mocks/rulerApi';
 import { setFolderResponse } from '../mocks/server/configure';
 import { AlertingQueryRunner } from '../state/AlertingQueryRunner';
@@ -103,6 +103,7 @@ describe('CloneRuleEditor', function () {
     };
     setupDataSources(dataSources.default);
     setFolderResponse(mockFolder(folder));
+    mockPreviewApiResponse(server, []);
   });
 
   describe('Grafana-managed rules', function () {

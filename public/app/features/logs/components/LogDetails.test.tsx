@@ -12,13 +12,14 @@ import {
   DataFrameType,
   CoreApp,
   PluginExtensionPoints,
+  dateTime,
 } from '@grafana/data';
 import { setPluginLinksHook } from '@grafana/runtime';
 
 import { LogDetails, Props } from './LogDetails';
 import { LOG_LINE_BODY_FIELD_NAME } from './LogDetailsBody';
-import { createLogRow } from './__mocks__/logRow';
 import { getLogRowStyles } from './getLogRowStyles';
+import { createLogRow } from './mocks/logRow';
 
 jest.mock('@grafana/runtime', () => {
   return {
@@ -43,6 +44,14 @@ const setup = (propOverrides?: Partial<Props>, rowOverrides?: Partial<LogRowMode
     theme,
     styles,
     app: CoreApp.Explore,
+    timeRange: {
+      from: dateTime(1757937009041),
+      to: dateTime(1757940609041),
+      raw: {
+        from: 'now-1h',
+        to: 'now',
+      },
+    },
     ...(propOverrides || {}),
   };
 
@@ -324,6 +333,10 @@ describe('LogDetails', () => {
         datasource: {
           type: 'loki',
           uid: 'grafanacloud-logs',
+        },
+        timeRange: {
+          from: 1757937009041,
+          to: 1757940609041,
         },
         attributes: { key1: ['label1'], key2: ['label2'] },
       },

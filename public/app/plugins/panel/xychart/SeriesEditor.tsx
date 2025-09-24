@@ -1,5 +1,5 @@
 import { css, cx } from '@emotion/css';
-import { Fragment, useState } from 'react';
+import { Fragment, useId, useState } from 'react';
 import { usePrevious } from 'react-use';
 
 import {
@@ -77,6 +77,12 @@ export const SeriesEditor = ({
     });
   });
 
+  const frameInputId = useId();
+  const xFieldInputId = useId();
+  const yFieldInputId = useId();
+  const sizeFieldInputId = useId();
+  const colorFieldInputId = useId();
+
   return (
     <>
       {mapping === SeriesMapping.Manual && (
@@ -129,6 +135,7 @@ export const SeriesEditor = ({
         <Fragment key={formKey}>
           <Field label={t('xychart.series-editor.label-frame', 'Frame')}>
             <Select
+              inputId={frameInputId}
               placeholder={
                 mapping === SeriesMapping.Auto
                   ? t('xychart.series-editor.placeholder-all-frames', 'All frames')
@@ -158,6 +165,7 @@ export const SeriesEditor = ({
           </Field>
           <Field label={t('xychart.series-editor.label-x-field', 'X field')}>
             <FieldNamePicker
+              id={xFieldInputId}
               value={series.x?.matcher.options as string}
               context={context}
               onChange={(fieldName) => {
@@ -182,16 +190,20 @@ export const SeriesEditor = ({
                   filter: (field) =>
                     (mapping === SeriesMapping.Auto ||
                       field.state?.origin?.frameIndex === series.frame?.matcher.options) &&
-                    field.type === FieldType.number &&
+                    (field.type === FieldType.number || field.type === FieldType.time) &&
                     !field.config.custom?.hideFrom?.viz,
                   baseNameMode,
-                  placeholderText: mapping === SeriesMapping.Auto ? 'First number field in each frame' : undefined,
+                  placeholderText:
+                    mapping === SeriesMapping.Auto
+                      ? t('xychart.series-editor.placeholder-x-field', 'First number or time field in each frame')
+                      : undefined,
                 },
               }}
             />
           </Field>
           <Field label={t('xychart.series-editor.label-y-field', 'Y field')}>
             <FieldNamePicker
+              id={yFieldInputId}
               value={series.y?.matcher?.options as string}
               context={context}
               onChange={(fieldName) => {
@@ -220,13 +232,17 @@ export const SeriesEditor = ({
                     field.type === FieldType.number &&
                     !field.config.custom?.hideFrom?.viz,
                   baseNameMode,
-                  placeholderText: mapping === SeriesMapping.Auto ? 'Remaining number fields in each frame' : undefined,
+                  placeholderText:
+                    mapping === SeriesMapping.Auto
+                      ? t('xychart.series-editor.placeholder-y-field', 'Remaining number fields in each frame')
+                      : undefined,
                 },
               }}
             />
           </Field>
           <Field label={t('xychart.series-editor.label-size-field', 'Size field')}>
             <FieldNamePicker
+              id={sizeFieldInputId}
               value={series.size?.matcher?.options as string}
               context={context}
               onChange={(fieldName) => {
@@ -250,7 +266,6 @@ export const SeriesEditor = ({
                 settings: {
                   // TODO: filter out series.y?.exclude.options, series.size.matcher.options, series.color.matcher.options
                   filter: (field) =>
-                    field.name !== series.x?.matcher.options &&
                     (mapping === SeriesMapping.Auto ||
                       field.state?.origin?.frameIndex === series.frame?.matcher.options) &&
                     field.type === FieldType.number &&
@@ -263,6 +278,7 @@ export const SeriesEditor = ({
           </Field>
           <Field label={t('xychart.series-editor.label-color-field', 'Color field')}>
             <FieldNamePicker
+              id={colorFieldInputId}
               value={series.color?.matcher?.options as string}
               context={context}
               onChange={(fieldName) => {
@@ -286,7 +302,6 @@ export const SeriesEditor = ({
                 settings: {
                   // TODO: filter out series.y?.exclude.options, series.size.matcher.options, series.color.matcher.options
                   filter: (field) =>
-                    field.name !== series.x?.matcher.options &&
                     (mapping === SeriesMapping.Auto ||
                       field.state?.origin?.frameIndex === series.frame?.matcher.options) &&
                     field.type === FieldType.number &&

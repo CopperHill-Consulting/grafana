@@ -13,8 +13,6 @@ import (
 	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
 
 	"github.com/stretchr/testify/require"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 )
 
 // BenchmarkOptions configures the benchmark parameters
@@ -217,9 +215,9 @@ func runSearchBackendBenchmarkWriteThroughput(ctx context.Context, backend resou
 
 	// Build initial index
 	size := int64(10000) // force the index to be on disk
-	index, err := backend.BuildIndex(ctx, nr, size, 0, nil, func(index resource.ResourceIndex) (int64, error) {
+	index, err := backend.BuildIndex(ctx, nr, size, nil, "benchmark", func(index resource.ResourceIndex) (int64, error) {
 		return 0, nil
-	})
+	}, nil, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize backend: %w", err)
 	}
@@ -335,162 +333,4 @@ func BenchmarkSearchBackend(tb testing.TB, backend resource.SearchBackend, opts 
 	tb.Logf("P50 Latency: %v", result.P50Latency)
 	tb.Logf("P90 Latency: %v", result.P90Latency)
 	tb.Logf("P99 Latency: %v", result.P99Latency)
-}
-
-func BenchmarkIndexServer(tb testing.TB, ctx context.Context, backend resource.StorageBackend, searchBackend resource.SearchBackend, opts *BenchmarkOptions) {
-	events := make(chan *resource.IndexEvent, opts.NumResources)
-	groupsResources := make(map[string]string)
-	for g := 0; g < opts.NumGroups; g++ {
-		for r := 0; r < opts.NumResourceTypes; r++ {
-			groupsResources[fmt.Sprintf("group-%d", g)] = fmt.Sprintf("resource-%d", r)
-		}
-	}
-	server, err := resource.NewResourceServer(resource.ResourceServerOptions{
-		Backend: backend,
-		Search: resource.SearchOptions{
-			Backend:         searchBackend,
-			IndexEventsChan: events,
-			Resources:       &testDocumentBuilderSupplier{groupsResources: groupsResources},
-		},
-	})
-	require.NoError(tb, err)
-	require.NotNil(tb, server)
-
-	// Initialize the backend
-	err = initializeBackend(ctx, backend, opts)
-	require.NoError(tb, err)
-
-	// Discard the latencies from the initial index build.
-	for i := 0; i < (opts.NumGroups * opts.NumResourceTypes * opts.NumNamespaces); i++ {
-		<-events
-	}
-
-	// Run the storage backend benchmark write throughput to create events
-	startTime := time.Now()
-	var result *BenchmarkResult
-	// Channel to signal when the benchmark goroutine completes
-	benchmarkDone := make(chan struct{})
-
-	go func() {
-		defer close(benchmarkDone)
-		result, err = runStorageBackendBenchmark(ctx, backend, opts)
-		require.NoError(tb, err)
-	}()
-
-	// Wait for all events to be processed
-	latencies := make([]float64, 0, opts.NumResources)
-	for i := 0; i < opts.NumResources; i++ {
-		evt := <-events
-		latencies = append(latencies, evt.Latency.Seconds())
-	}
-	totalDuration := time.Since(startTime)
-
-	<-benchmarkDone
-	// Calculate index latency percentiles
-	sort.Float64s(latencies)
-	var p50, p90, p99 float64
-	if len(latencies) > 0 {
-		p50 = latencies[len(latencies)*50/100]
-		p90 = latencies[len(latencies)*90/100]
-		p99 = latencies[len(latencies)*99/100]
-	}
-
-	// Report metrics if running a benchmark
-	if b, ok := tb.(*testing.B); ok {
-		b.ReportMetric(result.Throughput, "writes/sec")
-		b.ReportMetric(float64(result.P50Latency.Milliseconds()), "p50-latency-ms")
-		b.ReportMetric(float64(result.P90Latency.Milliseconds()), "p90-latency-ms")
-		b.ReportMetric(float64(result.P99Latency.Milliseconds()), "p99-latency-ms")
-		b.ReportMetric(p50, "p50-index-latency-s")
-		b.ReportMetric(p90, "p90-index-latency-s")
-		b.ReportMetric(p99, "p99-index-latency-s")
-	}
-
-	// Log results for better visibility
-	tb.Logf("Benchmark Configuration: Workers=%d, Resources=%d, Namespaces=%d, Groups=%d, Resource Types=%d",
-		opts.Concurrency, opts.NumResources, opts.NumNamespaces, opts.NumGroups, opts.NumResourceTypes)
-	tb.Logf("")
-	tb.Logf("Storage Benchmark Results:")
-	tb.Logf("Total Duration: %v", result.TotalDuration)
-	tb.Logf("Storage Write Count: %d", result.WriteCount)
-	tb.Logf("Storage Write Throughput: %.2f writes/sec", result.Throughput)
-	tb.Logf("P50 Write Latency: %v", result.P50Latency)
-	tb.Logf("P90 Write Latency: %v", result.P90Latency)
-	tb.Logf("P99 Write Latency: %v", result.P99Latency)
-	tb.Logf("")
-	tb.Logf("Index Latency Results:")
-	tb.Logf("Indexing Throughput: %.2f events/sec", float64(len(latencies))/totalDuration.Seconds())
-	tb.Logf("P50 Index Latency: %.3fs", p50)
-	tb.Logf("P90 Index Latency: %.3fs", p90)
-	tb.Logf("P99 Index Latency: %.3fs", p99)
-}
-
-// testDocumentBuilder implements DocumentBuilder for testing
-type testDocumentBuilder struct{}
-
-func (b *testDocumentBuilder) BuildDocument(ctx context.Context, key *resourcepb.ResourceKey, rv int64, value []byte) (*resource.IndexableDocument, error) {
-	// convert value to unstructured.Unstructured
-	var u unstructured.Unstructured
-	if err := u.UnmarshalJSON(value); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal value: %w", err)
-	}
-
-	title := ""
-	tags := []string{}
-	val := ""
-
-	spec, ok, _ := unstructured.NestedMap(u.Object, "spec")
-	if ok {
-		if v, ok := spec["title"]; ok {
-			title = v.(string)
-		}
-		if v, ok := spec["tags"]; ok {
-			if tagSlice, ok := v.([]interface{}); ok {
-				tags = make([]string, len(tagSlice))
-				for i, tag := range tagSlice {
-					if strTag, ok := tag.(string); ok {
-						tags[i] = strTag
-					}
-				}
-			}
-		}
-		if v, ok := spec["value"]; ok {
-			val = v.(string)
-		}
-	}
-	return &resource.IndexableDocument{
-		Key: &resourcepb.ResourceKey{
-			Namespace: key.Namespace,
-			Group:     key.Group,
-			Resource:  key.Resource,
-			Name:      u.GetName(),
-		},
-		Title: title,
-		Tags:  tags,
-		Fields: map[string]interface{}{
-			"value": val,
-		},
-	}, nil
-}
-
-// testDocumentBuilderSupplier implements DocumentBuilderSupplier for testing
-type testDocumentBuilderSupplier struct {
-	groupsResources map[string]string
-}
-
-func (s *testDocumentBuilderSupplier) GetDocumentBuilders() ([]resource.DocumentBuilderInfo, error) {
-	builders := make([]resource.DocumentBuilderInfo, 0, len(s.groupsResources))
-
-	// Add builders for all possible group/resource combinations
-	for group, resourceType := range s.groupsResources {
-		builders = append(builders, resource.DocumentBuilderInfo{
-			GroupResource: schema.GroupResource{
-				Group:    group,
-				Resource: resourceType,
-			},
-			Builder: &testDocumentBuilder{},
-		})
-	}
-
-	return builders, nil
 }

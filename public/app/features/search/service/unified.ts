@@ -6,9 +6,8 @@ import { config, getBackendSrv } from '@grafana/runtime';
 import { getAPIBaseURL } from 'app/api/utils';
 import { TermCount } from 'app/core/components/TagFilter/TagFilter';
 import kbn from 'app/core/utils/kbn';
-import { isResourceList } from 'app/features/apiserver/guards';
-import { DashboardDataDTO } from 'app/types';
 
+import { deletedDashboardsCache } from './deletedDashboardsCache';
 import {
   DashboardQueryResult,
   GrafanaSearcher,
@@ -17,7 +16,7 @@ import {
   SearchQuery,
   SearchResultMeta,
 } from './types';
-import { replaceCurrentFolderQuery, resourceToSearchResult } from './utils';
+import { replaceCurrentFolderQuery, filterSearchResults } from './utils';
 
 // The backend returns an empty frame with a special name to indicate that the indexing engine is being rebuilt,
 // and that it can not serve any search requests. We are temporarily using the old SQL Search API as a fallback when that happens.
@@ -93,6 +92,10 @@ export class UnifiedSearcher implements GrafanaSearcher {
     return resp.facets?.tags?.terms || [];
   }
 
+  async getLocationInfo() {
+    return this.locationInfo;
+  }
+
   // TODO: Implement this correctly
   getSortOptions(): Promise<SelectableValue[]> {
     const opts: SelectableValue[] = [
@@ -115,8 +118,16 @@ export class UnifiedSearcher implements GrafanaSearcher {
 
   async doSearchQuery(query: SearchQuery): Promise<QueryResponse> {
     const uri = await this.newRequest(query);
-    const rsp = await this.fetchResponse(uri);
 
+    let rsp: SearchAPIResponse;
+
+    if (query.deleted) {
+      const data = await deletedDashboardsCache.get();
+      const results = filterSearchResults(data, query);
+      rsp = { hits: results, totalHits: results.length };
+    } else {
+      rsp = await this.fetchResponse(uri);
+    }
     const first = toDashboardResults(rsp, query.sort ?? '');
     if (first.name === loadingFrameName) {
       return this.fallbackSearcher.search(query);
@@ -141,8 +152,9 @@ export class UnifiedSearcher implements GrafanaSearcher {
       const field = first.fields.find((f) => f.name === meta.sortBy);
       if (field) {
         const name = getSortFieldDisplayName(field.name);
-        meta.sortBy = name;
-        field.name = name; // make it look nicer
+        // We don't want to directly change the field name, just the display name
+        // When the columns names get generated it uses getFieldDisplayName(), which will check if there is a field.config.displayName
+        field.config.displayName = name;
       }
     }
 
@@ -195,7 +207,7 @@ export class UnifiedSearcher implements GrafanaSearcher {
       totalRows: meta.count ?? first.length,
       view,
       loadMoreItems: async (startIndex: number, stopIndex: number): Promise<void> => {
-        loadMax = Math.max(loadMax, stopIndex);
+        loadMax = Math.max(loadMax, stopIndex + 1);
         if (!pending) {
           pending = getNextPage();
         }
@@ -209,11 +221,6 @@ export class UnifiedSearcher implements GrafanaSearcher {
 
   async fetchResponse(uri: string) {
     const rsp = await getBackendSrv().get<SearchAPIResponse>(uri);
-    if (isResourceList<DashboardDataDTO>(rsp)) {
-      const hits = resourceToSearchResult(rsp);
-      const totalHits = rsp.items.length;
-      return { ...rsp, hits, totalHits };
-    }
     const isFolderCacheStale = await this.isFolderCacheStale(rsp.hits);
     if (!isFolderCacheStale) {
       return rsp;
@@ -257,6 +264,10 @@ export class UnifiedSearcher implements GrafanaSearcher {
     let uri = searchURI;
     uri += `?query=${encodeURIComponent(query.query ?? '*')}`;
     uri += `&limit=${query.limit ?? pageSize}`;
+
+    if (query.offset) {
+      uri += `&offset=${query.offset}`;
+    }
 
     if (!isEmpty(query.location)) {
       uri += `&folder=${query.location}`;
@@ -379,7 +390,8 @@ export function toDashboardResults(rsp: SearchAPIResponse, sort: string): DataFr
 }
 
 async function loadLocationInfo(): Promise<Record<string, LocationInfo>> {
-  const uri = `${searchURI}?type=folders`;
+  // TODO: use proper pagination for search.
+  const uri = `${searchURI}?type=folders&limit=100000`;
   const rsp = getBackendSrv()
     .get<SearchAPIResponse>(uri)
     .then((rsp) => {

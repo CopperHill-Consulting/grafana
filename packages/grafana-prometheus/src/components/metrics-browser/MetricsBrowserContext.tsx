@@ -5,8 +5,12 @@ import { TimeRange } from '@grafana/data';
 import { PrometheusLanguageProviderInterface } from '../../language_provider';
 
 import { buildSelector } from './selectorBuilder';
-import { Metric } from './types';
 import { useMetricsLabelsValues } from './useMetricsLabelsValues';
+
+export interface Metric {
+  name: string;
+  details?: string;
+}
 
 /**
  * Context for the Metrics Browser component
@@ -20,8 +24,8 @@ interface MetricsBrowserContextType {
   setStatus: (status: string) => void;
 
   // Series limit settings
-  seriesLimit: string;
-  setSeriesLimit: (limit: string) => void;
+  seriesLimit: number;
+  setSeriesLimit: (limit: number) => void;
 
   // Callback when selector changes
   onChange: (selector: string) => void;
@@ -29,6 +33,8 @@ interface MetricsBrowserContextType {
   // Data and selection state
   metrics: Metric[];
   labelKeys: string[];
+  isLoadingLabelKeys: boolean;
+  isLoadingLabelValues: boolean;
   labelValues: Record<string, string[]>;
   selectedMetric: string;
   selectedLabelKeys: string[];
@@ -74,6 +80,8 @@ export function MetricsBrowserProvider({
     validationStatus,
     metrics,
     labelKeys,
+    isLoadingLabelKeys,
+    isLoadingLabelValues,
     labelValues,
     selectedMetric,
     selectedLabelKeys,
@@ -105,6 +113,8 @@ export function MetricsBrowserProvider({
       getSelector,
       metrics,
       labelKeys,
+      isLoadingLabelKeys,
+      isLoadingLabelValues,
       labelValues,
       selectedMetric,
       selectedLabelKeys,
@@ -124,16 +134,18 @@ export function MetricsBrowserProvider({
       setSeriesLimit,
       validationStatus,
       onChange,
-      metrics,
       getSelector,
+      metrics,
       labelKeys,
+      isLoadingLabelKeys,
+      isLoadingLabelValues,
       labelValues,
       selectedMetric,
       selectedLabelKeys,
       selectedLabelValues,
+      handleSelectedMetricChange,
       handleSelectedLabelKeyChange,
       handleSelectedLabelValueChange,
-      handleSelectedMetricChange,
       handleValidation,
       handleClear,
     ]

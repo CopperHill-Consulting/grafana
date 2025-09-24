@@ -2,16 +2,18 @@ package resource
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/tls"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/fullstorydev/grpchan"
 	"github.com/fullstorydev/grpchan/inprocgrpc"
-	"github.com/go-jose/go-jose/v3/jwt"
+	"github.com/go-jose/go-jose/v4"
+	"github.com/go-jose/go-jose/v4/jwt"
 	grpcAuth "github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/auth"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -29,6 +31,7 @@ import (
 	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
 )
 
+//go:generate mockery --name ResourceClient --structname MockResourceClient --inpackage --filename client_mock.go --with-expecter
 type ResourceClient interface {
 	resourcepb.ResourceStoreClient
 	resourcepb.ResourceIndexClient
@@ -48,14 +51,14 @@ type resourceClient struct {
 	resourcepb.DiagnosticsClient
 }
 
-func NewResourceClient(conn grpc.ClientConnInterface, cfg *setting.Cfg, features featuremgmt.FeatureToggles, tracer trace.Tracer) (ResourceClient, error) {
+func NewResourceClient(conn, indexConn grpc.ClientConnInterface, cfg *setting.Cfg, features featuremgmt.FeatureToggles, tracer trace.Tracer) (ResourceClient, error) {
 	if !features.IsEnabledGlobally(featuremgmt.FlagAppPlatformGrpcClientAuth) {
-		return NewLegacyResourceClient(conn), nil
+		return NewLegacyResourceClient(conn, indexConn), nil
 	}
 
 	clientCfg := authnGrpcUtils.ReadGrpcClientConfig(cfg)
 
-	return NewRemoteResourceClient(tracer, conn, RemoteResourceClientConfig{
+	return NewRemoteResourceClient(tracer, conn, indexConn, RemoteResourceClientConfig{
 		Token:            clientCfg.Token,
 		TokenExchangeURL: clientCfg.TokenExchangeURL,
 		Audiences:        []string{"resourceStore"},
@@ -64,16 +67,25 @@ func NewResourceClient(conn grpc.ClientConnInterface, cfg *setting.Cfg, features
 	})
 }
 
-func NewLegacyResourceClient(channel grpc.ClientConnInterface) ResourceClient {
-	cc := grpchan.InterceptClientConn(channel, grpcUtils.UnaryClientInterceptor, grpcUtils.StreamClientInterceptor)
+func newResourceClient(storageCc grpc.ClientConnInterface, indexCc grpc.ClientConnInterface) ResourceClient {
 	return &resourceClient{
-		ResourceStoreClient:      resourcepb.NewResourceStoreClient(cc),
-		ResourceIndexClient:      resourcepb.NewResourceIndexClient(cc),
-		ManagedObjectIndexClient: resourcepb.NewManagedObjectIndexClient(cc),
-		BulkStoreClient:          resourcepb.NewBulkStoreClient(cc),
-		BlobStoreClient:          resourcepb.NewBlobStoreClient(cc),
-		DiagnosticsClient:        resourcepb.NewDiagnosticsClient(cc),
+		ResourceStoreClient:      resourcepb.NewResourceStoreClient(storageCc),
+		ResourceIndexClient:      resourcepb.NewResourceIndexClient(indexCc),
+		ManagedObjectIndexClient: resourcepb.NewManagedObjectIndexClient(indexCc),
+		BulkStoreClient:          resourcepb.NewBulkStoreClient(storageCc),
+		BlobStoreClient:          resourcepb.NewBlobStoreClient(storageCc),
+		DiagnosticsClient:        resourcepb.NewDiagnosticsClient(storageCc),
 	}
+}
+
+func NewAuthlessResourceClient(cc grpc.ClientConnInterface) ResourceClient {
+	return newResourceClient(cc, cc)
+}
+
+func NewLegacyResourceClient(channel grpc.ClientConnInterface, indexChannel grpc.ClientConnInterface) ResourceClient {
+	cc := grpchan.InterceptClientConn(channel, grpcUtils.UnaryClientInterceptor, grpcUtils.StreamClientInterceptor)
+	cci := grpchan.InterceptClientConn(indexChannel, grpcUtils.UnaryClientInterceptor, grpcUtils.StreamClientInterceptor)
+	return newResourceClient(cc, cci)
 }
 
 func NewLocalResourceClient(server ResourceServer) ResourceClient {
@@ -106,14 +118,7 @@ func NewLocalResourceClient(server ResourceServer) ResourceClient {
 	)
 
 	cc := grpchan.InterceptClientConn(channel, clientInt.UnaryClientInterceptor, clientInt.StreamClientInterceptor)
-	return &resourceClient{
-		ResourceStoreClient:      resourcepb.NewResourceStoreClient(cc),
-		ResourceIndexClient:      resourcepb.NewResourceIndexClient(cc),
-		ManagedObjectIndexClient: resourcepb.NewManagedObjectIndexClient(cc),
-		BulkStoreClient:          resourcepb.NewBulkStoreClient(cc),
-		BlobStoreClient:          resourcepb.NewBlobStoreClient(cc),
-		DiagnosticsClient:        resourcepb.NewDiagnosticsClient(cc),
-	}
+	return newResourceClient(cc, cc)
 }
 
 type RemoteResourceClientConfig struct {
@@ -124,7 +129,7 @@ type RemoteResourceClientConfig struct {
 	AllowInsecure    bool
 }
 
-func NewRemoteResourceClient(tracer trace.Tracer, conn grpc.ClientConnInterface, cfg RemoteResourceClientConfig) (ResourceClient, error) {
+func NewRemoteResourceClient(tracer trace.Tracer, conn grpc.ClientConnInterface, indexConn grpc.ClientConnInterface, cfg RemoteResourceClientConfig) (ResourceClient, error) {
 	exchangeOpts := []authnlib.ExchangeClientOpts{}
 
 	if cfg.AllowInsecure {
@@ -148,14 +153,8 @@ func NewRemoteResourceClient(tracer trace.Tracer, conn grpc.ClientConnInterface,
 	)
 
 	cc := grpchan.InterceptClientConn(conn, clientInt.UnaryClientInterceptor, clientInt.StreamClientInterceptor)
-	return &resourceClient{
-		ResourceStoreClient:      resourcepb.NewResourceStoreClient(cc),
-		ResourceIndexClient:      resourcepb.NewResourceIndexClient(cc),
-		BlobStoreClient:          resourcepb.NewBlobStoreClient(cc),
-		BulkStoreClient:          resourcepb.NewBulkStoreClient(cc),
-		ManagedObjectIndexClient: resourcepb.NewManagedObjectIndexClient(cc),
-		DiagnosticsClient:        resourcepb.NewDiagnosticsClient(cc),
-	}, nil
+	cci := grpchan.InterceptClientConn(indexConn, clientInt.UnaryClientInterceptor, clientInt.StreamClientInterceptor)
+	return newResourceClient(cc, cci), nil
 }
 
 var authLogger = slog.Default().With("logger", "resource-client-auth-interceptor")
@@ -195,6 +194,23 @@ func ProvideInProcExchanger() authnlib.StaticTokenExchanger {
 }
 
 func createInProcToken() (string, error) {
+	// Generate ES256 private key
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate ES256 private key: %w", err)
+	}
+
+	// Create signer with ES256 algorithm
+	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.ES256, Key: privateKey}, &jose.SignerOptions{
+		ExtraHeaders: map[jose.HeaderKey]interface{}{
+			jose.HeaderKey("typ"): authnlib.TokenTypeAccess,
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create signer: %w", err)
+	}
+
+	// Create claims
 	claims := authnlib.Claims[authnlib.AccessTokenClaims]{
 		Claims: jwt.Claims{
 			Issuer:   "grafana",
@@ -208,18 +224,11 @@ func createInProcToken() (string, error) {
 		},
 	}
 
-	header, err := json.Marshal(map[string]string{
-		"alg": "none",
-		"typ": authnlib.TokenTypeAccess,
-	})
+	// Sign and create the JWT
+	token, err := jwt.Signed(signer).Claims(claims).Serialize()
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("failed to sign JWT: %w", err)
 	}
 
-	payload, err := json.Marshal(claims)
-	if err != nil {
-		return "", err
-	}
-
-	return base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(payload) + ".", nil
+	return token, nil
 }

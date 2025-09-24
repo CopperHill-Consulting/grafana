@@ -148,7 +148,6 @@ Use the IP address of the Prometheus container, or the hostname if you are using
 There are three authentication options for the Prometheus data source.
 
 - **Basic authentication** - The most common authentication method.
-
   - **User** - The username you use to connect to the data source.
   - **Password** - The password you use to connect to the data source.
 
@@ -214,6 +213,7 @@ Following are optional configuration settings you can configure for more control
 - **Custom query parameters** - Add custom parameters to the Prometheus query URL, which allow for more control over how queries are executed. Examples: `timeout`, `partial_response`, `dedup`, or `max_source_resolution`. Multiple parameters should be joined using `&`.
 - **HTTP method** - Select either the `POST` or `GET` HTTP method to query your data source. `POST`is recommended and selected by default, as it supports larger queries. Select `GET` if you're using Prometheus version 2.1 or older, or if your network restricts `POST` requests.
   Toggle on
+- **Series limit** - Number of maximum returned series. The limit applies to all resources (metrics, labels, and values) for both endpoints (series and labels). Leave the field empty to use the default limit (40000). Set to 0 to disable the limit and fetch everything — this may cause performance issues. Default limit is 40000.
 - **Use series endpoint** - Enabling this option makes Grafana use the series endpoint (/api/v1/series) with the match[] parameter instead of the label values endpoint (/api/v1/label/<label_name>/values). While the label values endpoint is generally more performant, some users may prefer the series endpoint because it supports the `POST` method, whereas the label values endpoint only allows `GET` requests.
 
 **Exemplars:**
@@ -233,7 +233,9 @@ You can add multiple exemplars.
 
 - **Private data source connect** - _Only for Grafana Cloud users._ Private data source connect, or PDC, allows you to establish a private, secured connection between a Grafana Cloud instance, or stack, and data sources secured within a private network. Click the drop-down to locate the URL for PDC. For more information regarding Grafana PDC refer to [Private data source connect (PDC)](ref:private-data-source-connect) and [Configure Grafana private data source connect (PDC)](https://grafana.com/docs/grafana-cloud/connect-externally-hosted/private-data-source-connect/configure-pdc/#configure-grafana-private-data-source-connect-pdc) for steps on setting up a PDC connection.
 
-Click **Manage private data source connect** to be taken to your PDC connection page, where you’ll find your PDC configuration details.
+  If you use PDC with SIGv4 (AWS Signature Version 4 Authentication), the PDC agent must allow internet egress to`sts.<region>.amazonaws.com:443`.
+
+  Click **Manage private data source connect** to open your PDC connection page and view your configuration details.
 
 After you have configured your Prometheus data source options, click **Save & test** at the bottom to test out your data source connection.
 
@@ -255,34 +257,34 @@ After you have provisioned a data source you cannot edit it.
 
 **Example of a Prometheus data source configuration:**
 
-    ```yaml
-    apiVersion: 1
+```yaml
+apiVersion: 1
 
-    datasources:
-      - name: Prometheus
-        type: prometheus
-        access: proxy
-        url: http://localhost:9090
-        jsonData:
-          httpMethod: POST
-          manageAlerts: true
-          allowAsRecordingRulesTarget: true
-          prometheusType: Prometheus
-          prometheusVersion: 3.3.0
-          cacheLevel: 'High'
-          disableRecordingRules: false
-          timeInterval: 10s   # Prometheus scrape interval
-          incrementalQueryOverlapWindow: 10m
-          exemplarTraceIdDestinations:
-            # Field with internal link pointing to data source in Grafana.
-            # datasourceUid value can be anything, but it should be unique across all defined data source uids.
-            - datasourceUid: my_jaeger_uid
-              name: traceID
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://localhost:9090
+    jsonData:
+      httpMethod: POST
+      manageAlerts: true
+      allowAsRecordingRulesTarget: true
+      prometheusType: Prometheus
+      prometheusVersion: 3.3.0
+      cacheLevel: 'High'
+      disableRecordingRules: false
+      timeInterval: 10s # Prometheus scrape interval
+      incrementalQueryOverlapWindow: 10m
+      exemplarTraceIdDestinations:
+        # Field with internal link pointing to data source in Grafana.
+        # datasourceUid value can be anything, but it should be unique across all defined data source uids.
+        - datasourceUid: my_jaeger_uid
+          name: traceID
 
-            # Field with external link.
-            - name: traceID
-              url: 'http://localhost:3000/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Jaeger%22,%7B%22query%22:%22$${__value.raw}%22%7D%5D'
-    ```
+        # Field with external link.
+        - name: traceID
+          url: 'http://localhost:3000/explore?orgId=1&left=%5B%22now-1h%22,%22now%22,%22Jaeger%22,%7B%22query%22:%22$${__value.raw}%22%7D%5D'
+```
 
 ## Azure authentication settings
 
@@ -297,9 +299,9 @@ Add the following setting in the **[auth]** section of the .ini configuration fi
 azure_auth_enabled = true
 ```
 
-{{% admonition type="note" %}}
+{{< admonition type="note" >}}
 If you are using Azure authentication, don't enable `Forward OAuth identity`. Both methods use the same HTTP authorization headers, and the OAuth token will override your Azure credentials.
-{{% /admonition %}}
+{{< /admonition >}}
 
 ## Recording rules (beta)
 

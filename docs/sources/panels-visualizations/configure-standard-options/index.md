@@ -7,6 +7,7 @@ aliases:
   - ../panels/reference-standard-field-definitions/
   - ../panels/standard-field-definitions/
   - ../panels/working-with-panels/format-standard-fields/
+  - ../panels/field-configuration-options/ # /docs/grafana/latest/panels/field-configuration-options/
 keywords:
   - panel
   - dashboard
@@ -152,9 +153,9 @@ This section explains all available standard options.
 
 To set these options, expand the **Standard options** section in the panel editor pane. Most field options won't affect the visualization until you click outside of the field option box you're editing or press Enter.
 
-{{% admonition type="note" %}}
+{{< admonition type="note" >}}
 Not all of the options listed apply to all visualizations with standard options.
-{{% /admonition %}}
+{{< /admonition >}}
 
 ### Unit
 
@@ -198,7 +199,6 @@ To display timestamps that are in seconds since epoch, multiply your timestamp v
 1. Click **Add transformation**.
 1. Select the **Add field from calculation** transformation.
 1. Set the following options:
-
    - **Mode** - **Binary operation**
    - **Operation**
      - Select your timestamp field

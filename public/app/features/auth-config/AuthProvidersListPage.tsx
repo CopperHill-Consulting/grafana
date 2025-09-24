@@ -7,11 +7,13 @@ import { reportInteraction } from '@grafana/runtime';
 import { Grid, TextLink, ToolbarButton } from '@grafana/ui';
 import { Page } from 'app/core/components/Page/Page';
 import { config } from 'app/core/config';
-import { StoreState } from 'app/types';
+import { StoreState } from 'app/types/store';
+
+import { isOpenSourceBuildOrUnlicenced } from '../admin/EnterpriseAuthFeaturesCard';
 
 import AuthDrawer from './AuthDrawer';
 import ConfigureAuthCTA from './components/ConfigureAuthCTA';
-import { ProviderCard } from './components/ProviderCard';
+import { ProviderCard, ProviderSAMLCard, ProviderSCIMCard } from './components/ProviderCard';
 import { loadSettings } from './state/actions';
 
 import { getRegisteredAuthProviders } from './index';
@@ -46,7 +48,6 @@ export const AuthConfigPageUnconnected = ({
   }, [loadSettings]);
 
   const [showDrawer, setShowDrawer] = useState(false);
-
   const authProviders = getRegisteredAuthProviders();
   const availableProviders = authProviders.filter((p) => !providerStatuses[p.id]?.hide);
   const onProviderCardClick = (providerType: string, enabled: boolean) => {
@@ -120,6 +121,12 @@ export const AuthConfigPageUnconnected = ({
                   configPath={settings.configPath}
                 />
               ))}
+            {isOpenSourceBuildOrUnlicenced() && (
+              <>
+                <ProviderSAMLCard />
+                <ProviderSCIMCard />
+              </>
+            )}
             {showDrawer && <AuthDrawer onClose={() => setShowDrawer(false)}></AuthDrawer>}
           </Grid>
         )}

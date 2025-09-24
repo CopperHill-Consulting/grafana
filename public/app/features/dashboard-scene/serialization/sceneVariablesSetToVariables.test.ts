@@ -23,7 +23,7 @@ import {
   SceneVariableSet,
   TextBoxVariable,
 } from '@grafana/scenes';
-import { DataSourceRef, VariableRefresh } from '@grafana/schema';
+import { DataSourceRef, VariableHide, VariableRefresh } from '@grafana/schema';
 
 import { sceneVariablesSetToSchemaV2Variables, sceneVariablesSetToVariables } from './sceneVariablesSetToVariables';
 
@@ -45,8 +45,8 @@ const getDataSourceMock = jest.fn();
 
 const fakeDsMock: DataSourceApi = {
   name: 'fake-std',
-  type: 'fake-std',
-  getRef: () => ({ type: 'fake-std', uid: 'fake-std' }),
+  type: 'fake-type',
+  getRef: () => ({ type: 'fake-type', uid: 'fake-uid' }),
   query: () =>
     Promise.resolve({
       data: [],
@@ -74,7 +74,7 @@ const fakeDsMock: DataSourceApi = {
     toDataQuery: (q) => ({ ...q, refId: 'FakeDataSource-refId' }),
   },
   id: 1,
-  uid: 'fake-std',
+  uid: 'fake-uid',
 };
 
 jest.mock('@grafana/runtime', () => ({
@@ -93,14 +93,17 @@ describe('sceneVariablesSetToVariables', () => {
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: ['selected-value'],
       text: ['selected-value-text'],
-      datasource: { uid: 'fake-std', type: 'fake-std' },
+      datasource: { uid: 'fake-uid', type: 'fake-type' },
       query: 'query',
       includeAll: true,
       allowCustomValue: true,
       allValue: 'test-all',
       isMulti: true,
+      staticOptions: [{ label: 'test', value: 'test' }],
+      staticOptionsOrder: 'after',
     });
 
     const set = new SceneVariableSet({
@@ -123,11 +126,12 @@ describe('sceneVariablesSetToVariables', () => {
         ],
       },
       "datasource": {
-        "type": "fake-std",
-        "uid": "fake-std",
+        "type": "fake-type",
+        "uid": "fake-uid",
       },
       "definition": undefined,
       "description": "test-desc",
+      "hide": 3,
       "includeAll": true,
       "label": "test-label",
       "multi": true,
@@ -136,6 +140,13 @@ describe('sceneVariablesSetToVariables', () => {
       "query": "query",
       "refresh": 1,
       "regex": "",
+      "staticOptions": [
+        {
+          "text": "test",
+          "value": "test",
+        },
+      ],
+      "staticOptionsOrder": "after",
       "type": "query",
     }
     `);
@@ -146,15 +157,18 @@ describe('sceneVariablesSetToVariables', () => {
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: ['selected-value'],
       text: ['selected-value-text'],
-      datasource: { uid: 'fake-std', type: 'fake-std' },
+      datasource: { uid: 'fake-uid', type: 'fake-type' },
       query: 'query',
       definition: 'query',
       includeAll: true,
       allValue: 'test-all',
       allowCustomValue: false,
       isMulti: true,
+      staticOptions: [{ label: 'test', value: 'test' }],
+      staticOptionsOrder: 'after',
     });
     const set = new SceneVariableSet({
       variables: [variable],
@@ -176,11 +190,12 @@ describe('sceneVariablesSetToVariables', () => {
         ],
       },
       "datasource": {
-        "type": "fake-std",
-        "uid": "fake-std",
+        "type": "fake-type",
+        "uid": "fake-uid",
       },
       "definition": "query",
       "description": "test-desc",
+      "hide": 3,
       "includeAll": true,
       "label": "test-label",
       "multi": true,
@@ -189,6 +204,13 @@ describe('sceneVariablesSetToVariables', () => {
       "query": "query",
       "refresh": 1,
       "regex": "",
+      "staticOptions": [
+        {
+          "text": "test",
+          "value": "test",
+        },
+      ],
+      "staticOptionsOrder": "after",
       "type": "query",
     }
     `);
@@ -199,9 +221,10 @@ describe('sceneVariablesSetToVariables', () => {
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: ['selected-value'],
       text: ['selected-value-text'],
-      datasource: { uid: 'fake-std', type: 'fake-std' },
+      datasource: { uid: 'fake-uid', type: 'fake-type' },
       query: 'query',
       options: [
         { label: 'test', value: 'test' },
@@ -221,14 +244,15 @@ describe('sceneVariablesSetToVariables', () => {
     expect(result[0].options).toEqual([]);
   });
 
-  it('should handle Query variable when sceneVariablesSetToVariables shoudl keep options', () => {
+  it('should handle Query variable when sceneVariablesSetToVariables should keep options', () => {
     const variable = new QueryVariable({
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: ['test'],
       text: ['test'],
-      datasource: { uid: 'fake-std', type: 'fake-std' },
+      datasource: { uid: 'fake-uid', type: 'fake-type' },
       query: 'query',
       options: [
         { label: 'test', value: 'test' },
@@ -255,6 +279,7 @@ describe('sceneVariablesSetToVariables', () => {
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: ['selected-ds-1', 'selected-ds-2'],
       text: ['selected-ds-1-text', 'selected-ds-2-text'],
       pluginId: 'fake-std',
@@ -285,6 +310,7 @@ describe('sceneVariablesSetToVariables', () => {
         ],
       },
       "description": "test-desc",
+      "hide": 3,
       "includeAll": true,
       "label": "test-label",
       "multi": true,
@@ -303,6 +329,7 @@ describe('sceneVariablesSetToVariables', () => {
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: ['test', 'test2'],
       text: ['test', 'test2'],
       query: 'test,test1,test2',
@@ -338,6 +365,7 @@ describe('sceneVariablesSetToVariables', () => {
         ],
       },
       "description": "test-desc",
+      "hide": 3,
       "includeAll": true,
       "label": "test-label",
       "multi": true,
@@ -370,6 +398,7 @@ describe('sceneVariablesSetToVariables', () => {
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: 'constant value',
       skipUrlSync: true,
     });
@@ -402,6 +431,7 @@ describe('sceneVariablesSetToVariables', () => {
       name: 'test',
       label: 'test-label',
       description: 'test-desc',
+      hide: VariableHide.inControlsMenu,
       value: 'text value',
       skipUrlSync: true,
     });
@@ -419,6 +449,7 @@ describe('sceneVariablesSetToVariables', () => {
         "value": "text value",
       },
       "description": "test-desc",
+      "hide": 3,
       "label": "test-label",
       "name": "test",
       "options": [
@@ -440,6 +471,7 @@ describe('sceneVariablesSetToVariables', () => {
       intervals: ['1m', '2m', '3m', '1h', '1d'],
       value: '1m',
       refresh: VariableRefresh.onDashboardLoad,
+      hide: VariableHide.inControlsMenu,
     });
     const set = new SceneVariableSet({
       variables: [variable],
@@ -457,6 +489,7 @@ describe('sceneVariablesSetToVariables', () => {
         "value": "1m",
       },
       "description": undefined,
+      "hide": 3,
       "label": undefined,
       "name": "",
       "options": [
@@ -499,7 +532,8 @@ describe('sceneVariablesSetToVariables', () => {
       allowCustomValue: true,
       label: 'test-label',
       description: 'test-desc',
-      datasource: { uid: 'fake-std', type: 'fake-std' },
+      hide: VariableHide.inControlsMenu,
+      datasource: { uid: 'fake-uid', type: 'fake-type' },
       filters: [
         {
           key: 'filterTest',
@@ -533,8 +567,8 @@ describe('sceneVariablesSetToVariables', () => {
         },
       ],
       "datasource": {
-        "type": "fake-std",
-        "uid": "fake-std",
+        "type": "fake-type",
+        "uid": "fake-uid",
       },
       "defaultKeys": undefined,
       "description": "test-desc",
@@ -545,6 +579,7 @@ describe('sceneVariablesSetToVariables', () => {
           "value": "test",
         },
       ],
+      "hide": 3,
       "label": "test-label",
       "name": "test",
       "type": "adhoc",
@@ -559,6 +594,7 @@ describe('sceneVariablesSetToVariables', () => {
         allowCustomValue: true,
         label: 'test-label',
         description: 'test-desc',
+        hide: VariableHide.inControlsMenu,
         datasource: { uid: 'fake-std', type: 'fake-std' },
         originFilters: [
           {
@@ -588,6 +624,7 @@ describe('sceneVariablesSetToVariables', () => {
         "defaultKeys": undefined,
         "description": "test-desc",
         "filters": [],
+        "hide": 3,
         "label": "test-label",
         "name": "test",
         "type": "adhoc",
@@ -601,6 +638,7 @@ describe('sceneVariablesSetToVariables', () => {
         allowCustomValue: true,
         label: 'test-label',
         description: 'test-desc',
+        hide: VariableHide.inControlsMenu,
         datasource: { uid: 'fake-std', type: 'fake-std' },
         originFilters: [
           {
@@ -648,6 +686,7 @@ describe('sceneVariablesSetToVariables', () => {
             "value": "test2",
           },
         ],
+        "hide": 3,
         "label": "test-label",
         "name": "test",
         "type": "adhoc",
@@ -662,7 +701,8 @@ describe('sceneVariablesSetToVariables', () => {
       allowCustomValue: true,
       label: 'test-label',
       description: 'test-desc',
-      datasource: { uid: 'fake-std', type: 'fake-std' },
+      hide: VariableHide.inControlsMenu,
+      datasource: { uid: 'fake-uid', type: 'fake-type' },
       defaultKeys: [
         {
           text: 'some',
@@ -710,8 +750,8 @@ describe('sceneVariablesSetToVariables', () => {
         },
       ],
       "datasource": {
-        "type": "fake-std",
-        "uid": "fake-std",
+        "type": "fake-type",
+        "uid": "fake-uid",
       },
       "defaultKeys": [
         {
@@ -735,6 +775,7 @@ describe('sceneVariablesSetToVariables', () => {
           "value": "test",
         },
       ],
+      "hide": 3,
       "label": "test-label",
       "name": "test",
       "type": "adhoc",
@@ -757,7 +798,8 @@ describe('sceneVariablesSetToVariables', () => {
         label: 'test-label',
         description: 'test-desc',
         allowCustomValue: true,
-        datasource: { uid: 'fake-std', type: 'fake-std' },
+        hide: VariableHide.inControlsMenu,
+        datasource: { uid: 'fake-uid', type: 'fake-type' },
         defaultOptions: [
           {
             text: 'Foo',
@@ -784,11 +826,12 @@ describe('sceneVariablesSetToVariables', () => {
           "value": [],
         },
         "datasource": {
-          "type": "fake-std",
-          "uid": "fake-std",
+          "type": "fake-type",
+          "uid": "fake-uid",
         },
         "defaultValue": undefined,
         "description": "test-desc",
+        "hide": 3,
         "label": "test-label",
         "name": "test",
         "options": [
@@ -813,7 +856,8 @@ describe('sceneVariablesSetToVariables', () => {
         name: 'test',
         label: 'test-label',
         description: 'test-desc',
-        datasource: { uid: 'fake-std', type: 'fake-std' },
+        hide: VariableHide.inControlsMenu,
+        datasource: { uid: 'fake-uid', type: 'fake-type' },
         defaultOptions: [
           {
             text: 'Foo',
@@ -841,11 +885,14 @@ describe('sceneVariablesSetToVariables', () => {
         description: 'test-desc',
         value: ['selected-value'],
         text: ['selected-value-text'],
-        datasource: { uid: 'fake-std', type: 'fake-std' },
+        datasource: { uid: 'fake-uid', type: 'fake-type' },
         query: 'query',
         includeAll: true,
         allValue: 'test-all',
         isMulti: true,
+        staticOptions: [{ label: 'test', value: 'test' }],
+        staticOptionsOrder: 'after',
+        hide: VariableHide.inControlsMenu,
       });
 
       const set = new SceneVariableSet({
@@ -856,44 +903,52 @@ describe('sceneVariablesSetToVariables', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchInlineSnapshot(`
-    {
-      "kind": "QueryVariable",
-      "spec": {
-        "allValue": "test-all",
-        "allowCustomValue": true,
-        "current": {
-          "text": [
-            "selected-value-text",
-          ],
-          "value": [
-            "selected-value",
-          ],
-        },
-        "datasource": {
-          "type": "fake-std",
-          "uid": "fake-std",
-        },
-        "definition": undefined,
-        "description": "test-desc",
-        "hide": "dontHide",
-        "includeAll": true,
-        "label": "test-label",
-        "multi": true,
-        "name": "test",
-        "options": [],
-        "query": {
-          "kind": "fake-std",
+        {
+          "kind": "QueryVariable",
           "spec": {
-            "__legacyStringValue": "query",
+            "allValue": "test-all",
+            "allowCustomValue": true,
+            "current": {
+              "text": [
+                "selected-value-text",
+              ],
+              "value": [
+                "selected-value",
+              ],
+            },
+            "definition": undefined,
+            "description": "test-desc",
+            "hide": "inControlsMenu",
+            "includeAll": true,
+            "label": "test-label",
+            "multi": true,
+            "name": "test",
+            "options": [],
+            "query": {
+              "datasource": {
+                "name": "fake-uid",
+              },
+              "group": "fake-type",
+              "kind": "DataQuery",
+              "spec": {
+                "__legacyStringValue": "query",
+              },
+              "version": "v0",
+            },
+            "refresh": "onDashboardLoad",
+            "regex": "",
+            "skipUrlSync": false,
+            "sort": "disabled",
+            "staticOptions": [
+              {
+                "text": "test",
+                "value": "test",
+              },
+            ],
+            "staticOptionsOrder": "after",
           },
-        },
-        "refresh": "onDashboardLoad",
-        "regex": "",
-        "skipUrlSync": false,
-        "sort": "disabled",
-      },
-    }
-    `);
+        }
+      `);
     });
 
     it('should handle CustomVariable', () => {
@@ -904,6 +959,7 @@ describe('sceneVariablesSetToVariables', () => {
         value: ['test', 'test2'],
         text: ['test', 'test2'],
         query: 'test,test1,test2',
+        hide: VariableHide.inControlsMenu,
         options: [
           { label: 'test', value: 'test' },
           { label: 'test1', value: 'test1' },
@@ -937,7 +993,7 @@ describe('sceneVariablesSetToVariables', () => {
           ],
         },
         "description": "test-desc",
-        "hide": "dontHide",
+        "hide": "inControlsMenu",
         "includeAll": true,
         "label": "test-label",
         "multi": true,
@@ -977,6 +1033,7 @@ describe('sceneVariablesSetToVariables', () => {
         includeAll: true,
         allValue: 'test-all',
         isMulti: true,
+        hide: VariableHide.inControlsMenu,
       });
       const set = new SceneVariableSet({
         variables: [variable],
@@ -1002,7 +1059,7 @@ describe('sceneVariablesSetToVariables', () => {
           ],
         },
         "description": "test-desc",
-        "hide": "dontHide",
+        "hide": "inControlsMenu",
         "includeAll": true,
         "label": "test-label",
         "multi": true,
@@ -1023,6 +1080,7 @@ describe('sceneVariablesSetToVariables', () => {
         label: 'test-label',
         description: 'test-desc',
         value: 'constant value',
+        hide: VariableHide.inControlsMenu,
         skipUrlSync: true,
       });
       const set = new SceneVariableSet({
@@ -1041,7 +1099,7 @@ describe('sceneVariablesSetToVariables', () => {
           "value": "constant value",
         },
         "description": "test-desc",
-        "hide": "dontHide",
+        "hide": "inControlsMenu",
         "label": "test-label",
         "name": "test",
         "query": "constant value",
@@ -1057,6 +1115,7 @@ describe('sceneVariablesSetToVariables', () => {
         label: 'test-label',
         description: 'test-desc',
         value: 'text value',
+        hide: VariableHide.inControlsMenu,
         skipUrlSync: true,
       });
       const set = new SceneVariableSet({
@@ -1075,7 +1134,7 @@ describe('sceneVariablesSetToVariables', () => {
           "value": "text value",
         },
         "description": "test-desc",
-        "hide": "dontHide",
+        "hide": "inControlsMenu",
         "label": "test-label",
         "name": "test",
         "query": "text value",
@@ -1089,6 +1148,7 @@ describe('sceneVariablesSetToVariables', () => {
       const variable = new IntervalVariable({
         intervals: ['1m', '2m', '3m', '1h', '1d'],
         value: '1m',
+        hide: VariableHide.inControlsMenu,
         refresh: VariableRefresh.onDashboardLoad,
       });
       const set = new SceneVariableSet({
@@ -1109,7 +1169,7 @@ describe('sceneVariablesSetToVariables', () => {
           "value": "1m",
         },
         "description": undefined,
-        "hide": "dontHide",
+        "hide": "inControlsMenu",
         "label": undefined,
         "name": "",
         "options": [
@@ -1152,7 +1212,8 @@ describe('sceneVariablesSetToVariables', () => {
         name: 'test',
         label: 'test-label',
         description: 'test-desc',
-        datasource: { uid: 'fake-std', type: 'fake-std' },
+        hide: VariableHide.inControlsMenu,
+        datasource: { uid: 'fake-uid', type: 'fake-type' },
         filters: [
           {
             key: 'filterTest',
@@ -1177,6 +1238,10 @@ describe('sceneVariablesSetToVariables', () => {
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchInlineSnapshot(`
     {
+      "datasource": {
+        "name": "fake-uid",
+      },
+      "group": "fake-type",
       "kind": "AdhocVariable",
       "spec": {
         "allowCustomValue": true,
@@ -1187,10 +1252,6 @@ describe('sceneVariablesSetToVariables', () => {
             "value": "test",
           },
         ],
-        "datasource": {
-          "type": "fake-std",
-          "uid": "fake-std",
-        },
         "defaultKeys": [],
         "description": "test-desc",
         "filters": [
@@ -1200,7 +1261,7 @@ describe('sceneVariablesSetToVariables', () => {
             "value": "test",
           },
         ],
-        "hide": "dontHide",
+        "hide": "inControlsMenu",
         "label": "test-label",
         "name": "test",
         "skipUrlSync": false,
@@ -1214,7 +1275,8 @@ describe('sceneVariablesSetToVariables', () => {
         name: 'test',
         label: 'test-label',
         description: 'test-desc',
-        datasource: { uid: 'fake-std', type: 'fake-std' },
+        hide: VariableHide.inControlsMenu,
+        datasource: { uid: 'fake-uid', type: 'fake-type' },
         defaultKeys: [
           {
             text: 'some',
@@ -1253,6 +1315,10 @@ describe('sceneVariablesSetToVariables', () => {
       expect(result).toHaveLength(1);
       expect(result[0]).toMatchInlineSnapshot(`
     {
+      "datasource": {
+        "name": "fake-uid",
+      },
+      "group": "fake-type",
       "kind": "AdhocVariable",
       "spec": {
         "allowCustomValue": true,
@@ -1263,10 +1329,6 @@ describe('sceneVariablesSetToVariables', () => {
             "value": "test",
           },
         ],
-        "datasource": {
-          "type": "fake-std",
-          "uid": "fake-std",
-        },
         "defaultKeys": [
           {
             "text": "some",
@@ -1289,7 +1351,7 @@ describe('sceneVariablesSetToVariables', () => {
             "value": "test",
           },
         ],
-        "hide": "dontHide",
+        "hide": "inControlsMenu",
         "label": "test-label",
         "name": "test",
         "skipUrlSync": false,
@@ -1312,7 +1374,8 @@ describe('sceneVariablesSetToVariables', () => {
           name: 'test',
           label: 'test-label',
           description: 'test-desc',
-          datasource: { uid: 'fake-std', type: 'fake-std' },
+          hide: VariableHide.inControlsMenu,
+          datasource: { uid: 'fake-uid', type: 'fake-type' },
           defaultOptions: [
             {
               text: 'Foo',
@@ -1333,19 +1396,19 @@ describe('sceneVariablesSetToVariables', () => {
         expect(result).toHaveLength(1);
         expect(result[0]).toMatchInlineSnapshot(`
       {
+        "datasource": {
+          "name": "fake-uid",
+        },
+        "group": "fake-type",
         "kind": "GroupByVariable",
         "spec": {
           "current": {
             "text": [],
             "value": [],
           },
-          "datasource": {
-            "type": "fake-std",
-            "uid": "fake-std",
-          },
           "defaultValue": undefined,
           "description": "test-desc",
-          "hide": "dontHide",
+          "hide": "inControlsMenu",
           "label": "test-label",
           "multi": true,
           "name": "test",
@@ -1372,7 +1435,8 @@ describe('sceneVariablesSetToVariables', () => {
           name: 'test',
           label: 'test-label',
           description: 'test-desc',
-          datasource: { uid: 'fake-std', type: 'fake-std' },
+          hide: VariableHide.inControlsMenu,
+          datasource: { uid: 'fake-uid', type: 'fake-type' },
           defaultOptions: [
             {
               text: 'Foo',

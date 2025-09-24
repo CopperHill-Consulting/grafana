@@ -2,31 +2,25 @@ import { css } from '@emotion/css';
 import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 
+import { ContactPointSelector } from '@grafana/alerting/unstable';
 import { DataSourceInstanceSettings, GrafanaTheme2, SelectableValue } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
 import { Button, Field, Icon, Input, Label, RadioButtonGroup, Stack, Tooltip, useStyles2 } from '@grafana/ui';
 import { DashboardPicker } from 'app/core/components/Select/DashboardPicker';
 import { contextSrv } from 'app/core/core';
-import { ContactPointSelector } from 'app/features/alerting/unified/components/notification-policies/ContactPointSelector';
-import { AccessControlAction } from 'app/types';
+import { AccessControlAction } from 'app/types/accessControl';
 import { PromAlertingRuleState, PromRuleType } from 'app/types/unified-alerting-dto';
 
-import {
-  LogMessages,
-  logInfo,
-  trackRulesSearchComponentInteraction,
-  trackRulesSearchInputInteraction,
-} from '../../../Analytics';
+import { LogMessages, logInfo, trackAlertRuleFilterEvent } from '../../../Analytics';
 import { useRulesFilter } from '../../../hooks/useFilteredRules';
 import { useAlertingHomePageExtensions } from '../../../plugins/useAlertingHomePageExtensions';
-import { RuleHealth } from '../../../search/rulesSearchParser';
-import { AlertmanagerProvider } from '../../../state/AlertmanagerContext';
-import { GRAFANA_RULES_SOURCE_NAME } from '../../../utils/datasource';
+import { RulesFilterProps } from '../../../rule-list/filter/RulesFilter';
+import { RuleHealth, getSearchFilterFromQuery } from '../../../search/rulesSearchParser';
 import { alertStateToReadable } from '../../../utils/rules';
 import { PopupCard } from '../../HoverCard';
 import { MultipleDataSourcePicker } from '../MultipleDataSourcePicker';
 
-import { RulesViewModeSelector, SupportedView } from './RulesViewModeSelector';
+import { RulesViewModeSelector } from './RulesViewModeSelector';
 
 const RuleTypeOptions: SelectableValue[] = [
   { label: 'Alert ', value: PromRuleType.Alerting },
@@ -39,14 +33,7 @@ const RuleHealthOptions: SelectableValue[] = [
   { label: 'Error', value: RuleHealth.Error },
 ];
 
-// Contact point selector is not supported in Alerting ListView V2 yet
 const canRenderContactPointSelector = contextSrv.hasPermission(AccessControlAction.AlertingReceiversRead);
-
-interface RulesFilerProps {
-  onClear?: () => void;
-  viewMode?: SupportedView;
-  onViewModeChange?: (viewMode: SupportedView) => void;
-}
 
 const RuleStateOptions = Object.entries(PromAlertingRuleState)
   .filter(([key, value]) => value !== PromAlertingRuleState.Unknown) // Exclude Unknown state from filter options
@@ -55,7 +42,7 @@ const RuleStateOptions = Object.entries(PromAlertingRuleState)
     value,
   }));
 
-const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: RulesFilerProps) => {
+const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: RulesFilterProps) => {
   const styles = useStyles2(getStyles);
   const { pluginsFilterEnabled } = usePluginsFilterStatus();
   const { filterState, hasActiveFilters, searchQuery, setSearchQuery, updateFilters } = useRulesFilter();
@@ -87,33 +74,27 @@ const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: 
     });
 
     setFilterKey((key) => key + 1);
-    trackRulesSearchComponentInteraction('dataSourceNames');
+    trackAlertRuleFilterEvent({ filterMethod: 'filter-component', filter: 'dataSourceNames', filterVariant: 'v1' });
   };
 
-  const handleDashboardChange = (dashboardUid: string | undefined) => {
-    updateFilters({ ...filterState, dashboardUid });
-    trackRulesSearchComponentInteraction('dashboardUid');
-  };
+  type Filters = typeof filterState;
+
+  const updateAndTrack =
+    <K extends keyof Filters>(key: K) =>
+    (value: Filters[K]) => {
+      updateFilters({ ...filterState, [key]: value });
+      trackAlertRuleFilterEvent({ filterMethod: 'filter-component', filter: key, filterVariant: 'v1' });
+    };
 
   const clearDataSource = () => {
     updateFilters({ ...filterState, dataSourceNames: [] });
     setFilterKey((key) => key + 1);
   };
 
+  // Note: keep explicit logging for alert state filter clicks
   const handleAlertStateChange = (value: PromAlertingRuleState) => {
     logInfo(LogMessages.clickingAlertStateFilters);
-    updateFilters({ ...filterState, ruleState: value });
-    trackRulesSearchComponentInteraction('ruleState');
-  };
-
-  const handleRuleTypeChange = (ruleType: PromRuleType) => {
-    updateFilters({ ...filterState, ruleType });
-    trackRulesSearchComponentInteraction('ruleType');
-  };
-
-  const handleRuleHealthChange = (ruleHealth: RuleHealth) => {
-    updateFilters({ ...filterState, ruleHealth });
-    trackRulesSearchComponentInteraction('ruleHealth');
+    updateAndTrack('ruleState')(value);
   };
 
   const handleClearFiltersClick = () => {
@@ -124,8 +105,7 @@ const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: 
   };
 
   const handleContactPointChange = (contactPoint: string) => {
-    updateFilters({ ...filterState, contactPoint });
-    trackRulesSearchComponentInteraction('contactPoint');
+    updateAndTrack('contactPoint')(contactPoint);
   };
 
   const searchIcon = <Icon name={'search'} />;
@@ -198,7 +178,7 @@ const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: 
             inputId="filters-dashboard-picker"
             key={filterState.dashboardUid ? 'dashboard-defined' : 'dashboard-not-defined'}
             value={filterState.dashboardUid}
-            onChange={(value) => handleDashboardChange(value?.uid)}
+            onChange={(value) => updateAndTrack('dashboardUid')(value?.uid)}
             isClearable
             cacheOptions
           />
@@ -218,7 +198,11 @@ const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: 
           <Label>
             <Trans i18nKey="alerting.rules-filter.rule-type">Rule type</Trans>
           </Label>
-          <RadioButtonGroup options={RuleTypeOptions} value={filterState.ruleType} onChange={handleRuleTypeChange} />
+          <RadioButtonGroup
+            options={RuleTypeOptions}
+            value={filterState.ruleType}
+            onChange={updateAndTrack('ruleType')}
+          />
         </div>
         <div>
           <Label>
@@ -227,33 +211,33 @@ const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: 
           <RadioButtonGroup
             options={RuleHealthOptions}
             value={filterState.ruleHealth}
-            onChange={handleRuleHealthChange}
+            onChange={updateAndTrack('ruleHealth')}
           />
         </div>
         {canRenderContactPointSelector && (
-          <AlertmanagerProvider accessType={'notification'} alertmanagerSourceName={GRAFANA_RULES_SOURCE_NAME}>
-            <Stack direction="column" gap={0}>
-              <Field
-                label={
-                  <Label htmlFor="contactPointFilter">
-                    <Trans i18nKey="alerting.contactPointFilter.label">Contact point</Trans>
-                  </Label>
-                }
-              >
-                <ContactPointSelector
-                  selectedContactPointName={filterState.contactPoint}
-                  selectProps={{
-                    inputId: 'contactPointFilter',
-                    width: 40,
-                    onChange: (selectValue) => {
-                      handleContactPointChange(selectValue?.value?.name!);
-                    },
-                    isClearable: true,
-                  }}
-                />
-              </Field>
-            </Stack>
-          </AlertmanagerProvider>
+          <Stack direction="column" gap={0}>
+            <Field
+              label={
+                <Label htmlFor="contactPointFilter">
+                  <Trans i18nKey="alerting.contactPointFilter.label">Contact point</Trans>
+                </Label>
+              }
+            >
+              <ContactPointSelector
+                id="contactPointFilter"
+                value={filterState.contactPoint ?? null}
+                width={40}
+                placeholder={t(
+                  'alerting.notification-policies-filter.placeholder-search-by-contact-point',
+                  'Choose a contact point'
+                )}
+                isClearable
+                onChange={(contactPoint) => {
+                  handleContactPointChange(contactPoint?.spec.title ?? '');
+                }}
+              />
+            </Field>
+          </Stack>
         )}
         {pluginsFilterEnabled && (
           <div>
@@ -279,7 +263,11 @@ const RulesFilter = ({ onClear = () => undefined, viewMode, onViewModeChange }: 
             onSubmit={handleSubmit((data) => {
               setSearchQuery(data.searchQuery);
               searchQueryRef.current?.blur();
-              trackRulesSearchInputInteraction({ oldQuery: searchQuery, newQuery: data.searchQuery });
+              trackAlertRuleFilterEvent({
+                filterMethod: 'search-input',
+                filter: getSearchFilterFromQuery(data.searchQuery),
+                filterVariant: 'v1',
+              });
             })}
           >
             <Field

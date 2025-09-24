@@ -94,7 +94,6 @@ func RunTestSearchAndStorage(t *testing.T, ctx context.Context, backend resource
 			require.Greater(t, rv, int64(0))
 		}
 	})
-	ch := make(chan *resource.IndexEvent)
 
 	t.Run("Create a resource server with both backends", func(t *testing.T) {
 		// Create a resource server with both backends
@@ -103,12 +102,11 @@ func RunTestSearchAndStorage(t *testing.T, ctx context.Context, backend resource
 			Backend: backend,
 			Search: resource.SearchOptions{
 				Backend: searchBackend,
-				Resources: &testDocumentBuilderSupplier{
-					groupsResources: map[string]string{
+				Resources: &resource.TestDocumentBuilderSupplier{
+					GroupsResources: map[string]string{
 						"test.grafana.app": "testresources",
 					},
 				},
-				IndexEventsChan: ch,
 			},
 		})
 		require.NoError(t, err)
@@ -192,9 +190,6 @@ func RunTestSearchAndStorage(t *testing.T, ctx context.Context, backend resource
 			require.NoError(t, err)
 			require.NotNil(t, createResp)
 			require.Nil(t, createResp.Error)
-
-			ev := <-ch
-			require.NotNil(t, ev)
 		}
 	})
 

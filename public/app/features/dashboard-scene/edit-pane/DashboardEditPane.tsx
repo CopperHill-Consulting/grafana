@@ -1,19 +1,20 @@
-import { SceneObjectState, SceneObjectBase, SceneObject, sceneGraph, VizPanel } from '@grafana/scenes';
+import { SceneObjectState, SceneObjectBase, SceneObject, sceneGraph } from '@grafana/scenes';
 import {
   ElementSelectionContextItem,
   ElementSelectionContextState,
   ElementSelectionOnSelectOptions,
 } from '@grafana/ui';
 
-import { isDashboardLayoutItem } from '../scene/types/DashboardLayoutItem';
-import { containsCloneKey, getLastKeyFromClone, isInCloneChain } from '../utils/clone';
-import { findEditPanel, getDashboardSceneFor } from '../utils/utils';
+import { TabItem } from '../scene/layout-tabs/TabItem';
+import { isRepeatCloneOrChildOf } from '../utils/clone';
+import { getDashboardSceneFor } from '../utils/utils';
 
 import { ElementSelection } from './ElementSelection';
 import {
   ConditionalRenderingChangedEvent,
   DashboardEditActionEvent,
   DashboardEditActionEventPayload,
+  DashboardStateChangedEvent,
   NewObjectAddedToCanvasEvent,
   ObjectRemovedFromCanvasEvent,
   ObjectsReorderedOnCanvasEvent,
@@ -41,6 +42,12 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
     });
 
     this.addActivationHandler(this.onActivate.bind(this));
+  }
+
+  private panelEditAction?: DashboardEditActionEvent;
+
+  public setPanelEditAction(editAction: DashboardEditActionEvent) {
+    this.panelEditAction = editAction;
   }
 
   private onActivate() {
@@ -75,6 +82,22 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
         this.forceRender();
       })
     );
+
+    if (this.panelEditAction) {
+      this.performPanelEditAction(this.panelEditAction);
+      this.panelEditAction = undefined;
+    }
+  }
+
+  private performPanelEditAction(action: DashboardEditActionEvent) {
+    // Some layout items are not yet active when leaving panel edit, let's wait for them to activate
+    if (!action.payload.source.isActive) {
+      trySwitchingToSourceTab(action.payload.source);
+      setTimeout(() => this.performPanelEditAction(action));
+      return;
+    }
+
+    action.payload.source.publishEvent(action, true);
   }
 
   /**
@@ -92,15 +115,6 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
     this.performAction(action);
 
     this.setState({ undoStack: [...this.state.undoStack, action] });
-
-    // Notify repeaters that something changed
-    if (action.source instanceof VizPanel) {
-      const layoutElement = action.source.parent!;
-
-      if (isDashboardLayoutItem(layoutElement) && layoutElement.editingCompleted) {
-        layoutElement.editingCompleted(true);
-      }
-    }
   }
 
   /**
@@ -114,6 +128,7 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
     }
 
     action.undo();
+    action.source.publishEvent(new DashboardStateChangedEvent({ source: action.source }), true);
 
     /**
      * Some edit actions also require clearing selection or selecting new objects
@@ -138,6 +153,7 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
    */
   private performAction(action: DashboardEditActionEventPayload) {
     action.perform();
+    action.source.publishEvent(new DashboardStateChangedEvent({ source: action.source }), true);
 
     if (action.addedObject) {
       this.newObjectAddedToCanvas(action.addedObject);
@@ -180,24 +196,13 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
   }
 
   private selectElement(element: ElementSelectionContextItem, options: ElementSelectionOnSelectOptions) {
-    // We should not select clones
-    if (isInCloneChain(element.id)) {
-      if (options.multi) {
+    let obj = sceneGraph.findByKey(this, element.id);
+    if (obj) {
+      // Do not select repeat clones or their children
+      if (isRepeatCloneOrChildOf(obj)) {
         return;
       }
 
-      this.clearSelection();
-      return;
-    }
-
-    let obj = sceneGraph.findByKey(this, element.id);
-    if (obj) {
-      if (obj instanceof VizPanel && containsCloneKey(getLastKeyFromClone(element.id))) {
-        const sourceVizPanel = findEditPanel(this, element.id);
-        if (sourceVizPanel) {
-          obj = sourceVizPanel;
-        }
-      }
       this.selectObject(obj, element.id, options);
     }
   }
@@ -264,5 +269,21 @@ export class DashboardEditPane extends SceneObjectBase<DashboardEditPaneState> {
   private newObjectAddedToCanvas(obj: SceneObject) {
     this.selectObject(obj, obj.state.key!);
     this.state.selection?.markAsNewElement();
+  }
+}
+
+function trySwitchingToSourceTab(source: SceneObject) {
+  if (source.parent === undefined) {
+    return;
+  }
+
+  if (source.parent instanceof TabItem) {
+    const tab = source.parent;
+    const tabsLayout = source.parent.getParentLayout();
+    if (tabsLayout.state.currentTabSlug !== tab.getSlug()) {
+      tabsLayout.switchToTab(tab);
+    }
+  } else {
+    trySwitchingToSourceTab(source.parent);
   }
 }

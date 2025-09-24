@@ -61,7 +61,11 @@ export function InlineEditBody() {
         if (element && !(element instanceof FrameState)) {
           builder.addNestedOptions(
             getElementEditor({
-              category: [`Selected element (${element.options.name})`],
+              category: [
+                t('canvas.inline-edit-body.category-selected-element', 'Selected element ({{element}})', {
+                  element: element.options.name,
+                }),
+              ],
               element,
               scene: state.scene,
             })
@@ -170,7 +174,7 @@ function getOptionsPaneCategoryDescriptor<T extends object>(
   };
 
   // Use the panel options loader
-  fillOptionsPaneItems(supplier, access, getOptionsPaneCategory, context);
+  fillOptionsPaneItems('canvas-inline', supplier, access, getOptionsPaneCategory, context);
   return root;
 }
 

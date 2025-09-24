@@ -307,6 +307,13 @@ abstract class DataSourceApi<
   metricFindQuery?(query: any, options?: LegacyMetricFindQueryOptions): Promise<MetricFindValue[]>;
 
   /**
+   * Verify adhoc filters and groupBy keys applicability based on queries and current selected values
+   */
+  getDrilldownsApplicability?(
+    options?: DataSourceGetDrilldownsApplicabilityOptions<TQuery>
+  ): Promise<DrilldownsApplicability[]>;
+
+  /**
    * Get tag keys for adhoc filters
    */
   getTagKeys?(options?: DataSourceGetTagKeysOptions<TQuery>): Promise<GetTagResponse> | Promise<MetricFindValue[]>;
@@ -574,6 +581,7 @@ export interface DataQueryRequest<TQuery extends DataQuery = DataQuery> {
   panelName?: string;
   panelPluginId?: string;
   dashboardUID?: string;
+  dashboardTitle?: string;
   headers?: Record<string, string>;
 
   /** Filters to dynamically apply to all queries */
@@ -635,6 +643,24 @@ export interface MetricFindValue {
   value?: string | number;
   group?: string;
   expandable?: boolean;
+}
+
+export interface DataSourceGetDrilldownsApplicabilityOptions<TQuery extends DataQuery = DataQuery> {
+  filters: AdHocVariableFilter[];
+  groupByKeys?: string[];
+  timeRange?: TimeRange;
+  queries?: TQuery[];
+  scopes?: Scope[] | undefined;
+}
+
+export interface DrilldownsApplicability {
+  key: string;
+  applicable: boolean;
+  // message explaining why the filter is not applicable
+  reason?: string;
+  // needed to differentiate between filters with same key
+  // but different origin
+  origin?: string;
 }
 
 export interface DataSourceJsonData {

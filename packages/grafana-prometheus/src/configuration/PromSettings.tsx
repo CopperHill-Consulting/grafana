@@ -11,15 +11,16 @@ import {
 import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import { ConfigSubSection } from '@grafana/plugin-ui';
-import { config } from '@grafana/runtime';
 import { InlineField, Input, Select, Switch, TextLink, useTheme2 } from '@grafana/ui';
 
 import {
+  DEFAULT_SERIES_LIMIT,
   DURATION_REGEX,
+  durationError,
   MULTIPLE_DURATION_REGEX,
   NON_NEGATIVE_INTEGER_REGEX,
   PROM_CONFIG_LABEL_WIDTH,
-  SUGGESTIONS_LIMIT,
+  seriesLimitError,
 } from '../constants';
 import { QueryEditorMode } from '../querybuilder/shared/types';
 import { defaultPrometheusQueryOverlapWindow } from '../querycache/QueryCache';
@@ -29,14 +30,11 @@ import { ExemplarsSettings } from './ExemplarsSettings';
 import { PromFlavorVersions } from './PromFlavorVersions';
 import { docsTip, overhaulStyles, validateInput } from './shared/utils';
 
+type Props = Pick<DataSourcePluginOptionsEditorProps<PromOptions>, 'options' | 'onOptionsChange'>;
+
 const httpOptions = [
   { value: 'POST', label: 'POST' },
   { value: 'GET', label: 'GET' },
-];
-
-const editorOptions = [
-  { value: QueryEditorMode.Builder, label: 'Builder' },
-  { value: QueryEditorMode.Code, label: 'Code' },
 ];
 
 const cacheValueOptions = [
@@ -48,17 +46,18 @@ const cacheValueOptions = [
 
 type PrometheusSelectItemsType = Array<{ value: PromApplication; label: PromApplication }>;
 
+type ValidDuration = {
+  timeInterval: string;
+  queryTimeout: string;
+  incrementalQueryOverlapWindow: string;
+};
+
 const prometheusFlavorSelectItems: PrometheusSelectItemsType = [
   { value: PromApplication.Prometheus, label: PromApplication.Prometheus },
   { value: PromApplication.Cortex, label: PromApplication.Cortex },
   { value: PromApplication.Mimir, label: PromApplication.Mimir },
   { value: PromApplication.Thanos, label: PromApplication.Thanos },
 ];
-
-type Props = Pick<DataSourcePluginOptionsEditorProps<PromOptions>, 'options' | 'onOptionsChange'>;
-
-const durationError = 'Value is not valid, you can use number with time unit specifier: y, M, w, d, h, m, s';
-export const countError = 'Value is not valid, you can use non-negative integers, including scientific notation';
 
 const getOptionsWithDefaults = (options: DataSourceSettings<PromOptions>) => {
   if (options.jsonData.httpMethod) {
@@ -71,31 +70,31 @@ const getOptionsWithDefaults = (options: DataSourceSettings<PromOptions>) => {
 };
 
 export const PromSettings = (props: Props) => {
-  const { onOptionsChange } = props;
-  const optionsWithDefaults = getOptionsWithDefaults(props.options);
-
   const theme = useTheme2();
   const styles = overhaulStyles(theme);
+  const { onOptionsChange } = props;
 
-  type ValidDuration = {
-    timeInterval: string;
-    queryTimeout: string;
-    incrementalQueryOverlapWindow: string;
-  };
+  const editorOptions = [
+    {
+      value: QueryEditorMode.Builder,
+      label: t('grafana-prometheus.configuration.prom-settings.editor-options.label-builder', 'Builder'),
+    },
+    {
+      value: QueryEditorMode.Code,
+      label: t('grafana-prometheus.configuration.prom-settings.editor-options.label-code', 'Code'),
+    },
+  ];
 
+  const optionsWithDefaults = getOptionsWithDefaults(props.options);
   const [validDuration, updateValidDuration] = useState<ValidDuration>({
     timeInterval: '',
     queryTimeout: '',
     incrementalQueryOverlapWindow: '',
   });
 
-  type ValidCount = {
-    codeModeMetricNamesSuggestionLimit: string;
-  };
-
-  const [validCount, updateValidCount] = useState<ValidCount>({
-    codeModeMetricNamesSuggestionLimit: '',
-  });
+  const [seriesLimit, setSeriesLimit] = useState<string>(
+    optionsWithDefaults.jsonData.seriesLimit?.toString() || `${DEFAULT_SERIES_LIMIT}`
+  );
 
   return (
     <>
@@ -390,58 +389,6 @@ export const PromSettings = (props: Props) => {
             </div>
           </div>
 
-          {config.featureToggles.prometheusCodeModeMetricNamesSearch && (
-            <div className="gf-form-inline">
-              <div className="gf-form">
-                <InlineField
-                  label={t(
-                    'grafana-prometheus.configuration.prom-settings.label-metric-names-suggestion-limit',
-                    'Metric names suggestion limit'
-                  )}
-                  labelWidth={PROM_CONFIG_LABEL_WIDTH}
-                  tooltip={
-                    <>
-                      <Trans i18nKey="grafana-prometheus.configuration.prom-settings.tooltip-metric-names-suggestion-limit">
-                        The maximum number of metric names that may appear as autocomplete suggestions in the query
-                        editor&apos;s Code mode.
-                      </Trans>
-                    </>
-                  }
-                  interactive={true}
-                  disabled={optionsWithDefaults.readOnly}
-                >
-                  <>
-                    <Input
-                      className="width-20"
-                      value={optionsWithDefaults.jsonData.codeModeMetricNamesSuggestionLimit}
-                      onChange={onChangeHandler(
-                        'codeModeMetricNamesSuggestionLimit',
-                        optionsWithDefaults,
-                        onOptionsChange
-                      )}
-                      spellCheck={false}
-                      placeholder={SUGGESTIONS_LIMIT.toString()}
-                      onBlur={(e) =>
-                        updateValidCount({
-                          ...validCount,
-                          codeModeMetricNamesSuggestionLimit: e.currentTarget.value,
-                        })
-                      }
-                      data-testid={
-                        selectors.components.DataSource.Prometheus.configPage.codeModeMetricNamesSuggestionLimit
-                      }
-                    />
-                    {validateInput(
-                      validCount.codeModeMetricNamesSuggestionLimit,
-                      NON_NEGATIVE_INTEGER_REGEX,
-                      countError
-                    )}
-                  </>
-                </InlineField>
-              </div>
-            </div>
-          )}
-
           <div className="gf-form-inline">
             <div className="gf-form max-width-30">
               <InlineField
@@ -635,6 +582,45 @@ export const PromSettings = (props: Props) => {
               </InlineField>
             </div>
           </div>
+          <InlineField
+            labelWidth={PROM_CONFIG_LABEL_WIDTH}
+            label={t('grafana-prometheus.configuration.prom-settings.label-series-limit', 'Series limit')}
+            tooltip={
+              <>
+                <Trans i18nKey="grafana-prometheus.configuration.prom-settings.tooltip-series-limit">
+                  The limit applies to all resources (metrics, labels, and values) for both endpoints (series and
+                  labels). Leave the field empty to use the default limit (40000). Set to 0 to disable the limit and
+                  fetch everything — this may cause performance issues. Default limit is 40000.
+                </Trans>
+                {docsTip()}
+              </>
+            }
+            interactive={true}
+            disabled={optionsWithDefaults.readOnly}
+          >
+            <>
+              <Input
+                className="width-20"
+                value={seriesLimit}
+                spellCheck={false}
+                // eslint-disable-next-line @grafana/i18n/no-untranslated-strings
+                placeholder="40000"
+                onChange={(event: { currentTarget: { value: string } }) => {
+                  setSeriesLimit(event.currentTarget.value);
+                  onOptionsChange({
+                    ...optionsWithDefaults,
+                    jsonData: {
+                      ...optionsWithDefaults.jsonData,
+                      seriesLimit: parseInt(event.currentTarget.value, 10),
+                    },
+                  });
+                }}
+                onBlur={(e) => validateInput(e.currentTarget.value, NON_NEGATIVE_INTEGER_REGEX, seriesLimitError)}
+                data-testid={selectors.components.DataSource.Prometheus.configPage.seriesLimit}
+              />
+              {validateInput(seriesLimit, NON_NEGATIVE_INTEGER_REGEX, seriesLimitError)}
+            </>
+          </InlineField>
           <InlineField
             labelWidth={PROM_CONFIG_LABEL_WIDTH}
             label={t('grafana-prometheus.configuration.prom-settings.label-use-series-endpoint', 'Use series endpoint')}

@@ -17,6 +17,7 @@ type EmailIntegration = OverrideProperties<
   GenericIntegration,
   {
     type: 'email';
+    version: 'v1';
     settings: {
       singleEmail?: boolean;
       addresses: string;
@@ -32,6 +33,7 @@ type SlackIntegration = OverrideProperties<
   GenericIntegration,
   {
     type: 'slack';
+    version: 'v1';
     settings: {
       endpointUrl?: string;
       url?: string;
@@ -51,7 +53,27 @@ type SlackIntegration = OverrideProperties<
   }
 >;
 
-export type Integration = EmailIntegration | SlackIntegration | GenericIntegration;
+// Based on https://github.com/grafana/alerting/blob/main/receivers/oncall/config.go#L14-L27
+type OnCallIntegration = OverrideProperties<
+  GenericIntegration,
+  {
+    type: 'OnCall';
+    version: 'v1';
+    settings: {
+      url: string;
+      httpMethod?: 'POST' | 'PUT';
+      maxAlerts?: number;
+      authorization_scheme?: string;
+      authorization_credentials?: string;
+      username?: string;
+      password?: string;
+      title?: string;
+      message?: string;
+    };
+  }
+>;
+
+export type Integration = EmailIntegration | SlackIntegration | OnCallIntegration | GenericIntegration;
 
 // Enhanced version of ContactPoint with typed integrations
 // ⚠️ MergeDeep does not check if the property you are overriding exists in the base type and there is no "DeepOverrideProperties" helper
@@ -79,6 +101,7 @@ export type AlertingEntityMetadataAnnotations = Partial<{
   'grafana.com/access/canAdmin': 'true' | 'false';
   'grafana.com/access/canDelete': 'true' | 'false';
   'grafana.com/access/canWrite': 'true' | 'false';
+  'grafana.com/canUse': 'true' | 'false';
   // used for provisioning to identify what system created the entity
   'grafana.com/provenance': string;
 }>;

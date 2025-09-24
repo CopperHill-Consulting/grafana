@@ -9,7 +9,6 @@ import (
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/folder"
-	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/services/search/model"
 	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
 
@@ -42,6 +41,7 @@ type DashboardService interface {
 	UnstructuredToLegacyDashboard(ctx context.Context, item *unstructured.Unstructured, orgID int64) (*Dashboard, error)
 	ValidateDashboardRefreshInterval(minRefreshInterval string, targetRefreshInterval string) error
 	ValidateBasicDashboardProperties(title string, uid string, message string) error
+	GetDashboardsByLibraryPanelUID(ctx context.Context, libraryPanelUID string, orgID int64) ([]*DashboardRef, error)
 }
 
 type PermissionsRegistrationService interface {
@@ -65,7 +65,8 @@ type DashboardProvisioningService interface {
 	GetProvisionedDashboardData(ctx context.Context, name string) ([]*DashboardProvisioning, error)
 	GetProvisionedDashboardDataByDashboardID(ctx context.Context, dashboardID int64) (*DashboardProvisioning, error)
 	GetProvisionedDashboardDataByDashboardUID(ctx context.Context, orgID int64, dashboardUID string) (*DashboardProvisioning, error)
-	SaveFolderForProvisionedDashboards(context.Context, *folder.CreateFolderCommand) (*folder.Folder, error)
+	SaveFolderForProvisionedDashboards(ctx context.Context, cmd *folder.CreateFolderCommand, managerIdentity string) (*folder.Folder, error)
+	UpdateFolderWithManagedByAnnotation(ctx context.Context, folder *folder.Folder, managerIdentity string) (*folder.Folder, error)
 	SaveProvisionedDashboard(ctx context.Context, dto *SaveDashboardDTO, provisioning *DashboardProvisioning) (*Dashboard, error)
 	UnprovisionDashboard(ctx context.Context, dashboardID int64) error
 }
@@ -76,12 +77,8 @@ type DashboardProvisioningService interface {
 type Store interface {
 	DeleteDashboard(ctx context.Context, cmd *DeleteDashboardCommand) error
 	CleanupAfterDelete(ctx context.Context, cmd *DeleteDashboardCommand) error
-	DeleteAllDashboards(ctx context.Context, orgID int64) error
-	DeleteOrphanedProvisionedDashboards(ctx context.Context, cmd *DeleteOrphanedProvisionedDashboardsCommand) error
 	FindDashboards(ctx context.Context, query *FindPersistedDashboardsQuery) ([]DashboardSearchProjection, error)
 	GetDashboard(ctx context.Context, query *GetDashboardQuery) (*Dashboard, error)
-	GetDashboardUIDByID(ctx context.Context, query *GetDashboardRefByIDQuery) (*DashboardRef, error)
-	GetDashboards(ctx context.Context, query *GetDashboardsQuery) ([]*Dashboard, error)
 	// GetDashboardsByPluginID retrieves dashboards identified by plugin.
 	GetDashboardsByPluginID(ctx context.Context, query *GetDashboardsByPluginIDQuery) ([]*Dashboard, error)
 	GetDashboardTags(ctx context.Context, query *GetDashboardTagsQuery) ([]*DashboardTagCloudItem, error)
@@ -96,12 +93,10 @@ type Store interface {
 	// ValidateDashboardBeforeSave validates a dashboard before save.
 	ValidateDashboardBeforeSave(ctx context.Context, dashboard *Dashboard, overwrite bool) (bool, error)
 
-	Count(context.Context, *quota.ScopeParameters) (*quota.Map, error)
 	CountInOrg(ctx context.Context, orgID int64, isFolder bool) (int64, error)
-	// CountDashboardsInFolder returns the number of dashboards associated with
-	// the given parent folder ID.
-	CountDashboardsInFolders(ctx context.Context, request *CountDashboardsInFolderRequest) (int64, error)
 	DeleteDashboardsInFolders(ctx context.Context, request *DeleteDashboardsInFolderRequest) error
 
 	GetAllDashboardsByOrgId(ctx context.Context, orgID int64) ([]*Dashboard, error)
+
+	GetDashboardsByLibraryPanelUID(ctx context.Context, libraryPanelUID string, orgID int64) ([]*DashboardRef, error)
 }
