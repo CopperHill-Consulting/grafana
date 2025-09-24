@@ -3,8 +3,8 @@ module github.com/grafana/grafana
 go 1.24.6
 
 require (
-	buf.build/gen/go/parca-dev/parca/connectrpc/go v1.18.1-20250703125925-3f0fcf4bff96.1 // @grafana/observability-traces-and-profiling
-	buf.build/gen/go/parca-dev/parca/protocolbuffers/go v1.36.2-20250703125925-3f0fcf4bff96.1 // @grafana/observability-traces-and-profiling
+	buf.build/gen/go/parca-dev/parca/connectrpc/go v1.18.1-20250716091922-79400b5144e4.1 // @grafana/observability-traces-and-profiling
+	buf.build/gen/go/parca-dev/parca/protocolbuffers/go v1.36.2-20250716091922-79400b5144e4.1 // @grafana/observability-traces-and-profiling
 	cloud.google.com/go/kms v1.22.0 // @grafana/grafana-backend-group
 	cloud.google.com/go/storage v1.55.0 // @grafana/grafana-backend-group
 	connectrpc.com/connect v1.18.1 // @grafana/observability-traces-and-profiling
