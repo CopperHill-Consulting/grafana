@@ -17,7 +17,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.10.1 // @grafana/grafana-backend-group
 	github.com/Azure/azure-sdk-for-go/sdk/keyvault/azkeys v0.10.0 // @grafana/grafana-backend-group
 	github.com/Azure/azure-storage-blob-go v0.15.0 // @grafana/grafana-backend-group
-	github.com/Azure/go-autorest/autorest v0.11.29 // @grafana/grafana-backend-group
+	github.com/Azure/go-autorest/autorest v0.11.30 // @grafana/grafana-backend-group
 	github.com/Azure/go-autorest/autorest/adal v0.9.24 // @grafana/grafana-backend-group
 	github.com/Bose/minisentinel v0.0.0-20200130220412-917c5a9223bb // @grafana/alerting-backend
 	github.com/BurntSushi/toml v1.5.0 // @grafana/identity-access-team
@@ -104,7 +104,7 @@ require (
 	github.com/grafana/grafana-google-sdk-go v0.4.2 // @grafana/partner-datasources
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20231213163343-bd475d63fb79 // @grafana/grafana-backend-group
 	github.com/grafana/grafana-plugin-sdk-go v0.279.0 // @grafana/plugins-platform-backend
-	github.com/grafana/loki/v3 v3.2.1 // @grafana/observability-logs
+	github.com/grafana/loki/v3 v3.5.6 // @grafana/observability-logs
 	github.com/grafana/nanogit v0.0.0-20250723104447-68f58f5ecec0 // indirect; @grafana/grafana-git-ui-sync-team
 	github.com/grafana/otel-profiling-go v0.5.1 // @grafana/grafana-backend-group
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.8 // @grafana/observability-traces-and-profiling
@@ -150,11 +150,11 @@ require (
 	github.com/openfga/language/pkg/go v0.2.0-beta.2.0.20250428093642-7aeebe78bbfe // @grafana/identity-access-team
 	github.com/openfga/openfga v1.10.0 // @grafana/identity-access-team
 	github.com/opentracing-contrib/go-grpc v0.1.1 // @grafana/grafana-search-and-storage
-	github.com/opentracing/opentracing-go v1.2.0 // @grafana/grafana-search-and-storage
+	github.com/opentracing/opentracing-go v1.2.1-0.20220228012449-10b1cf09e00b // @grafana/grafana-search-and-storage
 	github.com/openzipkin/zipkin-go v0.4.3 // @grafana/oss-big-tent
 	github.com/patrickmn/go-cache v2.1.0+incompatible // @grafana/alerting-backend
 	github.com/phpdave11/gofpdi v1.0.14 // @grafana/sharing-squad
-	github.com/prometheus/alertmanager v0.28.0 // @grafana/alerting-backend
+	github.com/prometheus/alertmanager v0.28.1 // @grafana/alerting-backend
 	github.com/prometheus/client_golang v1.23.2 // @grafana/alerting-backend
 	github.com/prometheus/client_model v0.6.2 // @grafana/grafana-backend-group
 	github.com/prometheus/common v0.66.1 // @grafana/alerting-backend
@@ -171,7 +171,7 @@ require (
 	github.com/spyzhov/ajson v0.9.6 // @grafana/grafana-sharing-squad
 	github.com/stretchr/testify v1.11.1 // @grafana/grafana-backend-group
 	github.com/thomaspoignant/go-feature-flag v1.42.0 // @grafana/grafana-backend-group
-	github.com/tjhop/slog-gokit v0.1.3 // @grafana/grafana-app-platform-squad
+	github.com/tjhop/slog-gokit v0.1.4 // @grafana/grafana-app-platform-squad
 	github.com/ua-parser/uap-go v0.0.0-20250213224047-9c035f085b90 // @grafana/grafana-backend-group
 	github.com/urfave/cli v1.22.17 // indirect; @grafana/grafana-backend-group
 	github.com/urfave/cli/v2 v2.27.7 // @grafana/grafana-backend-group
@@ -343,7 +343,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.28.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.33.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sts v1.38.0 // indirect
-	github.com/axiomhq/hyperloglog v0.0.0-20240507144631-af9851f82b27 // indirect
+	github.com/axiomhq/hyperloglog v0.2.5 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/barkimedes/go-deepcopy v0.0.0-20220514131651-17c30cfc62df // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -375,7 +375,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.3.0 // @grafana/alerting-backend
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/centrifugal/protocol v0.16.2 // indirect
-	github.com/cespare/xxhash v1.1.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cheekybits/genny v1.0.0 // indirect
 	github.com/chromedp/cdproto v0.0.0-20250803210736-d308e07a266d // indirect
@@ -432,7 +431,6 @@ require (
 	github.com/golang-sql/sqlexp v0.1.0 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
 	github.com/golang/groupcache v0.0.0-20241129210726-2c02b8208cf8 // indirect
-	github.com/gomodule/redigo v1.8.9 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/cel-go v0.26.1 // indirect
 	github.com/google/flatbuffers v25.2.10+incompatible // indirect
@@ -441,7 +439,7 @@ require (
 	github.com/google/s2a-go v0.1.9 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.6 // indirect
 	github.com/gopherjs/gopherjs v1.17.2 // indirect
-	github.com/grafana/jsonparser v0.0.0-20240425183733-ea80629e1a32 // indirect
+	github.com/grafana/jsonparser v0.0.0-20241004153430-023329977675 // indirect
 	github.com/grafana/loki/pkg/push v0.0.0-20250823105456-332df2b20000 // indirect
 	github.com/grafana/regexp v0.0.0-20240518133315-a468a5bfb3bc // indirect
 	github.com/grafana/sqlds/v4 v4.2.7 // indirect
@@ -460,7 +458,7 @@ require (
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
 	github.com/hashicorp/golang-lru v1.0.2 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
-	github.com/hashicorp/memberlist v0.5.2 // indirect
+	github.com/hashicorp/memberlist v0.5.3 // indirect
 	github.com/hashicorp/serf v0.10.2 // indirect
 	github.com/hashicorp/vault/api v1.16.0 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
@@ -502,7 +500,7 @@ require (
 	github.com/mattn/go-ieproxy v0.0.12 // indirect
 	github.com/mattn/go-runewidth v0.0.16 // indirect
 	github.com/maypok86/otter v1.2.4 // indirect
-	github.com/mdlayher/socket v0.4.1 // indirect
+	github.com/mdlayher/socket v0.5.1 // indirect
 	github.com/mdlayher/vsock v1.2.1 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
 	github.com/miekg/dns v1.1.63 // indirect
@@ -538,7 +536,7 @@ require (
 	github.com/open-telemetry/opentelemetry-collector-contrib/pkg/translator/jaeger v0.124.1 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
-	github.com/opentracing-contrib/go-stdlib v1.0.0 // indirect
+	github.com/opentracing-contrib/go-stdlib v1.1.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/perimeterx/marshmallow v1.1.5 // indirect
 	github.com/pierrec/lz4/v4 v4.1.22 // indirect
@@ -553,7 +551,7 @@ require (
 	github.com/prometheus/procfs v0.16.1 // indirect
 	github.com/protocolbuffers/txtpbfmt v0.0.0-20241112170944-20d2c9ebc01d // indirect
 	github.com/puzpuzpuz/xsync/v2 v2.5.1 // indirect
-	github.com/redis/rueidis v1.0.64 // indirect
+	github.com/redis/rueidis v1.0.67 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
@@ -571,7 +569,6 @@ require (
 	github.com/shurcooL/vfsgen v0.0.0-20230704071429-0000e147ea92 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
 	github.com/smarty/assertions v1.15.0 // indirect
-	github.com/sony/gobreaker v0.5.0 // indirect
 	github.com/sourcegraph/conc v0.3.1-0.20240121214520-5f936abd7ae8 // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -651,7 +648,13 @@ require (
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
 
-require github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
+require (
+	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
+	github.com/go-redsync/redsync/v4 v4.13.0 // indirect
+	github.com/kamstrup/intmap v0.5.1 // indirect
+	github.com/redis/rueidis/rueidiscompat v1.0.67 // indirect
+	github.com/sony/gobreaker/v2 v2.1.0 // indirect
+)
 
 // Use fork of crewjam/saml with fixes for some issues until changes get merged into upstream
 replace github.com/crewjam/saml => github.com/grafana/saml v0.4.15-0.20240917091248-ae3bbdad8a56
