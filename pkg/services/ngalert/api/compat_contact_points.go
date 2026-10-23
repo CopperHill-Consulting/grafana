@@ -7,13 +7,14 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/grafana/alerting/notify"
-	"github.com/grafana/alerting/receivers"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/modern-go/reflect2"
 
+	alertingModels "github.com/grafana/alerting/models"
+	"github.com/grafana/alerting/receivers"
+	"github.com/grafana/alerting/receivers/schema"
+
 	"github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
-	"github.com/grafana/grafana/pkg/util"
 )
 
 // ContactPointFromContactPointExport parses the database model of the contact point (group of integrations) where settings are represented in JSON,
@@ -36,11 +37,11 @@ func ContactPointFromContactPointExport(rawContactPoint definitions.ContactPoint
 	return contactPoint, errors.Join(errs...)
 }
 
-// ContactPointToContactPointExport converts definitions.ContactPoint to notify.APIReceiver.
+// ContactPointToContactPointExport converts definitions.ContactPoint to alertingModels.ReceiverConfig.
 // It uses special extension for json-iterator API that properly handles marshalling of some specific fields.
 //
 //nolint:gocyclo
-func ContactPointToContactPointExport(cp definitions.ContactPoint) (notify.APIReceiver, error) {
+func ContactPointToContactPointExport(cp definitions.ContactPoint) (alertingModels.ReceiverConfig, error) {
 	j := jsoniter.ConfigCompatibleWithStandardLibrary
 	// use json iterator with custom extension that has special codec for some field.
 	// This is needed to keep the API models clean and convert from database model
@@ -53,7 +54,7 @@ func ContactPointToContactPointExport(cp definitions.ContactPoint) (notify.APIRe
 		len(cp.Threema) + len(cp.Victorops) + len(cp.Webhook) + len(cp.Wecom) +
 		len(cp.Webex) + len(cp.Mqtt)
 
-	integration := make([]*notify.GrafanaIntegrationConfig, 0, contactPointsLength)
+	integration := make([]*alertingModels.IntegrationConfig, 0, contactPointsLength)
 
 	var errs []error
 	for _, i := range cp.Alertmanager {
@@ -219,24 +220,25 @@ func ContactPointToContactPointExport(cp definitions.ContactPoint) (notify.APIRe
 	}
 
 	if len(errs) > 0 {
-		return notify.APIReceiver{}, errors.Join(errs...)
+		return alertingModels.ReceiverConfig{}, errors.Join(errs...)
 	}
-	contactPoint := notify.APIReceiver{
-		ConfigReceiver:      notify.ConfigReceiver{Name: cp.Name},
-		GrafanaIntegrations: notify.GrafanaIntegrations{Integrations: integration},
+	contactPoint := alertingModels.ReceiverConfig{
+		Name:         cp.Name,
+		Integrations: integration,
 	}
 	return contactPoint, nil
 }
 
 // marshallIntegration converts the API model integration to the storage model that contains settings in the JSON format.
 // The secret fields are not encrypted.
-func marshallIntegration(json jsoniter.API, integrationType string, integration interface{}, disableResolveMessage *bool) (*notify.GrafanaIntegrationConfig, error) {
+func marshallIntegration(json jsoniter.API, integrationType schema.IntegrationType, integration interface{}, disableResolveMessage *bool) (*alertingModels.IntegrationConfig, error) {
 	data, err := json.Marshal(integration)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshall integration '%s' to JSON: %w", integrationType, err)
 	}
-	e := &notify.GrafanaIntegrationConfig{
+	e := &alertingModels.IntegrationConfig{
 		Type:     integrationType,
+		Version:  schema.V1,
 		Settings: data,
 	}
 	if disableResolveMessage != nil {
@@ -250,7 +252,7 @@ func parseIntegration(json jsoniter.API, result *definitions.ContactPoint, recei
 	var err error
 	var disable *bool
 	if disableResolveMessage { // populate only if true
-		disable = util.Pointer(disableResolveMessage)
+		disable = new(disableResolveMessage)
 	}
 	switch strings.ToLower(receiverType) {
 	case "prometheus-alertmanager":

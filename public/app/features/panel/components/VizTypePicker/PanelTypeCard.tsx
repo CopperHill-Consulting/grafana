@@ -1,24 +1,25 @@
 import { css, cx } from '@emotion/css';
-import { MouseEventHandler } from 'react';
 import * as React from 'react';
 import Skeleton from 'react-loading-skeleton';
 
-import { GrafanaTheme2, isUnsignedPluginSignature, PanelPluginMeta, PluginState } from '@grafana/data';
+import { type GrafanaTheme2, isUnsignedPluginSignature, type PanelPluginMeta, PluginState } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { t } from '@grafana/i18n';
 import { IconButton, PluginSignatureBadge, useStyles2 } from '@grafana/ui';
-import { SkeletonComponent, attachSkeleton } from '@grafana/ui/unstable';
+import { getFocusStyles } from '@grafana/ui/internal';
+import { type SkeletonComponent, attachSkeleton } from '@grafana/ui/unstable';
 import { PluginStateInfo } from 'app/features/plugins/components/PluginStateInfo';
 
 interface Props {
   isCurrent: boolean;
   plugin: PanelPluginMeta;
   title: string;
-  onClick: MouseEventHandler<HTMLDivElement>;
+  onSelect: (withModKey?: boolean) => void;
   onDelete?: () => void;
   disabled?: boolean;
   showBadge?: boolean;
   description?: string;
+  tabIndex?: number;
 }
 
 const IMAGE_SIZE = 38;
@@ -27,12 +28,13 @@ const PanelTypeCardComponent = ({
   isCurrent,
   title,
   plugin,
-  onClick,
+  onSelect,
   onDelete,
   disabled,
   showBadge,
   description,
   children,
+  tabIndex = 0,
 }: React.PropsWithChildren<Props>) => {
   const styles = useStyles2(getStyles);
 
@@ -44,18 +46,31 @@ const PanelTypeCardComponent = ({
   });
 
   return (
-    // TODO: fix keyboard a11y
-    // eslint-disable-next-line jsx-a11y/click-events-have-key-events
     <div
       className={cssClass}
-      aria-label={selectors.components.PluginVisualization.item(plugin.name)}
       data-testid={selectors.components.PluginVisualization.item(plugin.name)}
-      onClick={isDisabled ? undefined : onClick}
+      onClick={isDisabled ? undefined : (ev) => onSelect(ev.metaKey || ev.ctrlKey || ev.altKey)}
+      role="button"
+      tabIndex={0}
+      onKeyDown={
+        isDisabled
+          ? undefined
+          : (ev) => {
+              if (ev.key === 'Enter' || ev.key === ' ') {
+                ev.preventDefault();
+                onSelect(ev.metaKey || ev.ctrlKey || ev.altKey);
+              }
+            }
+      }
       title={
         isCurrent ? t('panel.panel-type-card.title-click-to-close', 'Click again to close this section') : plugin.name
       }
     >
-      <img className={cx(styles.img, { [styles.disabled]: isDisabled })} src={plugin.info.logos.small} alt="" />
+      <img
+        className={cx(styles.img, { [styles.disabled]: isDisabled })}
+        src={plugin.info.logos.small || undefined}
+        alt=""
+      />
 
       <div className={cx(styles.itemContent, { [styles.disabled]: isDisabled })}>
         <div className={styles.name}>{title}</div>
@@ -139,7 +154,7 @@ const getStyles = (theme: GrafanaTheme2) => {
       flexShrink: 0,
       cursor: 'pointer',
       background: theme.colors.background.secondary,
-      borderRadius: theme.shape.radius.default,
+      borderRadius: theme.shape.radius.lg,
       boxShadow: theme.shadows.z1,
       border: `1px solid ${theme.colors.background.secondary}`,
       alignItems: 'center',
@@ -150,6 +165,10 @@ const getStyles = (theme: GrafanaTheme2) => {
         transition: theme.transitions.create(['background'], {
           duration: theme.transitions.duration.short,
         }),
+      },
+
+      '&:focus-visible': {
+        ...getFocusStyles(theme),
       },
 
       '&:hover': {
@@ -170,7 +189,7 @@ const getStyles = (theme: GrafanaTheme2) => {
     }),
     current: css({
       label: 'currentVisualizationItem',
-      border: `1px solid ${theme.colors.primary.border}`,
+      border: `1px solid ${theme.colors.accent.main}`,
       background: theme.colors.action.selected,
     }),
     disabled: css({

@@ -15,151 +15,106 @@ labels:
 menuTitle: Prometheus
 title: Prometheus data source
 weight: 1300
-refs:
-  build-dashboards:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/
-  get-started-prometheus:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/getting-started/get-started-grafana-prometheus/#get-started-with-grafana-and-prometheus
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/getting-started/get-started-grafana-prometheus/#get-started-with-grafana-and-prometheus
-  provisioning-data-sources:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/#data-sources
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/#data-sources
-  set-up-grafana-monitoring:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/set-up-grafana-monitoring/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/set-up-grafana-monitoring/
-  configure-grafana:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/
-  administration-documentation:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/
-  annotate-visualizations:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/annotate-visualizations/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/visualizations/dashboards/build-dashboards/annotate-visualizations/
-  exemplars:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/fundamentals/exemplars/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/fundamentals/exemplars/
-  intro-to-prometheus:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/fundamentals/intro-to-prometheus/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/fundamentals/intro-to-prometheus/
-  configure-prometheus-data-source:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/configure
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/configure
-  annotate-visualizations:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/annotate-visualizations/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/visualizations/dashboards/build-dashboards/annotate-visualizations/
-  recorded-queries:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/recorded-queries/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/recorded-queries/
-  transformations:
-   - pattern: /docs/grafana/
-     destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/transform-data/
-   - pattern: /docs/grafana-cloud/
-     destination: /docs/grafana-cloud/visualizations/panels-visualizations/query-transform-data/transform-data/
-  alerting:
-   - pattern: /docs/grafana/
-     destination: /docs/grafana/<GRAFANA_VERSION>/alerting/
-   - pattern: /docs/grafana-cloud/
-     destination: /docs/grafana-cloud/alerting-and-irm/alerting/
-  visualizations:
-   - pattern: /docs/grafana/
-     destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/
-   - pattern: /docs/grafana-cloud/
-     destination: /docs/grafana-cloud/visualizations/panels-visualizations/visualizations/
-  variables:
-   - pattern: /docs/grafana/
-     destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/
-   - pattern: /docs/grafana-cloud/
-     destination: /docs/grafana-cloud/visualizations/dashboards/variables/
-
+review_date: 2026-08-04
 ---
 
 # Prometheus data source
 
-Prometheus is an open source database that uses a telemetry collector agent to scrape and store metrics used for monitoring and alerting.
+Prometheus is an open source monitoring system and time series database that scrapes and stores metrics used for monitoring and alerting.
 
-Grafana provides native support for Prometheus, so you don't need to install a plugin.
+The Prometheus data source is preinstalled in Grafana, so you don't need to install it manually. Write queries using [PromQL](https://prometheus.io/docs/prometheus/latest/querying/basics/) in the query editor, or use [Metrics Drilldown](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/explore/simplified-exploration/metrics/) to explore metrics without writing queries. The Prometheus data source also works with other projects that implement the [Prometheus querying API](https://prometheus.io/docs/prometheus/latest/querying/api/), including [Grafana Mimir](https://grafana.com/docs/mimir/latest/) and [Thanos](https://thanos.io/tip/components/query.md/).
 
-The following documentation will help you get started working with Prometheus and Grafana:
+## Supported features
 
-- [What is Prometheus?](ref:intro-to-prometheus)
+| Feature         | Supported |
+| --------------- | --------- |
+| Metrics         | Yes       |
+| Alerting        | Yes       |
+| Annotations     | Yes       |
+| Recording rules | Yes       |
+| Exemplars       | Yes       |
+
+## Get started
+
+The following documents help you set up and use the Prometheus data source:
+
+- [Configure the Prometheus data source](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/configure/)
+- [Prometheus query editor](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/query-editor/)
+- [Template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/template-variables/)
+- [Annotations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/annotations/)
+- [Alerting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/alerting/)
+- [Troubleshooting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/troubleshooting/)
+
+## Additional features
+
+After you configure the Prometheus data source, you can:
+
+- Use [Metrics Drilldown](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/explore/simplified-exploration/metrics/) to browse and explore your Prometheus metrics without writing PromQL
+- Use [Explore](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/explore/) to query data without building a dashboard
+- Add [transformations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/transform-data/) to manipulate query results
+- Create [recorded queries](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/administration/recorded-queries/) for pre-aggregated data
+- Save and reuse PromQL queries across dashboards, Explore, and annotations with [saved queries](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/visualizations/panels-visualizations/query-transform-data/#saved-queries) (available in Grafana Enterprise and Grafana Cloud)
+- Build a wide variety of [visualizations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/)
+
+## Cloud-managed Prometheus services
+
+{{< admonition type="note" >}}
+In Grafana 13, the core Prometheus data source no longer supports SigV4 (AWS) or Azure AD authentication. These authentication methods have been migrated to dedicated plugins:
+
+- **Amazon Managed Service for Prometheus:** Use the [Amazon Managed Service for Prometheus data source](https://grafana.com/grafana/plugins/grafana-amazonprometheus-datasource/). For migration details, refer to [AWS authentication (deprecated)](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/configure/aws-authentication/).
+- **Azure Monitor Managed Service for Prometheus:** Use the [Azure Monitor Managed Service for Prometheus data source](https://grafana.com/grafana/plugins/grafana-azureprometheus-datasource/). For migration details, refer to [Azure authentication (deprecated)](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/prometheus/configure/azure-authentication/).
+
+Existing data sources using these methods are automatically migrated on startup.
+{{< /admonition >}}
+
+## Plugin updates
+
+Grafana still ships with the Prometheus data source out of the box. It's preinstalled in both Grafana OSS and Grafana Enterprise, so there's nothing for you to install. Starting with Grafana v13.2, it's packaged as a standalone plugin rather than built into the Grafana codebase, which means you can update the plugin as needed without waiting for a Grafana release. By default, Grafana checks the plugin catalog and installs the latest version on each server restart.
+
+To adjust this behavior:
+
+- **Opt out of auto-updates:** Set `preinstall_auto_update` to `false` in your [configuration file](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/).
+- **Update manually:** Update at any time from the **Administration > Plugins** page without restarting Grafana.
+
+The standalone plugin requires Grafana 12.3.0 or later. The Prometheus data source bundled with Grafana 13.1 and earlier continues to work as before, and those versions aren't affected by this change.
+
+Users running Grafana 12.3.x through 13.1.x can install the standalone plugin from the plugin catalog if they want the latest features before upgrading to Grafana 13.2. To use the standalone plugin with Grafana 12.3.x through 13.1.x, add the following to your [configuration file](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/):
+
+```ini
+[plugin.prometheus]
+as_external = true
+
+[plugins]
+; Install the latest version on startup:
+preinstall_sync = prometheus
+; Or install a specific version:
+; preinstall_sync = prometheus@<version>
+```
+
+{{< docs/shared source="grafana" lookup="datasources/query-with-gcx.md" version="<GRAFANA_VERSION>" >}}
+
+For example, to query your Prometheus data source, use the `gcx datasources prometheus` commands:
+
+```sh
+# Run an instant PromQL query using an explicit data source UID
+gcx datasources prometheus query -d <DATASOURCE_UID> 'up{job="grafana"}'
+
+# Run a range query over the last hour
+gcx datasources prometheus query -d <DATASOURCE_UID> 'rate(http_requests_total[5m])' --since 1h --step 1m
+
+# List all labels, or the values for a single label
+gcx datasources prometheus labels -d <DATASOURCE_UID>
+gcx datasources prometheus labels -d <DATASOURCE_UID> --label job
+
+# Get metadata, including the type and help text, for a metric
+gcx datasources prometheus metadata -d <DATASOURCE_UID> --metric http_requests_total
+```
+
+Replace _`<DATASOURCE_UID>`_ with the UID of your Prometheus data source. You can omit the `-d` flag when `datasources.prometheus` is configured in your `gcx` context. The same commands work with Prometheus-compatible data sources that `gcx` maps to this resolver, including Amazon Managed Service for Prometheus and other `grafana-*prometheus-datasource` flavors.
+
+## Related resources
+
+- [What is Prometheus?](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/fundamentals/intro-to-prometheus/)
 - [Prometheus data model](https://prometheus.io/docs/concepts/data_model/)
-- [Getting started](https://prometheus.io/docs/prometheus/latest/getting_started/)
-- [Configure the Prometheus data source](ref:configure-prometheus-data-source)
-- [Prometheus query editor](query-editor/)
-- [Template variables](template-variables/)
-
-## Exemplars
-
-In Prometheus, an **exemplar** is a specific trace that represents a measurement taken within a given time interval. While metrics provide an aggregated view of your system, and traces offer a detailed view of individual requests, exemplars serve as a bridge between the two, linking high-level metrics to specific traces for deeper insights.
-
-Exemplars associate higher-cardinality metadata from a specific event with traditional time series data. Refer to [Introduction to exemplars](ref:exemplars) in the Prometheus documentation for detailed information on how they work.
-
-Grafana can show exemplar data alongside a metric both in Explore and in Dashboards.
-
-{{< figure src="/static/img/docs/v74/exemplars.png" class="docs-image--no-shadow" caption="Exemplar window" >}}
-
-You add exemplars when you configure the Prometheus data source.
-
-{{< figure src="/static/img/docs/prometheus/exemplars-10-1.png" max-width="500px" class="docs-image--no-shadow" >}}
-
-## Prometheus API
-
-The Prometheus data source also works with other projects that implement the [Prometheus querying API](https://prometheus.io/docs/prometheus/latest/querying/api/).
-
-For more information on how to query other Prometheus-compatible projects from Grafana, refer to the specific product's documentation:
-
-- [Grafana Mimir](/docs/mimir/latest/)
-- [Thanos](https://thanos.io/tip/components/query.md/)
-
-## View Grafana metrics with Prometheus
-
-Grafana exposes metrics for Prometheus on the `/metrics` endpoint and includes a pre-built dashboard to help you start visualizing your metrics immediately.
-
-Complete the following steps to import the pre-built dashboard:
-
-1. Navigate to the Prometheus [configuration page](ref:configure-prometheus-data-source).
-1. Click the **Dashboards** tab.
-1. Locate the **Grafana metrics** dashboard in the list and click **Import**.
-
-For details about these metrics, refer to [Internal Grafana metrics](ref:set-up-grafana-monitoring).
-
-## Amazon Managed Service for Prometheus
-
-Grafana has deprecated the Prometheus data source for Amazon Managed Service for Prometheus. Use the [Amazon Managed Service for Prometheus data source](https://grafana.com/grafana/plugins/grafana-amazonprometheus-datasource/) instead. The linked documentation outlines the migration steps.
-
-## Get the most out of the Prometheus data source
-
-After you install and configure Prometheus you can:
-
-- Create a wide variety of [visualizations](ref:visualizations)
-- Configure and use [templates and variables](ref:variables)
-- Add [transformations](ref:transformations)
-- Add [annotations](ref:annotate-visualizations)
-- Set up [alerting](ref:alerting)
-- Create [recorded queries](ref:recorded-queries)
+- [Getting started with Prometheus](https://prometheus.io/docs/prometheus/latest/getting_started/)
+- [Grafana community forum](https://community.grafana.com/)

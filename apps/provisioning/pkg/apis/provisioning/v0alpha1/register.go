@@ -18,7 +18,7 @@ const (
 )
 
 var RepositoryResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
-	"repositories", "repository", "Repositories",
+	"repositories", "repository", "Repository",
 	func() runtime.Object { return &Repository{} },     // newObj
 	func() runtime.Object { return &RepositoryList{} }, // newList
 	utils.TableColumns{ // Returned by `kubectl get`. Doesn't affect disk storage.
@@ -41,6 +41,10 @@ var RepositoryResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
 				target = m.Spec.Local.Path
 			case GitHubRepositoryType:
 				target = m.Spec.GitHub.URL
+			case GitHubEnterpriseRepositoryType:
+				if m.Spec.GitHubEnterprise != nil {
+					target = m.Spec.GitHubEnterprise.URL
+				}
 			case GitRepositoryType:
 				target = m.Spec.Git.URL
 			case BitbucketRepositoryType:
@@ -115,6 +119,52 @@ var HistoricJobResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
 		},
 	})
 
+var ConnectionResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
+	"connections", "connection", "Connection",
+	func() runtime.Object { return &Connection{} },     // newObj
+	func() runtime.Object { return &ConnectionList{} }, // newList
+	utils.TableColumns{ // Returned by `kubectl get`. Doesn't affect disk storage.
+		Definition: []metav1.TableColumnDefinition{
+			{Name: "Name", Type: "string", Format: "name"},
+			{Name: "Created At", Type: "date"},
+			{Name: "Type", Type: "string"},
+			{Name: "AppID", Type: "string"},
+			{Name: "InstallationID", Type: "string"},
+			{Name: "ClientID", Type: "string"},
+		},
+		Reader: func(obj any) ([]interface{}, error) {
+			m, ok := obj.(*Connection)
+			if !ok {
+				return nil, errors.New("expected Repository")
+			}
+
+			var appID, installationID, clientID string
+			switch m.Spec.Type {
+			case GithubConnectionType:
+				appID = m.Spec.GitHub.AppID
+				installationID = m.Spec.GitHub.InstallationID
+			case GithubEnterpriseConnectionType:
+				if m.Spec.GitHubEnterprise != nil {
+					appID = m.Spec.GitHubEnterprise.AppID
+					installationID = m.Spec.GitHubEnterprise.InstallationID
+				}
+			default:
+			}
+			if m.Spec.OAuth != nil {
+				clientID = m.Spec.OAuth.ClientID
+			}
+
+			return []interface{}{
+				m.Name,
+				m.CreationTimestamp.UTC().Format(time.RFC3339),
+				m.Spec.Type,
+				appID,
+				installationID,
+				clientID,
+			}, nil
+		},
+	})
+
 var (
 	// SchemeGroupVersion is group version used to register these objects
 	SchemeGroupVersion   = schema.GroupVersion{Group: GROUP, Version: VERSION}
@@ -147,6 +197,7 @@ func AddKnownTypes(gv schema.GroupVersion, scheme *runtime.Scheme) error {
 		&FileList{},
 		&HistoryList{},
 		&TestResults{},
+		&ConnectionAuthorizeRequest{},
 		&ResourceList{},
 		&ResourceStats{},
 		&Job{},
@@ -154,6 +205,9 @@ func AddKnownTypes(gv schema.GroupVersion, scheme *runtime.Scheme) error {
 		&RefList{},
 		&HistoricJob{},
 		&HistoricJobList{},
+		&Connection{},
+		&ConnectionList{},
+		&ExternalRepositoryList{},
 	)
 	return nil
 }

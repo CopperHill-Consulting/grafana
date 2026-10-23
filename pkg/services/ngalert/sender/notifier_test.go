@@ -28,6 +28,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ import (
 	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
-	"gopkg.in/yaml.v2"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/prometheus/prometheus/config"
 	"github.com/prometheus/prometheus/discovery"
@@ -424,11 +425,12 @@ func TestExternalLabels(t *testing.T) {
 		ExternalLabels: labels.FromStrings("a", "b"),
 		RelabelConfigs: []*relabel.Config{
 			{
-				SourceLabels: model.LabelNames{"alertname"},
-				TargetLabel:  "a",
-				Action:       "replace",
-				Regex:        relabel.MustNewRegexp("externalrelabelthis"),
-				Replacement:  "c",
+				SourceLabels:         model.LabelNames{"alertname"},
+				TargetLabel:          "a",
+				Action:               "replace",
+				Regex:                relabel.MustNewRegexp("externalrelabelthis"),
+				Replacement:          "c",
+				NameValidationScheme: model.UTF8Validation,
 			},
 		},
 	}, nil)
@@ -463,11 +465,12 @@ func TestHandlerRelabel(t *testing.T) {
 				Regex:        relabel.MustNewRegexp("drop"),
 			},
 			{
-				SourceLabels: model.LabelNames{"alertname"},
-				TargetLabel:  "alertname",
-				Action:       "replace",
-				Regex:        relabel.MustNewRegexp("rename"),
-				Replacement:  "renamed",
+				SourceLabels:         model.LabelNames{"alertname"},
+				TargetLabel:          "alertname",
+				Action:               "replace",
+				Regex:                relabel.MustNewRegexp("rename"),
+				Replacement:          "renamed",
+				NameValidationScheme: model.UTF8Validation,
 			},
 		},
 	}, nil)
@@ -660,11 +663,10 @@ alerting:
   alertmanagers:
   - static_configs:
 `
-	err := yaml.UnmarshalStrict([]byte(s), cfg)
-	require.NoError(t, err, "Unable to load YAML config.")
+	mustStrictlyDecodeConfig(t, strings.NewReader(s), cfg)
 	require.Len(t, cfg.AlertingConfig.AlertmanagerConfigs, 1)
 
-	err = n.ApplyConfig(cfg, nil)
+	err := n.ApplyConfig(cfg, nil, nil)
 	require.NoError(t, err, "Error applying the config.")
 
 	tgs := make(map[string][]*targetgroup.Group)
@@ -711,11 +713,10 @@ alerting:
         regex: 'alertmanager:9093'
         action: drop
 `
-	err := yaml.UnmarshalStrict([]byte(s), cfg)
-	require.NoError(t, err, "Unable to load YAML config.")
+	mustStrictlyDecodeConfig(t, strings.NewReader(s), cfg)
 	require.Len(t, cfg.AlertingConfig.AlertmanagerConfigs, 1)
 
-	err = n.ApplyConfig(cfg, nil)
+	err := n.ApplyConfig(cfg, nil, nil)
 	require.NoError(t, err, "Error applying the config.")
 
 	tgs := make(map[string][]*targetgroup.Group)
@@ -799,8 +800,13 @@ func TestHangingNotifier(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	reg := prometheus.NewRegistry()
-	sdMetrics, err := discovery.RegisterSDMetrics(reg, discovery.NewRefreshMetrics(reg))
+	refreshMetrics := discovery.NewRefreshMetrics(reg)
+	mechanismMetrics, err := discovery.RegisterSDMetrics(reg, refreshMetrics)
 	require.NoError(t, err)
+	sdMetrics := &discovery.SDMetrics{
+		MechanismMetrics: mechanismMetrics,
+		RefreshManager:   refreshMetrics,
+	}
 	sdManager := discovery.NewManager(
 		ctx,
 		promslog.NewNopLogger(),
@@ -1091,18 +1097,18 @@ alerting:
       - foo.json
 `
 	// 1. Ensure known alertmanagers are not dropped during ApplyConfig.
-	require.NoError(t, yaml.UnmarshalStrict([]byte(s), cfg))
+	mustStrictlyDecodeConfig(t, strings.NewReader(s), cfg)
 	require.Len(t, cfg.AlertingConfig.AlertmanagerConfigs, 1)
 
 	// First, apply the config and reload.
-	require.NoError(t, n.ApplyConfig(cfg, nil))
+	require.NoError(t, n.ApplyConfig(cfg, nil, nil))
 	tgs := map[string][]*targetgroup.Group{"config-0": {targetGroup}}
 	n.reload(tgs)
 	require.Len(t, n.Alertmanagers(), 1)
 	require.Equal(t, alertmanagerURL, n.Alertmanagers()[0].String())
 
 	// Reapply the config.
-	require.NoError(t, n.ApplyConfig(cfg, nil))
+	require.NoError(t, n.ApplyConfig(cfg, nil, nil))
 	// Ensure the known alertmanagers are not dropped.
 	require.Len(t, n.Alertmanagers(), 1)
 	require.Equal(t, alertmanagerURL, n.Alertmanagers()[0].String())
@@ -1117,10 +1123,10 @@ alerting:
     - files:
       - foo.json
 `
-	require.NoError(t, yaml.UnmarshalStrict([]byte(s), cfg))
+	mustStrictlyDecodeConfig(t, strings.NewReader(s), cfg)
 	require.Len(t, cfg.AlertingConfig.AlertmanagerConfigs, 2)
 
-	require.NoError(t, n.ApplyConfig(cfg, nil))
+	require.NoError(t, n.ApplyConfig(cfg, nil, nil))
 	require.Len(t, n.Alertmanagers(), 1)
 	// Ensure no unnecessary alertmanagers are injected.
 	require.Empty(t, n.alertmanagers["config-0"].ams)
@@ -1140,10 +1146,10 @@ alerting:
     - files:
       - foo.json
 `
-	require.NoError(t, yaml.UnmarshalStrict([]byte(s), cfg))
+	mustStrictlyDecodeConfig(t, strings.NewReader(s), cfg)
 	require.Len(t, cfg.AlertingConfig.AlertmanagerConfigs, 2)
 
-	require.NoError(t, n.ApplyConfig(cfg, nil))
+	require.NoError(t, n.ApplyConfig(cfg, nil, nil))
 	require.Len(t, n.Alertmanagers(), 2)
 	for cfgIdx := range 2 {
 		ams := n.alertmanagers[fmt.Sprintf("config-%d", cfgIdx)].ams
@@ -1167,9 +1173,85 @@ alerting:
       regex: 'doesntmatter:1234'
       action: drop
 `
-	require.NoError(t, yaml.UnmarshalStrict([]byte(s), cfg))
+	mustStrictlyDecodeConfig(t, strings.NewReader(s), cfg)
 	require.Len(t, cfg.AlertingConfig.AlertmanagerConfigs, 2)
 
-	require.NoError(t, n.ApplyConfig(cfg, nil))
+	require.NoError(t, n.ApplyConfig(cfg, nil, nil))
 	require.Empty(t, n.Alertmanagers())
+}
+
+// TestApplyConfigDataSourceUIDChange verifies that when the dataSourceUID changes
+// while the AlertmanagerConfig hash stays the same (e.g. datasource recreated at
+// the same URL), the old UID's metric series are deleted so they don't leak.
+func TestApplyConfigDataSourceUIDChange(t *testing.T) {
+	targetURL := "alertmanager:9093"
+	alertmanagerURL := fmt.Sprintf("http://%s/api/v2/alerts", targetURL)
+	targetGroup := &targetgroup.Group{
+		Targets: []model.LabelSet{
+			{"__address__": model.LabelValue(targetURL)},
+		},
+	}
+
+	reg := prometheus.NewRegistry()
+	n := NewManager(&Options{Registerer: reg}, nil)
+
+	s := `
+alerting:
+  alertmanagers:
+  - file_sd_configs:
+    - files:
+      - foo.json
+`
+	cfg := &config.Config{}
+	mustStrictlyDecodeConfig(t, strings.NewReader(s), cfg)
+
+	// Apply config with UID "uid-old" and simulate a sync so metrics are initialized.
+	require.NoError(t, n.ApplyConfig(cfg, nil, map[string]string{"config-0": "uid-old"}))
+	n.reload(map[string][]*targetgroup.Group{"config-0": {targetGroup}})
+
+	// Confirm the old-UID series exist.
+	mfs, err := reg.Gather()
+	require.NoError(t, err)
+	foundOld := false
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == dataSourceUIDLabel && lp.GetValue() == "uid-old" {
+					foundOld = true
+				}
+			}
+		}
+	}
+	require.True(t, foundOld, "expected metrics with uid-old to exist after first sync")
+
+	// Apply config again with the same URL but a different UID (same config hash).
+	require.NoError(t, n.ApplyConfig(cfg, nil, map[string]string{"config-0": "uid-new"}))
+
+	// The old-UID series must be gone, only uid-new may appear.
+	mfs, err = reg.Gather()
+	require.NoError(t, err)
+	for _, mf := range mfs {
+		for _, m := range mf.GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == dataSourceUIDLabel {
+					require.NotEqual(t, "uid-old", lp.GetValue(),
+						"leaked metric %s{alertmanager=%q, data_source_uid=%q}",
+						mf.GetName(), alertmanagerURL, lp.GetValue())
+				}
+			}
+		}
+	}
+}
+
+// Maintain strict yaml decode behavior from v2: https://github.com/go-yaml/yaml/issues/639#issuecomment-666935833
+func mustStrictlyDecodeConfig(t testing.TB, r io.Reader, cfg *config.Config) {
+	t.Helper()
+
+	dec := yaml.NewDecoder(r)
+	dec.KnownFields(true)
+
+	err := dec.Decode(cfg)
+	if err != nil {
+		require.Equal(t, io.EOF, err, "Unable to load YAML config.")
+	}
 }

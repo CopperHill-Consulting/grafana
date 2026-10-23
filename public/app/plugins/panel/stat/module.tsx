@@ -12,8 +12,9 @@ import { commonOptionsBuilder, sharedSingleStatMigrationHandler } from '@grafana
 import { statPanelChangedHandler } from './StatMigrations';
 import { StatPanel } from './StatPanel';
 import { addStandardDataReduceOptions, addOrientationOption } from './common';
-import { defaultOptions, Options } from './panelcfg.gen';
-import { StatSuggestionsSupplier } from './suggestions';
+import { defaultOptions, type Options } from './panelcfg.gen';
+import { statPresetsSupplier } from './presets';
+import { statSuggestionsSupplier } from './suggestions';
 
 export const plugin = new PanelPlugin<Options>(StatPanel)
   .useFieldConfig()
@@ -22,7 +23,7 @@ export const plugin = new PanelPlugin<Options>(StatPanel)
 
     addStandardDataReduceOptions(builder);
     addOrientationOption(builder, mainCategory);
-    commonOptionsBuilder.addTextSizeOptions(builder);
+    commonOptionsBuilder.addTextSizeOptions(builder, { withTitle: true, withValue: true, withPercentChange: true });
 
     builder
       .addSelect({
@@ -137,5 +138,6 @@ export const plugin = new PanelPlugin<Options>(StatPanel)
   })
   .setNoPadding()
   .setPanelChangeHandler(statPanelChangedHandler)
-  .setSuggestionsSupplier(new StatSuggestionsSupplier())
+  .setSuggestionsSupplier(statSuggestionsSupplier)
+  .setPresetsSupplier(statPresetsSupplier)
   .setMigrationHandler(sharedSingleStatMigrationHandler);

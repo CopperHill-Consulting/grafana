@@ -317,7 +317,7 @@ export enum ScaleDirection {
  */
 export interface LineStyle {
   dash?: Array<number>;
-  fill?: ('solid' | 'dash' | 'dot' | 'square');
+  fill?: ('solid' | 'dash' | 'dot' | 'square' | 'accessible');
 }
 
 export const defaultLineStyle: Partial<LineStyle> = {
@@ -502,6 +502,33 @@ export enum VizOrientation {
   Vertical = 'vertical',
 }
 
+export interface VizAnnotations extends AnnotationDisplayOptions {
+  /**
+   * Sets whether clustering is enabled. Set as a number to provide for threshold customization in the future without breaking API changes. Any value > 0 will enable clustering.
+   */
+  clustering?: number;
+  /**
+   * Breaks out each annotation frame into multiple lanes on the x-axis
+   */
+  multiLane?: boolean;
+}
+
+export interface AnnotationDisplayOptions {
+  lines?: {
+    width?: number;
+  };
+  regions?: {
+    opacity?: number;
+  };
+}
+
+/**
+ * TODO docs
+ */
+export interface OptionsWithAnnotations {
+  annotations?: VizAnnotations;
+}
+
 /**
  * TODO docs
  */
@@ -628,6 +655,8 @@ export enum SortOrder {
   None = 'none',
 }
 
+export type LegendOverflow = ('ellipsis' | 'wrap');
+
 /**
  * TODO docs
  */
@@ -644,15 +673,20 @@ export interface GraphFieldConfig extends LineConfig, FillConfig, PointsConfig, 
  * TODO docs
  */
 export interface VizLegendOptions {
+  /**
+   * @deprecated Use LegendDisplayMode.Table
+   */
   asTable?: boolean;
   calcs: Array<string>;
-  displayMode: LegendDisplayMode;
+  displayMode?: LegendDisplayMode;
   isVisible?: boolean;
+  limit?: number;
+  overflow?: LegendOverflow;
   placement: LegendPlacement;
   showLegend: boolean;
   sortBy?: string;
   sortDesc?: boolean;
-  width?: number;
+  width?: (number | string);
 }
 
 export const defaultVizLegendOptions: Partial<VizLegendOptions> = {
@@ -988,6 +1022,62 @@ export const defaultTableFooterOptions: Partial<TableFooterOptions> = {
 };
 
 /**
+ * Note that public/app/plugins/panel/table/panelcfg.cue contains a deprecated copy of these options
+ */
+export interface TableOptions {
+  /**
+   * Controls the height of the rows
+   */
+  cellHeight?: TableCellHeight;
+  /**
+   * If true, disables all keyboard events in the table. this is used when previewing a table (i.e. suggestions)
+   */
+  disableKeyboardEvents?: boolean;
+  /**
+   * Enable pagination on the table
+   */
+  enablePagination?: boolean;
+  /**
+   * Represents the index of the selected frame
+   */
+  frameIndex: number;
+  /**
+   * Defines the number of columns to freeze on the left side of the table
+   */
+  frozenColumns?: {
+    left?: number;
+  };
+  /**
+   * limits the maximum height of a row, if text wrapping or dynamic height is enabled
+   */
+  maxRowHeight?: number;
+  /**
+   * When pagination is enabled, sets a fixed number of rows per page. When unset, the page size is derived from the panel height.
+   */
+  pageSize?: number;
+  /**
+   * Controls whether the panel should show the header
+   */
+  showHeader: boolean;
+  /**
+   * Controls whether the header should show icons for the column types
+   */
+  showTypeIcons?: boolean;
+  /**
+   * Used to control row sorting
+   */
+  sortBy?: Array<TableSortByFieldState>;
+}
+
+export const defaultTableOptions: Partial<TableOptions> = {
+  cellHeight: TableCellHeight.Sm,
+  frameIndex: 0,
+  showHeader: true,
+  showTypeIcons: false,
+  sortBy: [],
+};
+
+/**
  * Field options for each field within a table (e.g 10, "The String", 64.20, etc.)
  * Generally defines alignment, filtering capabilties, display options, etc.
  */
@@ -1009,6 +1099,10 @@ export interface TableFieldOptions extends HideableFieldConfig {
   hideHeader?: boolean;
   inspect: boolean;
   minWidth?: number;
+  /**
+   * Controls whether the column can be sorted. Every column is sortable by default; set to false to disable sorting for this column.
+   */
+  sortable?: boolean;
   /**
    * The name of the field which contains styling overrides for this cell
    */

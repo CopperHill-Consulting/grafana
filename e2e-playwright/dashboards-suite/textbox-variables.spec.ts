@@ -1,12 +1,12 @@
-import { Page } from 'playwright-core';
+import { type Page } from 'playwright-core';
 
-import { test, expect, E2ESelectorGroups, DashboardPage } from '@grafana/plugin-e2e';
+import { test, expect, type E2ESelectorGroups, type DashboardPage } from '@grafana/plugin-e2e';
 
 const PAGE_UNDER_TEST = 'AejrN1AMz';
 
 test.use({
   featureToggles: {
-    kubernetesDashboards: process.env.KUBERNETES_DASHBOARDS === 'true',
+    dashboardNewLayouts: true,
   },
 });
 

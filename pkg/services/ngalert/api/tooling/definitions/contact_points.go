@@ -36,11 +36,12 @@ type DingdingIntegration struct {
 type DiscordIntegration struct {
 	DisableResolveMessage *bool `json:"-" yaml:"-" hcl:"disable_resolve_message"`
 
-	WebhookURL         Secret  `json:"url" yaml:"url" hcl:"url"`
-	Title              *string `json:"title,omitempty" yaml:"title,omitempty" hcl:"title"`
-	Message            *string `json:"message,omitempty" yaml:"message,omitempty" hcl:"message"`
-	AvatarURL          *string `json:"avatar_url,omitempty" yaml:"avatar_url,omitempty" hcl:"avatar_url"`
-	UseDiscordUsername *bool   `json:"use_discord_username,omitempty" yaml:"use_discord_username,omitempty" hcl:"use_discord_username"`
+	WebhookURL          Secret  `json:"url" yaml:"url" hcl:"url"`
+	Title               *string `json:"title,omitempty" yaml:"title,omitempty" hcl:"title"`
+	Message             *string `json:"message,omitempty" yaml:"message,omitempty" hcl:"message"`
+	AvatarURL           *string `json:"avatar_url,omitempty" yaml:"avatar_url,omitempty" hcl:"avatar_url"`
+	UseDiscordUsername  *bool   `json:"use_discord_username,omitempty" yaml:"use_discord_username,omitempty" hcl:"use_discord_username"`
+	UseEmbedDescription *bool   `json:"use_embed_description,omitempty" yaml:"use_embed_description,omitempty" hcl:"use_embed_description"`
 }
 
 type EmailIntegration struct {
@@ -58,8 +59,10 @@ type GooglechatIntegration struct {
 
 	URL Secret `json:"url" yaml:"url" hcl:"url"`
 
-	Title   *string `json:"title,omitempty" yaml:"title,omitempty" hcl:"title"`
-	Message *string `json:"message,omitempty" yaml:"message,omitempty" hcl:"message"`
+	Title           *string `json:"title,omitempty" yaml:"title,omitempty" hcl:"title"`
+	Message         *string `json:"message,omitempty" yaml:"message,omitempty" hcl:"message"`
+	HideOpenButton  *bool   `json:"hide_open_button,omitempty" yaml:"hide_open_button,omitempty" hcl:"hide_open_button"`
+	HideVersionInfo *bool   `json:"hide_version_info,omitempty" yaml:"hide_version_info,omitempty" hcl:"hide_version_info"`
 }
 
 type JiraIntegration struct {
@@ -254,6 +257,7 @@ type SlackIntegration struct {
 	MentionUsers   *string `json:"mentionUsers,omitempty" yaml:"mentionUsers,omitempty" hcl:"mention_users"`
 	MentionGroups  *string `json:"mentionGroups,omitempty" yaml:"mentionGroups,omitempty" hcl:"mention_groups"`
 	Color          *string `json:"color,omitempty" yaml:"color,omitempty" hcl:"color"`
+	Footer         *string `json:"footer,omitempty" yaml:"footer,omitempty" hcl:"footer"`
 }
 
 type TelegramIntegration struct {

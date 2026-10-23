@@ -1,11 +1,10 @@
-import { useMemo } from 'react';
 import { useParams } from 'react-router-dom-v5-compat';
 
 import { t } from '@grafana/i18n';
 import { Alert } from '@grafana/ui';
 import { useGetFolderQueryFacade, useUpdateFolder } from 'app/api/clients/folder/v1beta1/hooks';
 import { Page } from 'app/core/components/Page/Page';
-import { buildNavModel, getAlertingTabID } from 'app/features/folders/state/navModel';
+import { useNavModel } from 'app/features/browse-dashboards/hooks/useNavModel';
 
 import { AlertsFolderView } from '../alerting/unified/AlertsFolderView';
 import { alertRuleApi } from '../alerting/unified/api/alertRuleApi';
@@ -13,7 +12,7 @@ import { GRAFANA_RULER_CONFIG } from '../alerting/unified/api/featureDiscoveryAp
 import { stringifyErrorLike } from '../alerting/unified/utils/misc';
 import { rulerRuleType } from '../alerting/unified/utils/rules';
 
-import { FolderActionsButton } from './components/FolderActionsButton';
+import { FolderDetailsActions } from './components/FolderDetailsActions/FolderDetailsActions';
 
 const { useRulerNamespaceQuery } = alertRuleApi;
 
@@ -32,20 +31,7 @@ export function BrowseFolderAlertingPage() {
 
   const [saveFolder] = useUpdateFolder();
 
-  const navModel = useMemo(() => {
-    if (!folderDTO) {
-      return undefined;
-    }
-    const model = buildNavModel(folderDTO);
-
-    // Set the "Alerting" tab to active
-    const alertingTabID = getAlertingTabID(folderDTO.uid);
-    const alertingTab = model.children?.find((child) => child.id === alertingTabID);
-    if (alertingTab) {
-      alertingTab.active = true;
-    }
-    return model;
-  }, [folderDTO]);
+  const navModel = useNavModel(folderDTO, 'alerts');
 
   const onEditTitle = folderUID
     ? async (newValue: string) => {
@@ -72,7 +58,7 @@ export function BrowseFolderAlertingPage() {
       navId="dashboards/browse"
       pageNav={navModel}
       onEditTitle={onEditTitle}
-      actions={<>{folderDTO && <FolderActionsButton folder={folderDTO} />}</>}
+      actions={folderDTO && <FolderDetailsActions folderDTO={folderDTO} />}
     >
       <Page.Contents isLoading={isLoading}>
         {!folderDTO && (

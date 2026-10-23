@@ -109,7 +109,6 @@ _Experimental in all editions of Grafana_
 
 Datagrid is a new panel that allows you to edit your data within a Grafana dashboard. Imagine having a spreadsheet-like view where you can fine-tune data pulled from a data source or create your own dataset from scratch and use it within your dashboard to update your panels in real time. That's what Datagrid provides. You can also use the Datagrid panel as a data source used by other panels to augment other data.
 
-To use this new panel editing functionality, enable the `enableDatagridEditing` feature toggle.
 Currently, the Datagrid Panel supports the following features in Grafana version 10.0:
 
 - Creating and deleting rows and columns
@@ -119,8 +118,6 @@ Currently, the Datagrid Panel supports the following features in Grafana version
 - Grid selection actions (copy/paste/delete)
 - Draggable columns and rows
 - Series selection when pulling data from a data source
-
-To learn more, refer to the [Datagrid documentation](../../panels-visualizations/visualizations/datagrid/).
 
 In subsequent releases, we’ll continue adding features to the Datagrid panel to further improve the user experience.
 
@@ -270,7 +267,7 @@ With the new user interface (UI), you can now configure SAML without needing to 
 
 The SAML UI is available in Grafana Enterprise, Cloud Pro, and Advanced. It's user-friendly, with clear instructions and helpful prompts to guide you through the process.
 
-For more information on how to set up SAML using the Grafana UI, refer to [Configure SAML authentication using the Grafana user interface](../../setup-grafana/configure-security/configure-authentication/saml-ui/).
+For more information on how to set up SAML using the Grafana UI, refer to [Configure SAML authentication using the Grafana user interface](../../setup-grafana/configure-access/configure-authentication/saml-ui/).
 
 ### Case-insensitive usernames and email addresses
 

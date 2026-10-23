@@ -1,10 +1,10 @@
-import { Meta, StoryFn } from '@storybook/react';
+import { type Meta, type StoryFn } from '@storybook/react-webpack5';
 
 import { DashboardStoryCanvas } from '../../utils/storybook/DashboardStoryCanvas';
 import { ButtonGroup } from '../Button/ButtonGroup';
 import { Stack } from '../Layout/Stack/Stack';
 
-import { ToolbarButton, ToolbarButtonVariant } from './ToolbarButton';
+import { ToolbarButton, type ToolbarButtonVariant } from './ToolbarButton';
 import mdx from './ToolbarButton.mdx';
 import { ToolbarButtonRow } from './ToolbarButtonRow';
 
@@ -76,6 +76,7 @@ export const BasicWithIcon: StoryFn<typeof ToolbarButton> = (args) => {
       icon={args.icon}
       isOpen={args.isOpen}
       tooltip={args.tooltip}
+      aria-label="This is an aria-label"
       disabled={args.disabled}
       fullWidth={args.fullWidth}
       isHighlighted={args.isHighlighted}

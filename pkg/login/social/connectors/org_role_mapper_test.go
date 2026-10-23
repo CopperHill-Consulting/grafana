@@ -218,7 +218,7 @@ func TestOrgRoleMapper_MapOrgRoles(t *testing.T) {
 				}
 			}
 			mappingCfg := mapper.ParseOrgMappingSettings(context.Background(), tc.orgMappingSettings, tc.strictRoleMapping)
-			actual := mapper.MapOrgRoles(mappingCfg, tc.externalOrgs, tc.directlyMappedRole)
+			actual := mapper.MapOrgRoles(context.Background(), mappingCfg, tc.externalOrgs, tc.directlyMappedRole)
 
 			assert.EqualValues(t, tc.expected, actual)
 		})
@@ -233,7 +233,7 @@ func TestOrgRoleMapper_MapOrgRoles_ReturnsDefaultOnNilMapping(t *testing.T) {
 	cfg.AutoAssignOrgRole = string(org.RoleViewer)
 	mapper := ProvideOrgRoleMapper(cfg, orgService)
 
-	actual := mapper.MapOrgRoles(NewMappingConfiguration(map[string]map[int64]org.RoleType{}, false), []string{"First"}, org.RoleNone)
+	actual := mapper.MapOrgRoles(context.Background(), NewMappingConfiguration(map[string]map[int64]org.RoleType{}, false), []string{"First"}, org.RoleNone)
 
 	assert.EqualValues(t, map[int64]org.RoleType{2: org.RoleNone}, actual)
 }
@@ -296,6 +296,24 @@ func TestOrgRoleMapper_ParseOrgMappingSettings(t *testing.T) {
 				})).Return(&org.Org{ID: 1}, nil)
 			},
 			expected: NewMappingConfiguration(map[string]map[int64]org.RoleType{"Group1": {1: org.RoleViewer}}, false),
+		},
+		{
+			name:       "should preserve backslashes in the external org name",
+			rawMapping: []string{`my.domain\my-group:1:Viewer`},
+			roleStrict: false,
+			expected:   NewMappingConfiguration(map[string]map[int64]org.RoleType{`my.domain\my-group`: {1: org.RoleViewer}}, false),
+		},
+		{
+			name:       "should preserve backslashes when the external org name contains escaped colons",
+			rawMapping: []string{`my.domain\group\:sub:1:Viewer`},
+			roleStrict: false,
+			expected:   NewMappingConfiguration(map[string]map[int64]org.RoleType{`my.domain\group:sub`: {1: org.RoleViewer}}, false),
+		},
+		{
+			name:       "should preserve double backslashes in the external org name",
+			rawMapping: []string{`my.domain\\my-group:1:Viewer`},
+			roleStrict: false,
+			expected:   NewMappingConfiguration(map[string]map[int64]org.RoleType{`my.domain\\my-group`: {1: org.RoleViewer}}, false),
 		},
 		{
 			name:       "should return empty mapping when org mapping is nil",

@@ -7,64 +7,327 @@ import (
 	"fmt"
 	"iter"
 	"math"
+	"math/rand"
+	"os"
+	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/fullstorydev/grpchan/inprocgrpc"
 	"github.com/go-sql-driver/mysql"
+	"github.com/google/uuid"
+	"github.com/grafana/dskit/services"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/protobuf/proto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
-	"github.com/grafana/grafana/pkg/util/sqlite"
-
 	"github.com/grafana/grafana-app-sdk/logging"
 
+	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/services/apiserver/options"
+	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
+	"github.com/grafana/grafana/pkg/storage/unified/resource/kv"
 	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
+	"github.com/grafana/grafana/pkg/storage/unified/search/vector"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/db"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/db/dbimpl"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/dbutil"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/rvmanager"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate"
 	"github.com/grafana/grafana/pkg/util/debouncer"
+	"github.com/grafana/grafana/pkg/util/sqlite"
 )
 
-const tracePrefix = "sql.resource."
+var tracer = otel.Tracer("github.com/grafana/grafana/pkg/storage/unified/sql")
+
 const defaultPollingInterval = 100 * time.Millisecond
+
 const defaultWatchBufferSize = 100 // number of events to buffer in the watch stream
-const defaultPrunerHistoryLimit = 20
+const defaultGarbageCollectionBatchWait = 1 * time.Second
+
+type GarbageCollectionConfig struct {
+	Enabled          bool
+	DryRun           bool
+	Interval         time.Duration // how often the process runs
+	BatchSize        int           // max number of candidates to delete (unique NGR)
+	BatchWait        time.Duration // wait between batches to avoid overwhelming the datastore
+	MaxAge           time.Duration // retention period
+	DashboardsMaxAge time.Duration // dashboard retention
+}
+
+// NewGarbageCollectionConfig keeps the mapping from settings in one place, so callers
+// building the SQL backend themselves cannot miss a field.
+func NewGarbageCollectionConfig(cfg *setting.Cfg) GarbageCollectionConfig {
+	return GarbageCollectionConfig{
+		Enabled:          cfg.EnableGarbageCollection,
+		DryRun:           cfg.GarbageCollectionDryRun,
+		Interval:         cfg.GarbageCollectionInterval,
+		BatchSize:        cfg.GarbageCollectionBatchSize,
+		BatchWait:        cfg.GarbageCollectionBatchWait,
+		MaxAge:           cfg.GarbageCollectionMaxAge,
+		DashboardsMaxAge: cfg.DashboardsGarbageCollectionMaxAge,
+	}
+}
+
+func ProvideStorageBackend(
+	cfg *setting.Cfg,
+) (resource.StorageBackend, error) {
+	// TODO: make this the central place to provide SQL backend
+	// Currently it is skipped as we need to handle the cases of Diagnostics and Lifecycle
+	return nil, nil
+}
 
 type Backend interface {
 	resource.StorageBackend
-	resourcepb.DiagnosticsServer
-	resource.LifecycleHooks
+	resourcepb.DiagnosticsServer //nolint:staticcheck
+}
+
+// tmpDir returns a writable temp directory under dataPath for Parquet bulk
+// migration files. Returns "" (OS default) when dataPath is empty.
+func tmpDir(dataPath string) string {
+	if dataPath == "" {
+		return ""
+	}
+	return filepath.Join(dataPath, "tmp")
+}
+
+// StorageBackendOption configures optional behavior of the KV storage backend.
+type StorageBackendOption func(*resource.KVBackendOptions)
+
+// WithEventPublisher makes the backend announce committed writes on an external
+// message bus (NATS) via the given publisher. Applies only to the KV backend.
+func WithEventPublisher(p resource.EventPublisher) StorageBackendOption {
+	return func(o *resource.KVBackendOptions) { o.EventPublisher = p }
+}
+
+// WithVectorBackend lets the KV backend's tenant deleter remove a deleted
+// tenant's embeddings from the vector store. A nil vb (vector backend disabled)
+// leaves embedding cleanup off.
+func WithVectorBackend(vb vector.VectorBackend) StorageBackendOption {
+	return func(o *resource.KVBackendOptions) {
+		if vb == nil {
+			return
+		}
+		o.EmbeddingDeleter = vb
+	}
+}
+
+// WithNatsNotifierShadow runs a NATS-backed notifier in shadow mode beside the
+// primary notifier for testing: it records comparison metrics without feeding
+// the watch pipeline. KV backend only.
+func WithNatsNotifierShadow(s resource.EventSubscriber) StorageBackendOption {
+	return func(o *resource.KVBackendOptions) {
+		o.EventSubscriber = s
+		o.EnableNatsNotifierShadow = true
+	}
+}
+
+// WithNatsNotifier feeds the watch pipeline directly from the NATS bus instead
+// of polling. Delivery is at-most-once; the backend falls back to polling when
+// the subscriber is disabled. KV backend only.
+func WithNatsNotifier(s resource.EventSubscriber) StorageBackendOption {
+	return func(o *resource.KVBackendOptions) {
+		o.EventSubscriber = s
+		o.EnableNatsNotifier = true
+	}
+}
+
+// WithExperimentalKV routes flagged experimental use-cases to an alternative
+// KV. Nil preserves existing behavior. KV backend only.
+func WithExperimentalKV(e *resource.ExperimentalKVOptions) StorageBackendOption {
+	return func(o *resource.KVBackendOptions) { o.ExperimentalKV = e }
+}
+
+// NewStorageBackend creates the unified storage backend based on options.StorageType.
+// It supports file-based KV backend using BadgerDB (options.StorageTypeFile).
+// Returns a nil backend if options.StorageTypeUnifiedGrpc, a remote gRPC client is expected to be used instead.
+// For all other storage types a SQL backend will be created.
+func NewStorageBackend(
+	cfg *setting.Cfg,
+	eDB db.DBProvider,
+	reg prometheus.Registerer,
+	storageMetrics *resource.StorageMetrics,
+	disableStorageServices bool,
+	kvStore kv.KV,
+	gcGate *resource.GCGate,
+	opts ...StorageBackendOption,
+) (resource.StorageBackend, error) {
+	storageType := options.StorageType(cfg.SectionWithEnvOverrides("grafana-apiserver").Key("storage_type").
+		MustString(string(options.StorageTypeUnified)))
+	switch storageType {
+	case options.StorageTypeFile:
+		return NewFileBackend(cfg, kvStore)
+	case options.StorageTypeUnifiedGrpc:
+		return nil, nil
+	default: // fall back to SQL backend
+	}
+
+	isHA := isHighAvailabilityEnabled(cfg.SectionWithEnvOverrides("database"),
+		cfg.SectionWithEnvOverrides("resource_api"))
+
+	if !cfg.EnableSQLKVBackend {
+		return NewBackend(BackendOptions{
+			DBProvider:              eDB,
+			Reg:                     reg,
+			IsHA:                    isHA,
+			storageMetrics:          storageMetrics,
+			LastImportTimeMaxAge:    cfg.MaxFileIndexAge,
+			GCGate:                  gcGate,
+			GarbageCollection:       NewGarbageCollectionConfig(cfg),
+			SimulatedNetworkLatency: cfg.SimulatedNetworkLatency,
+			MigrationParquetBuffer:  cfg.MigrationParquetBuffer,
+			MigrationChunkedWrites:  cfg.MigrationChunkedWrites,
+			MigrationChunkMaxBytes:  cfg.MigrationChunkMaxBytes,
+			TmpDir:                  tmpDir(cfg.DataPath),
+			DisableStorageServices:  disableStorageServices,
+			DisablePruner:           cfg.DisablePruner,
+			DashboardVersionsToKeep: cfg.DashboardVersionsToKeep,
+			BatchTransactionTimeout: cfg.ResourceVersionBatchTransactionTimeout,
+			// TODO: remove this when sql/backend backwards compatibility is no longer needed.
+			LogCalls: cfg.LogSQLBackendCalls,
+		})
+	}
+
+	if kvStore == nil {
+		return nil, fmt.Errorf("storage_type=%s: kv store missing", storageType)
+	}
+
+	ctx := context.Background()
+	dbConn, err := eDB.Init(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("error initializing DB: %w", err)
+	}
+	dialect := sqltemplate.DialectForDriver(dbConn.DriverName())
+	if dialect == nil {
+		return nil, fmt.Errorf("unsupported database driver: %s", dbConn.DriverName())
+	}
+
+	kvBackendOpts := resource.NewKVBackendOptions(cfg)
+	kvBackendOpts.KvStore = kvStore
+	kvBackendOpts.Reg = reg
+	kvBackendOpts.UseChannelNotifier = !isHA
+	kvBackendOpts.Log = log.New("storage-backend")
+	kvBackendOpts.DBKeepAlive = eDB
+	kvBackendOpts.GCGate = gcGate
+	// The KV backend has one switch for all background write jobs, so the older
+	// pruner-only setting maps onto it.
+	kvBackendOpts.DisableStorageServices = disableStorageServices || cfg.DisablePruner
+
+	for _, opt := range opts {
+		opt(&kvBackendOpts)
+	}
+
+	if cfg.EnableSQLKVCompatibilityMode {
+		rvManager, err := rvmanager.NewResourceVersionManager(rvmanager.ResourceManagerOptions{
+			Dialect:                 dialect,
+			DB:                      dbConn,
+			BatchTransactionTimeout: cfg.ResourceVersionBatchTransactionTimeout,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create resource version manager: %w", err)
+		}
+
+		kvBackendOpts.RvManager = rvManager
+	}
+
+	if cfg.EnableKVLeases {
+		kvBackendOpts.EnableKVLeases = true
+		kvBackendOpts.Holder = ResolveLeaseHolder(cfg)
+		kvBackendOpts.LeaseTTL = cfg.KVLeaseTTL
+		kvBackendOpts.LeaseAutoRenew = cfg.KVLeaseAutoRenew
+	}
+
+	return resource.NewKVStorageBackend(kvBackendOpts)
+}
+
+func NewFileBackend(cfg *setting.Cfg, kvStore kv.KV) (resource.StorageBackend, error) {
+	if kvStore == nil {
+		return nil, fmt.Errorf("file backend: kv store missing (ProvideKV returned nil)")
+	}
+	return resource.NewKVStorageBackend(resource.KVBackendOptions{
+		KvStore:                 kvStore,
+		Log:                     log.New("storage-backend"),
+		DashboardVersionsToKeep: cfg.DashboardVersionsToKeep,
+	})
+}
+
+// ResolveLeaseHolder builds a stable-per-process identifier used for KV
+// lease ownership. Exported so other unified-storage backend wirings
+// (e.g. the enterprise unified-kv-grpc backend) can produce the same
+// holder format without duplicating the logic.
+func ResolveLeaseHolder(cfg *setting.Cfg) string {
+	id := "unknown"
+	if cfg.InstanceID != "" {
+		id = cfg.InstanceID
+	}
+
+	hostname, err := os.Hostname()
+	if err == nil {
+		id = hostname
+	}
+
+	return fmt.Sprintf("%s-%s", id, uuid.NewString())
 }
 
 type BackendOptions struct {
-	DBProvider      db.DBProvider
-	Tracer          trace.Tracer
-	Reg             prometheus.Registerer
-	PollingInterval time.Duration
-	WatchBufferSize int
-	IsHA            bool
-	storageMetrics  *resource.StorageMetrics
+	DBProvider        db.DBProvider
+	Reg               prometheus.Registerer
+	PollingInterval   time.Duration
+	WatchBufferSize   int
+	IsHA              bool
+	storageMetrics    *resource.StorageMetrics
+	GarbageCollection GarbageCollectionConfig
 
-	// If true, the backend will prune history on write events.
-	// Will be removed once fully rolled out.
-	withPruner bool
+	// GCGate defers the start of the GC until released (optional).
+	GCGate *resource.GCGate
+
+	DisableStorageServices bool
+	DisablePruner          bool
+
+	DashboardVersionsToKeep int
+
+	// When true, bulk migrations buffer data through a temporary Parquet file
+	MigrationParquetBuffer bool
+
+	// When true, bulk migrations write data in chunks, each in its own transaction.
+	// Requires migration_locking=true for safe HA operation.
+	MigrationChunkedWrites bool
+
+	// MigrationChunkMaxBytes is the soft maximum byte budget per migration chunk
+	// when MigrationChunkedWrites is enabled.
+	MigrationChunkMaxBytes int64
+
+	// Directory for temporary Parquet files during bulk migration.
+	// Defaults to the OS temp dir when empty. Set to cfg.DataPath/tmp to
+	// support containers with readonlyRootFilesystem enabled.
+	TmpDir string
 
 	// testing
 	SimulatedNetworkLatency time.Duration // slows down the create transactions by a fixed amount
+
+	// If not zero, the backend will regularly remove times from resource_last_import_time table older than this.
+	LastImportTimeMaxAge time.Duration
+
+	// BatchTransactionTimeout bounds one batched WithTx in the resource version
+	// manager. Zero selects the rvmanager default.
+	BatchTransactionTimeout time.Duration
+
+	// LogCalls enables temporary smoke-test logging of every call that reaches
+	// an exported method of the SQL backend.
+	// TODO: remove after confirming sql/backend receives no production traffic.
+	LogCalls bool
 }
 
 func NewBackend(opts BackendOptions) (Backend, error) {
 	if opts.DBProvider == nil {
 		return nil, errors.New("no db provider")
-	}
-	if opts.Tracer == nil {
-		opts.Tracer = noop.NewTracerProvider().Tracer("sql-backend")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -74,26 +337,52 @@ func NewBackend(opts BackendOptions) (Backend, error) {
 	if opts.WatchBufferSize == 0 {
 		opts.WatchBufferSize = defaultWatchBufferSize
 	}
-	return &backend{
+	garbageCollection := opts.GarbageCollection
+	if garbageCollection.BatchWait <= 0 {
+		garbageCollection.BatchWait = defaultGarbageCollectionBatchWait
+	}
+	backend := &backend{
 		isHA:                    opts.IsHA,
+		disableStorageServices:  opts.DisableStorageServices,
+		disablePruner:           opts.DisablePruner,
+		dashboardVersionsToKeep: opts.DashboardVersionsToKeep,
 		done:                    ctx.Done(),
 		cancel:                  cancel,
 		log:                     logging.DefaultLogger.With("logger", "sql-resource-server"),
-		tracer:                  opts.Tracer,
 		reg:                     opts.Reg,
 		dbProvider:              opts.DBProvider,
 		pollingInterval:         opts.PollingInterval,
 		watchBufferSize:         opts.WatchBufferSize,
 		storageMetrics:          opts.storageMetrics,
 		bulkLock:                &bulkLock{running: make(map[string]bool)},
+		analyzeBulkRowThreshold: analyzeResourceHistoryRowThreshold,
 		simulatedNetworkLatency: opts.SimulatedNetworkLatency,
-		withPruner:              opts.withPruner,
-	}, nil
+		migrationParquetBuffer:  opts.MigrationParquetBuffer,
+		migrationChunkedWrites:  opts.MigrationChunkedWrites,
+		migrationChunkMaxBytes:  opts.MigrationChunkMaxBytes,
+		tmpDir:                  opts.TmpDir,
+		lastImportTimeMaxAge:    opts.LastImportTimeMaxAge,
+		batchTxnTimeout:         opts.BatchTransactionTimeout,
+		garbageCollection:       garbageCollection,
+		gcGate:                  opts.GCGate,
+		logCalls:                opts.LogCalls,
+	}
+	if err := backend.Init(ctx); err != nil {
+		return nil, err
+	}
+	backend.Service = services.NewIdleService(nil, func(_ error) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return backend.Stop(ctx)
+	})
+	return backend, nil
 }
 
 type backend struct {
+	services.Service
 	//general
-	isHA bool
+	isHA                   bool
+	disableStorageServices bool
 
 	// server lifecycle
 	done     <-chan struct{}
@@ -103,7 +392,6 @@ type backend struct {
 
 	// o11y
 	log            logging.Logger
-	tracer         trace.Tracer
 	reg            prometheus.Registerer
 	storageMetrics *resource.StorageMetrics
 
@@ -113,6 +401,12 @@ type backend struct {
 	dialect    sqltemplate.Dialect
 	bulkLock   *bulkLock
 
+	// analyzeBulkRowThreshold is the number of rows bulk-loaded into resource_history
+	// above which ANALYZE runs before the backfill. Overridable in tests.
+	analyzeBulkRowThreshold int
+
+	// -- Storage Services
+
 	// watch streaming
 	//stream chan *resource.WatchEvent
 	pollingInterval time.Duration
@@ -120,13 +414,52 @@ type backend struct {
 	notifier        eventNotifier
 
 	// resource version manager
-	rvManager *resourceVersionManager
+	rvManager *rvmanager.ResourceVersionManager
 
 	// testing
 	simulatedNetworkLatency time.Duration
+	// bulkCommitObserver is used by tests to check the committed bytes per chunk.
+	bulkCommitObserver func(phase string, bytes int64)
 
-	historyPruner resource.Pruner
-	withPruner    bool
+	disablePruner           bool
+	dashboardVersionsToKeep int
+	batchTxnTimeout         time.Duration
+	historyPruner           resource.Pruner
+
+	garbageCollection GarbageCollectionConfig
+	gcGate            *resource.GCGate
+
+	// When true, bulk migrations buffer data through a temporary Parquet file
+	migrationParquetBuffer bool
+
+	// When true, bulk migrations write data in chunks, each in its own transaction.
+	migrationChunkedWrites bool
+	// migrationChunkMaxBytes is the soft maximum byte budget per migration chunk.
+	migrationChunkMaxBytes int64
+
+	// tmpDir is the directory for temporary Parquet files; empty means OS default.
+	tmpDir string
+
+	// Fields to control the cleanup of "lastImportTime" rows (used to find indexes to rebuild)
+	lastImportTimeMaxAge       time.Duration
+	lastImportTimeDeletionTime atomic.Pointer[time.Time]
+
+	// logCalls enables temporary smoke-test logging in logCall.
+	// TODO: remove after confirming sql/backend receives no production traffic.
+	logCalls bool
+}
+
+// logCall is temporary smoke-test instrumentation: it records every call that
+// reaches an exported method of the legacy SQL backend. Used to confirm that no
+// production traffic is still routed to sql/backend before removing the sqlkv
+// backwards-compatibility layer. Remove once that verification is complete.
+//
+// TODO: remove after confirming sql/backend receives no production traffic.
+func (b *backend) logCall(method string) {
+	if !b.logCalls {
+		return
+	}
+	b.log.Warn("SMOKETEST sql/backend method called", "method", method)
 }
 
 func (b *backend) Init(ctx context.Context) error {
@@ -154,11 +487,15 @@ func (b *backend) initLocked(ctx context.Context) error {
 		return fmt.Errorf("no dialect for driver %q", driverName)
 	}
 
+	if b.disableStorageServices {
+		return nil
+	}
+
 	// Initialize ResourceVersionManager
-	rvManager, err := NewResourceVersionManager(ResourceManagerOptions{
-		Dialect: b.dialect,
-		DB:      b.db,
-		Tracer:  b.tracer,
+	rvManager, err := rvmanager.NewResourceVersionManager(rvmanager.ResourceManagerOptions{
+		Dialect:                 b.dialect,
+		DB:                      b.db,
+		BatchTransactionTimeout: b.batchTxnTimeout,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create resource version manager: %w", err)
@@ -166,7 +503,18 @@ func (b *backend) initLocked(ctx context.Context) error {
 	b.rvManager = rvManager
 
 	// Initialize notifier after dialect is set up
-	notifier, err := newNotifier(b)
+	notifier, err := newNotifier(&notifierConfig{
+		isHA:            b.isHA,
+		pollingInterval: b.pollingInterval,
+		watchBufferSize: b.watchBufferSize,
+		log:             b.log,
+		bulkLock:        b.bulkLock,
+		listLatestRVs:   b.listLatestRVs,
+		storageMetrics:  b.storageMetrics,
+		done:            b.done,
+		db:              b.db,
+		dialect:         b.dialect,
+	})
 	if err != nil {
 		return fmt.Errorf("failed to create notifier: %w", err)
 	}
@@ -175,16 +523,22 @@ func (b *backend) initLocked(ctx context.Context) error {
 	if err := b.initPruner(ctx); err != nil {
 		return fmt.Errorf("failed to create pruner: %w", err)
 	}
+	if b.garbageCollection.Enabled {
+		if err := b.initGarbageCollection(ctx); err != nil {
+			return fmt.Errorf("failed to initialize garbage collection: %w", err)
+		}
+	}
 
 	return nil
 }
 
 func (b *backend) initPruner(ctx context.Context) error {
-	if !b.withPruner {
-		b.log.Debug("using noop history pruner")
+	if b.disablePruner {
+		b.log.Debug("pruner disabled, using noop pruner")
 		b.historyPruner = &resource.NoopPruner{}
 		return nil
 	}
+
 	b.log.Debug("using debounced history pruner")
 	// Initialize history pruner.
 	pruner, err := debouncer.NewGroup(debouncer.DebouncerOpts[resource.PruningKey]{
@@ -196,7 +550,7 @@ func (b *backend) initPruner(ctx context.Context) error {
 			return b.db.WithTx(ctx, ReadCommitted, func(ctx context.Context, tx db.Tx) error {
 				res, err := dbutil.Exec(ctx, tx, sqlResourceHistoryPrune, &sqlPruneHistoryRequest{
 					SQLTemplate:  sqltemplate.New(b.dialect),
-					HistoryLimit: defaultPrunerHistoryLimit,
+					HistoryLimit: int64(resource.LookupPrunerHistoryLimit(key.Group, key.Resource, b.dashboardVersionsToKeep)),
 					Key: &resourcepb.ResourceKey{
 						Namespace: key.Namespace,
 						Group:     key.Group,
@@ -239,6 +593,165 @@ func (b *backend) initPruner(ctx context.Context) error {
 	return nil
 }
 
+func (b *backend) initGarbageCollection(ctx context.Context) error {
+	b.log.Info("starting garbage collection loop", "dry_run", b.garbageCollection.DryRun)
+
+	go func() {
+		// Wait for the migration gate so GC never prunes rows an in-process
+		// chunked migration is still committing. A nil gate proceeds immediately.
+		if !b.gcGate.Wait(ctx, b.done) {
+			return
+		}
+
+		// delay the first run by a random amount between 0 and the interval to avoid thundering herd
+		if b.garbageCollection.Interval > 0 {
+			jitter := time.Duration(rand.Int63n(b.garbageCollection.Interval.Nanoseconds()))
+			select {
+			case <-b.done:
+				return
+			case <-time.After(jitter):
+			}
+		}
+
+		ticker := time.NewTicker(b.garbageCollection.Interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-b.done:
+				return
+			case <-ticker.C:
+				_ = b.runGarbageCollection(ctx, time.Now().Add(-b.garbageCollection.MaxAge).UnixMicro())
+			}
+		}
+	}()
+
+	return nil
+}
+
+func (b *backend) runGarbageCollection(ctx context.Context, cutoffTimeStamp int64) map[string]int64 {
+	ctx, span := tracer.Start(ctx, "sql.backend.runGarbageCollection")
+	defer span.End()
+	start := time.Now()
+
+	deletedByKey := map[string]int64{}
+
+	groupResources, err := b.listLatestRVs(ctx)
+	if err != nil {
+		b.log.Error("failed to list group resources for garbage collection", "error", err)
+		return deletedByKey
+	}
+
+	for group, resources := range groupResources {
+		for resourceName := range resources {
+			resourceKey := group + "/" + resourceName
+			resourceCutoff := b.garbageCollectionCutoffTimestamp(group, resourceName, cutoffTimeStamp)
+			totalDeleted := int64(0)
+			for {
+				deleted, err := b.garbageCollectBatch(ctx, group, resourceName, resourceCutoff, b.garbageCollection.BatchSize)
+				if err != nil {
+					b.log.Error("garbage collection failed",
+						"group", group,
+						"resource", resourceName,
+						"error", err)
+					break
+				}
+				if deleted == 0 {
+					break
+				}
+				totalDeleted += deleted
+				// A dry run deletes nothing, so the next batch would return the same
+				// candidates forever. Stop after the first batch.
+				if b.garbageCollection.DryRun {
+					break
+				}
+				if deleted < int64(b.garbageCollection.BatchSize) {
+					break
+				}
+				select {
+				case <-b.done:
+					return deletedByKey
+				case <-time.After(b.garbageCollection.BatchWait):
+				}
+			}
+			if totalDeleted > 0 {
+				message := "garbage collection deleted history"
+				if b.garbageCollection.DryRun {
+					// The count is one batch, not the whole backlog, so the message must not
+					// read like a total.
+					message = "garbage collection dry run, first batch only"
+				}
+				b.log.Info(message,
+					"group", group,
+					"resource", resourceName,
+					"rows", totalDeleted,
+					"seconds", time.Since(start).Seconds(),
+				)
+				deletedByKey[resourceKey] += totalDeleted
+			}
+		}
+	}
+
+	return deletedByKey
+}
+
+func (b *backend) garbageCollectionCutoffTimestamp(group, resourceName string, defaultCutoff int64) int64 {
+	if group == "dashboard.grafana.app" && resourceName == "dashboards" {
+		return time.Now().Add(-b.garbageCollection.DashboardsMaxAge).UnixMicro()
+	}
+	return defaultCutoff
+}
+
+func (b *backend) garbageCollectBatch(ctx context.Context, group, resourceName string, cutoffTimestamp int64, batchSize int) (int64, error) {
+	ctx, span := tracer.Start(ctx, "sql.backend.garbageCollectBatch")
+	span.SetAttributes(attribute.String("group", group), attribute.String("resource", resourceName), attribute.Int64("cutoffTimestamp", cutoffTimestamp), attribute.Int("batchSize", batchSize))
+	defer span.End()
+
+	var rowsAffected int64
+	err := b.db.WithTx(ctx, ReadCommitted, func(ctx context.Context, tx db.Tx) error {
+		// query will return at most batchSize candidates
+		candidates, err := dbutil.Query(ctx, tx, sqlResourceHistoryGarbageGetCandidates, &sqlGarbageCollectCandidatesRequest{
+			SQLTemplate:     sqltemplate.New(b.dialect),
+			Group:           group,
+			Resource:        resourceName,
+			CutoffTimestamp: cutoffTimestamp,
+			BatchSize:       batchSize,
+			Response:        new(gcCandidateName),
+		})
+		if err != nil {
+			return err
+		}
+		if len(candidates) == 0 {
+			return nil
+		}
+		span.AddEvent("candidates", trace.WithAttributes(attribute.Int("candidates", len(candidates))))
+		if b.garbageCollection.DryRun {
+			// Report the candidates instead of deleting them. This counts resources, not
+			// history rows, because each candidate can have several rows.
+			rowsAffected = int64(len(candidates))
+			span.AddEvent("dry run", trace.WithAttributes(attribute.Int64("candidates", rowsAffected)))
+			return nil
+		}
+		res, err := dbutil.Exec(ctx, tx, sqlResourceHistoryGCDeleteByNames, &sqlGarbageCollectDeleteByNamesRequest{
+			SQLTemplate: sqltemplate.New(b.dialect),
+			Group:       group,
+			Resource:    resourceName,
+			Candidates:  candidates,
+		})
+		if err != nil {
+			return err
+		}
+		rows, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		rowsAffected = rows
+		span.AddEvent("rows deleted", trace.WithAttributes(attribute.Int64("rowsDeleted", rowsAffected)))
+		return nil
+	})
+	return rowsAffected, err
+}
+
 func (b *backend) IsHealthy(ctx context.Context, _ *resourcepb.HealthCheckRequest) (*resourcepb.HealthCheckResponse, error) {
 	// ctxLogger := s.log.FromContext(log.WithContextualAttributes(ctx, []any{"method", "isHealthy"}))
 
@@ -249,19 +762,27 @@ func (b *backend) IsHealthy(ctx context.Context, _ *resourcepb.HealthCheckReques
 	return &resourcepb.HealthCheckResponse{Status: resourcepb.HealthCheckResponse_SERVING}, nil
 }
 
+// Stop cancels the background context to stop the pruner, GC and other goroutines
 func (b *backend) Stop(_ context.Context) error {
 	b.cancel()
 	return nil
 }
 
 // GetResourceStats implements Backend.
-func (b *backend) GetResourceStats(ctx context.Context, namespace string, minCount int) ([]resource.ResourceStats, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"GetResourceStats")
+func (b *backend) GetResourceStats(ctx context.Context, nsr resource.NamespacedResource, minCount int) ([]resource.ResourceStats, error) {
+	b.logCall("GetResourceStats")
+	ctx, span := tracer.Start(ctx, "sql.backend.GetResourceStats", trace.WithAttributes(
+		attribute.String("namespace", nsr.Namespace),
+		attribute.String("group", nsr.Group),
+		attribute.String("resource", nsr.Resource),
+	))
 	defer span.End()
 
 	req := &sqlStatsRequest{
 		SQLTemplate: sqltemplate.New(b.dialect),
-		Namespace:   namespace,
+		Namespace:   nsr.Namespace,
+		Group:       nsr.Group,
+		Resource:    nsr.Resource,
 		MinCount:    minCount, // not used in query... yet?
 	}
 
@@ -289,8 +810,74 @@ func (b *backend) GetResourceStats(ctx context.Context, namespace string, minCou
 	return res, err
 }
 
+// GetResourceStatsWithLimit ignores countLimit and returns exact counts. The SQL
+// backend's stats query is not a history scan, so early exit is not needed here;
+// exact counts are valid for callers that only compare against thresholds.
+func (b *backend) GetResourceStatsWithLimit(ctx context.Context, nsr resource.NamespacedResource, minCount, _ int) ([]resource.ResourceStats, error) {
+	return b.GetResourceStats(ctx, nsr, minCount)
+}
+
+// ListStoredResources implements Backend.
+func (b *backend) ListStoredResources(ctx context.Context, filter resource.NamespacedResource) ([]resource.NamespacedResource, error) {
+	b.logCall("ListStoredResources")
+	ctx, span := tracer.Start(ctx, "sql.backend.ListStoredResources", trace.WithAttributes(
+		attribute.String("namespace", filter.Namespace),
+		attribute.String("group", filter.Group),
+		attribute.String("resource", filter.Resource),
+	))
+	defer span.End()
+
+	if filter.Namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
+
+	req := &sqlStoredResourcesRequest{
+		SQLTemplate: sqltemplate.New(b.dialect),
+		Namespace:   filter.Namespace,
+		Group:       filter.Group,
+		Resource:    filter.Resource,
+	}
+
+	res := make([]resource.NamespacedResource, 0, 100)
+	err := b.db.WithTx(ctx, ReadCommittedRO, func(ctx context.Context, tx db.Tx) error {
+		rows, err := dbutil.QueryRows(ctx, tx, sqlResourceStoredList, req)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			row := resource.NamespacedResource{}
+			if err := rows.Scan(&row.Namespace, &row.Group, &row.Resource); err != nil {
+				return err
+			}
+			res = append(res, row)
+		}
+		return rows.Err()
+	})
+
+	return res, err
+}
+
+// toMicrosecondRV converts a snowflake RV to microsecond format if needed.
+// This ensures that RVs arriving at the SQL backend are in the native
+// microsecond format. No-op for values ≤ 0 or values already in microsecond format.
+func toMicrosecondRV(rv int64) int64 {
+	if rv > 0 && resource.IsSnowflake(rv) {
+		return rvmanager.RVFromSnowflake(rv)
+	}
+	return rv
+}
+
 func (b *backend) WriteEvent(ctx context.Context, event resource.WriteEvent) (int64, error) {
-	_, span := b.tracer.Start(ctx, tracePrefix+"WriteEvent")
+	b.logCall("WriteEvent")
+	if b.disableStorageServices {
+		return 0, fmt.Errorf("storage backend is not enabled")
+	}
+	if err := event.Validate(); err != nil {
+		return 0, apierrors.NewBadRequest(err.Error())
+	}
+	event.PreviousRV = toMicrosecondRV(event.PreviousRV)
+
+	ctx, span := tracer.Start(ctx, "sql.backend.WriteEvent")
 	defer span.End()
 	// TODO: validate key ?
 	switch event.Type {
@@ -306,7 +893,7 @@ func (b *backend) WriteEvent(ctx context.Context, event resource.WriteEvent) (in
 }
 
 func (b *backend) create(ctx context.Context, event resource.WriteEvent) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"Create")
+	ctx, span := tracer.Start(ctx, "sql.backend.create")
 	defer span.End()
 
 	folder := ""
@@ -314,9 +901,9 @@ func (b *backend) create(ctx context.Context, event resource.WriteEvent) (int64,
 		folder = event.Object.GetFolder()
 	}
 
-	rv, err := b.rvManager.ExecWithRV(ctx, event.Key, func(tx db.Tx) (string, error) {
+	rv, err := b.rvManager.ExecWithRV(ctx, event.Key, func(txnCtx context.Context, tx db.Tx) (string, error) {
 		// 1. Insert into resource
-		if _, err := dbutil.Exec(ctx, tx, sqlResourceInsert, sqlResourceRequest{
+		if _, err := dbutil.Exec(txnCtx, tx, sqlResourceInsert, sqlResourceRequest{
 			SQLTemplate: sqltemplate.New(b.dialect),
 			WriteEvent:  event,
 			Folder:      folder,
@@ -329,7 +916,7 @@ func (b *backend) create(ctx context.Context, event resource.WriteEvent) (int64,
 		}
 
 		// 2. Insert into resource history
-		if _, err := dbutil.Exec(ctx, tx, sqlResourceHistoryInsert, sqlResourceRequest{
+		if _, err := dbutil.Exec(txnCtx, tx, sqlResourceHistoryInsert, sqlResourceRequest{
 			SQLTemplate: sqltemplate.New(b.dialect),
 			WriteEvent:  event,
 			Folder:      folder,
@@ -394,7 +981,7 @@ func IsRowAlreadyExistsError(err error) bool {
 }
 
 func (b *backend) update(ctx context.Context, event resource.WriteEvent) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"Update")
+	ctx, span := tracer.Start(ctx, "sql.backend.update")
 	defer span.End()
 
 	folder := ""
@@ -403,20 +990,23 @@ func (b *backend) update(ctx context.Context, event resource.WriteEvent) (int64,
 	}
 
 	// Use rvManager.ExecWithRV instead of direct transaction
-	rv, err := b.rvManager.ExecWithRV(ctx, event.Key, func(tx db.Tx) (string, error) {
+	rv, err := b.rvManager.ExecWithRV(ctx, event.Key, func(txnCtx context.Context, tx db.Tx) (string, error) {
 		// 1. Update resource
-		_, err := dbutil.Exec(ctx, tx, sqlResourceUpdate, sqlResourceRequest{
+		res, err := dbutil.Exec(txnCtx, tx, sqlResourceUpdate, sqlResourceRequest{
 			SQLTemplate: sqltemplate.New(b.dialect),
-			WriteEvent:  event,
+			WriteEvent:  event, // includes the RV
 			Folder:      folder,
 			GUID:        event.GUID,
 		})
 		if err != nil {
 			return event.GUID, fmt.Errorf("resource update: %w", err)
 		}
+		if err = b.checkConflict(res, event.Key, event.PreviousRV); err != nil {
+			return event.GUID, err
+		}
 
 		// 2. Insert into resource history
-		if _, err := dbutil.Exec(ctx, tx, sqlResourceHistoryInsert, sqlResourceRequest{
+		if _, err := dbutil.Exec(txnCtx, tx, sqlResourceHistoryInsert, sqlResourceRequest{
 			SQLTemplate: sqltemplate.New(b.dialect),
 			WriteEvent:  event,
 			Folder:      folder,
@@ -451,16 +1041,16 @@ func (b *backend) update(ctx context.Context, event resource.WriteEvent) (int64,
 }
 
 func (b *backend) delete(ctx context.Context, event resource.WriteEvent) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"Delete")
+	ctx, span := tracer.Start(ctx, "sql.backend.delete")
 	defer span.End()
 
 	folder := ""
 	if event.Object != nil {
 		folder = event.Object.GetFolder()
 	}
-	rv, err := b.rvManager.ExecWithRV(ctx, event.Key, func(tx db.Tx) (string, error) {
+	rv, err := b.rvManager.ExecWithRV(ctx, event.Key, func(txnCtx context.Context, tx db.Tx) (string, error) {
 		// 1. delete from resource
-		_, err := dbutil.Exec(ctx, tx, sqlResourceDelete, sqlResourceRequest{
+		res, err := dbutil.Exec(txnCtx, tx, sqlResourceDelete, sqlResourceRequest{
 			SQLTemplate: sqltemplate.New(b.dialect),
 			WriteEvent:  event,
 			GUID:        event.GUID,
@@ -468,9 +1058,12 @@ func (b *backend) delete(ctx context.Context, event resource.WriteEvent) (int64,
 		if err != nil {
 			return event.GUID, fmt.Errorf("delete resource: %w", err)
 		}
+		if err = b.checkConflict(res, event.Key, event.PreviousRV); err != nil {
+			return event.GUID, err
+		}
 
 		// 2. Add event to resource history
-		if _, err := dbutil.Exec(ctx, tx, sqlResourceHistoryInsert, sqlResourceRequest{
+		if _, err := dbutil.Exec(txnCtx, tx, sqlResourceHistoryInsert, sqlResourceRequest{
 			SQLTemplate: sqltemplate.New(b.dialect),
 			WriteEvent:  event,
 			Folder:      folder,
@@ -504,42 +1097,71 @@ func (b *backend) delete(ctx context.Context, event resource.WriteEvent) (int64,
 	return rv, nil
 }
 
+func (b *backend) checkConflict(res db.Result, key *resourcepb.ResourceKey, rv int64) error {
+	// The RV is part of the update request, and it may no longer be the most recent
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("unable to verify RV: %w", err)
+	}
+	if rows == 1 {
+		return nil // expected one result
+	}
+	if rows > 0 {
+		return fmt.Errorf("multiple rows effected (%d)", rows)
+	}
+	return resource.NewConflictStatusError(key.Group, key.Resource, key.Name, "requested RV does not match current RV")
+}
+
 func (b *backend) ReadResource(ctx context.Context, req *resourcepb.ReadRequest) *resource.BackendReadResponse {
-	_, span := b.tracer.Start(ctx, tracePrefix+".Read")
+	b.logCall("ReadResource")
+	_, span := tracer.Start(ctx, "sql.backend.ReadResource")
 	defer span.End()
+
+	req.ResourceVersion = toMicrosecondRV(req.ResourceVersion)
 
 	// TODO: validate key ?
 
-	if req.ResourceVersion > 0 {
-		return b.readHistory(ctx, req.Key, req.ResourceVersion)
-	}
-
-	readReq := &sqlResourceReadRequest{
-		SQLTemplate: sqltemplate.New(b.dialect),
-		Request:     req,
-		Response:    NewReadResponse(),
-	}
 	var res *resource.BackendReadResponse
-	err := b.db.WithTx(ctx, ReadCommittedRO, func(ctx context.Context, tx db.Tx) error {
-		var err error
-		res, err = dbutil.QueryRow(ctx, tx, sqlResourceRead, readReq)
-		return err
-	})
-
-	if errors.Is(err, sql.ErrNoRows) {
-		return &resource.BackendReadResponse{
-			Error: resource.NewNotFoundError(req.Key),
+	if req.ResourceVersion > 0 {
+		res = b.readHistory(ctx, req.Key, req.ResourceVersion)
+	} else {
+		readReq := &sqlResourceReadRequest{
+			SQLTemplate: sqltemplate.New(b.dialect),
+			Request:     req,
+			Response:    NewReadResponse(),
 		}
-	} else if err != nil {
-		return &resource.BackendReadResponse{Error: resource.AsErrorResult(err)}
+		err := b.db.WithTx(ctx, ReadCommittedRO, func(ctx context.Context, tx db.Tx) error {
+			var err error
+			res, err = dbutil.QueryRow(ctx, tx, sqlResourceRead, readReq)
+			return err
+		})
+
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			res = &resource.BackendReadResponse{Error: resource.NewNotFoundError(req.Key)}
+		case err != nil:
+			res = &resource.BackendReadResponse{Error: resource.AsErrorResult(err)}
+		}
 	}
 
+	if resource.IsResourceNameMixedCase(req, res) {
+		b.log.Warn("resource name case mismatch in ReadResource",
+			"namespace", req.Key.Namespace,
+			"group", req.Key.Group,
+			"resource", req.Key.Resource,
+			"requested_name", req.Key.Name,
+			"stored_name", res.Key.Name,
+		)
+	}
 	return res
 }
 
 func (b *backend) ListIterator(ctx context.Context, req *resourcepb.ListRequest, cb func(resource.ListIterator) error) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"List")
+	b.logCall("ListIterator")
+	ctx, span := tracer.Start(ctx, "sql.backend.ListIterator")
 	defer span.End()
+
+	req.ResourceVersion = toMicrosecondRV(req.ResourceVersion)
 
 	if err := resource.MigrateListRequestVersionMatch(req, b.log); err != nil {
 		return 0, err
@@ -560,15 +1182,17 @@ func (b *backend) ListIterator(ctx context.Context, req *resourcepb.ListRequest,
 }
 
 func (b *backend) ListHistory(ctx context.Context, req *resourcepb.ListRequest, cb func(resource.ListIterator) error) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"ListHistory")
+	b.logCall("ListHistory")
+	ctx, span := tracer.Start(ctx, "sql.backend.ListHistory")
 	defer span.End()
 
+	req.ResourceVersion = toMicrosecondRV(req.ResourceVersion)
 	return b.getHistory(ctx, req, cb)
 }
 
 // listLatest fetches the resources from the resource table.
 func (b *backend) listLatest(ctx context.Context, req *resourcepb.ListRequest, cb func(resource.ListIterator) error) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"listLatest")
+	ctx, span := tracer.Start(ctx, "sql.backend.listLatest")
 	defer span.End()
 
 	if req.NextPageToken != "" {
@@ -612,7 +1236,17 @@ func (b *backend) listLatest(ctx context.Context, req *resourcepb.ListRequest, c
 
 // ListModifiedSince will return all resources that have changed since the given resource version.
 // If a resource has changes, only the latest change will be returned.
-func (b *backend) ListModifiedSince(ctx context.Context, key resource.NamespacedResource, sinceRv int64) (int64, iter.Seq2[*resource.ModifiedResource, error]) {
+func (b *backend) ListModifiedSince(ctx context.Context, key resource.NamespacedResource, sinceRv int64, _ *time.Time) (int64, iter.Seq2[*resource.ModifiedResource, error]) {
+	b.logCall("ListModifiedSince")
+	sinceRv = toMicrosecondRV(sinceRv)
+
+	// Validate key before doing latest RV check
+	if key.Group == "" || key.Resource == "" {
+		return 0, func(yield func(*resource.ModifiedResource, error) bool) {
+			yield(nil, fmt.Errorf("group and resource are required"))
+		}
+	}
+
 	// We don't use an explicit transaction for fetching LatestRV and subsequent fetching of resources.
 	// To guarantee that we don't include events with RV > LatestRV, we include the check in SQL query.
 
@@ -624,14 +1258,12 @@ func (b *backend) ListModifiedSince(ctx context.Context, key resource.Namespaced
 		}
 	}
 
-	// If latest RV is the same as request RV, there's nothing to report, and we can avoid running another query.
-	if latestRv == sinceRv {
+	// If latest RV equal or older than request RV, there's nothing to report, and we can avoid running another query.
+	if latestRv <= sinceRv {
 		return latestRv, func(yield func(*resource.ModifiedResource, error) bool) { /* nothing to return */ }
 	}
 
-	// since results are sorted by name ASC and rv DESC, we can get away with tracking the last seen
-	lastSeen := ""
-
+	seen := make(map[string]struct{})
 	seq := func(yield func(*resource.ModifiedResource, error) bool) {
 		query := sqlResourceListModifiedSinceRequest{
 			SQLTemplate: sqltemplate.New(b.dialect),
@@ -664,13 +1296,15 @@ func (b *backend) ListModifiedSince(ctx context.Context, key resource.Namespaced
 				continue
 			}
 
-			// Deduplicate by name (namespace, group, and resource are always the same in the result set)
-			if mr.Key.Name == lastSeen {
+			// Deduplicate by (namespace, name). The query may run
+			// cross-namespace (empty Namespace argument) for the
+			// write-path scanner, so two resources with the same name
+			// in different namespaces must each yield once.
+			dedupKey := mr.Key.Namespace + "/" + mr.Key.Name
+			if _, ok := seen[dedupKey]; ok {
 				continue
 			}
-
-			lastSeen = mr.Key.Name
-
+			seen[dedupKey] = struct{}{}
 			if !yield(mr, nil) {
 				return
 			}
@@ -682,21 +1316,21 @@ func (b *backend) ListModifiedSince(ctx context.Context, key resource.Namespaced
 
 // listAtRevision fetches the resources from the resource_history table at a specific revision.
 func (b *backend) listAtRevision(ctx context.Context, req *resourcepb.ListRequest, cb func(resource.ListIterator) error) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"listAtRevision")
+	ctx, span := tracer.Start(ctx, "sql.backend.listAtRevision")
 	defer span.End()
 
 	// Get the RV
 	iter := &listIter{listRV: req.ResourceVersion, sortAsc: false}
 	if req.NextPageToken != "" {
-		continueToken, err := resource.GetContinueToken(req.NextPageToken)
+		continueToken, err := GetContinueToken(req.NextPageToken)
 		if err != nil {
 			return 0, fmt.Errorf("get continue token (%q): %w", req.NextPageToken, err)
 		}
-		iter.listRV = continueToken.ResourceVersion
+		iter.listRV = toMicrosecondRV(continueToken.ResourceVersion)
 		iter.offset = continueToken.StartOffset
 
 		if req.ResourceVersion != 0 && req.ResourceVersion != iter.listRV {
-			return 0, apierrors.NewBadRequest("request resource version does not math token")
+			return 0, apierrors.NewBadRequest("request resource version does not match token")
 		}
 	}
 	if iter.listRV < 1 {
@@ -742,7 +1376,7 @@ func (b *backend) listAtRevision(ctx context.Context, req *resourcepb.ListReques
 
 // readHistory fetches the resource history from the resource_history table.
 func (b *backend) readHistory(ctx context.Context, key *resourcepb.ResourceKey, rv int64) *resource.BackendReadResponse {
-	_, span := b.tracer.Start(ctx, tracePrefix+".ReadHistory")
+	_, span := tracer.Start(ctx, "sql.backend.readHistory")
 	defer span.End()
 
 	readReq := &sqlResourceHistoryReadRequest{
@@ -751,10 +1385,10 @@ func (b *backend) readHistory(ctx context.Context, key *resourcepb.ResourceKey, 
 			Key:             key,
 			ResourceVersion: rv,
 		},
-		Response: NewReadResponse(),
+		Response: NewHistoryReadResponse(),
 	}
 
-	var res *resource.BackendReadResponse
+	var res *historyReadResponse
 	err := b.db.WithTx(ctx, ReadCommittedRO, func(ctx context.Context, tx db.Tx) error {
 		var err error
 		res, err = dbutil.QueryRow(ctx, tx, sqlResourceHistoryRead, readReq)
@@ -767,13 +1401,16 @@ func (b *backend) readHistory(ctx context.Context, key *resourcepb.ResourceKey, 
 	if err != nil {
 		return &resource.BackendReadResponse{Error: resource.AsErrorResult(err)}
 	}
+	if res.Action == int(resourcepb.WatchEvent_DELETED) {
+		return &resource.BackendReadResponse{Error: resource.NewNotFoundError(key)}
+	}
 
-	return res
+	return res.ReadResponse()
 }
 
 // getHistory fetches the resource history from the resource_history table.
 func (b *backend) getHistory(ctx context.Context, req *resourcepb.ListRequest, cb func(resource.ListIterator) error) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"getHistory")
+	ctx, span := tracer.Start(ctx, "sql.backend.getHistory")
 	defer span.End()
 	listReq := sqlGetHistoryRequest{
 		SQLTemplate: sqltemplate.New(b.dialect),
@@ -790,7 +1427,7 @@ func (b *backend) getHistory(ctx context.Context, req *resourcepb.ListRequest, c
 		useCurrentRV: true, // use the current RV for the continue token instead of the listRV
 	}
 	if req.NextPageToken != "" {
-		continueToken, err := resource.GetContinueToken(req.NextPageToken)
+		continueToken, err := GetContinueToken(req.NextPageToken)
 		if err != nil {
 			return 0, fmt.Errorf("get continue token (%q): %w", req.NextPageToken, err)
 		}
@@ -856,12 +1493,16 @@ func (b *backend) getHistory(ctx context.Context, req *resourcepb.ListRequest, c
 }
 
 func (b *backend) WatchWriteEvents(ctx context.Context) (<-chan *resource.WrittenEvent, error) {
+	b.logCall("WatchWriteEvents")
+	if b.disableStorageServices {
+		return nil, fmt.Errorf("watcher is not enabled")
+	}
 	return b.notifier.notify(ctx)
 }
 
 // listLatestRVs returns the latest resource version for each (Group, Resource) pair.
 func (b *backend) listLatestRVs(ctx context.Context) (groupResourceRV, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"listLatestRVs")
+	ctx, span := tracer.Start(ctx, "sql.backend.listLatestRVs")
 	defer span.End()
 	var grvs []*groupResourceVersion
 	err := b.db.WithTx(ctx, ReadCommittedRO, func(ctx context.Context, tx db.Tx) error {
@@ -890,14 +1531,14 @@ func (b *backend) listLatestRVs(ctx context.Context) (groupResourceRV, error) {
 
 // fetchLatestRV returns the current maximum RV in the resource table
 func (b *backend) fetchLatestRV(ctx context.Context, x db.ContextExecer, d sqltemplate.Dialect, group, resource string) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"fetchLatestRV")
+	ctx, span := tracer.Start(ctx, "sql.backend.fetchLatestRV")
 	defer span.End()
-	res, err := dbutil.QueryRow(ctx, x, sqlResourceVersionGet, sqlResourceVersionGetRequest{
+	res, err := dbutil.QueryRow(ctx, x, rvmanager.SqlResourceVersionGet, rvmanager.SqlResourceVersionGetRequest{
 		SQLTemplate: sqltemplate.New(d),
 		Group:       group,
 		Resource:    resource,
 		ReadOnly:    true,
-		Response:    new(resourceVersionResponse),
+		Response:    new(rvmanager.ResourceVersionResponse),
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		return 1, nil
@@ -909,7 +1550,7 @@ func (b *backend) fetchLatestRV(ctx context.Context, x db.ContextExecer, d sqlte
 
 // fetchLatestHistoryRV returns the current maximum RV in the resource_history table
 func (b *backend) fetchLatestHistoryRV(ctx context.Context, x db.ContextExecer, d sqltemplate.Dialect, key *resourcepb.ResourceKey, eventType resourcepb.WatchEvent_Type) (int64, error) {
-	ctx, span := b.tracer.Start(ctx, tracePrefix+"fetchLatestHistoryRV")
+	ctx, span := tracer.Start(ctx, "sql.backend.fetchLatestHistoryRV")
 	defer span.End()
 	res, err := dbutil.QueryRow(ctx, x, sqlResourceHistoryReadLatestRV, sqlResourceHistoryReadLatestRVRequest{
 		SQLTemplate: sqltemplate.New(d),
@@ -925,4 +1566,104 @@ func (b *backend) fetchLatestHistoryRV(ctx context.Context, x db.ContextExecer, 
 		return 0, fmt.Errorf("get resource version: %w", err)
 	}
 	return res.ResourceVersion, nil
+}
+
+// Don't run deletion of "last import times" more often than this duration.
+const limitLastImportTimesDeletion = 1 * time.Hour
+
+func (b *backend) lastImportTimeDB(ctx context.Context) db.ContextExecer {
+	if b.dialect.DialectName() != "sqlite" {
+		return b.db
+	}
+
+	// SQLite migrations rebuild indexes before the outer migration transaction commits,
+	// so these reads must reuse that transaction instead of opening a new connection.
+	if tx := resource.TransactionFromContext(ctx); tx != nil {
+		return dbimpl.NewTx(tx)
+	}
+
+	if clientCtx := inprocgrpc.ClientContext(ctx); clientCtx != nil {
+		if tx := resource.TransactionFromContext(clientCtx); tx != nil {
+			return dbimpl.NewTx(tx)
+		}
+	}
+
+	return b.db
+}
+
+func (b *backend) GetResourceLastImportTimes(ctx context.Context) iter.Seq2[resource.ResourceLastImportTime, error] {
+	b.logCall("GetResourceLastImportTimes")
+	ctx, span := tracer.Start(ctx, "sql.backend.GetResourceLastImportTimes")
+	defer span.End()
+
+	queryDB := b.lastImportTimeDB(ctx)
+
+	// Delete old entries, if configured, and if enough time has passed since last deletion.
+	last := b.lastImportTimeDeletionTime.Load()
+	if b.lastImportTimeMaxAge > 0 && (last == nil || time.Since(*last) > limitLastImportTimesDeletion) {
+		now := time.Now()
+
+		res, err := dbutil.Exec(ctx, queryDB, sqlResourceLastImportTimeDelete, &sqlResourceLastImportTimeDeleteRequest{
+			SQLTemplate: sqltemplate.New(b.dialect),
+			Threshold:   now.Add(-b.lastImportTimeMaxAge),
+		})
+
+		if err != nil {
+			return func(yield func(resource.ResourceLastImportTime, error) bool) {
+				yield(resource.ResourceLastImportTime{}, err)
+			}
+		}
+
+		aff, err := res.RowsAffected()
+		if err == nil && aff > 0 {
+			b.log.Info("Deleted old last import times", "rows", aff)
+		}
+
+		b.lastImportTimeDeletionTime.Store(&now)
+	}
+
+	rows, err := dbutil.QueryRows(ctx, queryDB, sqlResourceLastImportTimeQuery, &sqlResourceLastImportTimeQueryRequest{
+		SQLTemplate: sqltemplate.New(b.dialect),
+	})
+	if err != nil {
+		return func(yield func(resource.ResourceLastImportTime, error) bool) {
+			yield(resource.ResourceLastImportTime{}, err)
+		}
+	}
+
+	return func(yield func(resource.ResourceLastImportTime, error) bool) {
+		closeOnDefer := true
+		defer func() {
+			if closeOnDefer {
+				_ = rows.Close() // Close while ignoring errors.
+			}
+		}()
+
+		for rows.Next() {
+			// If context has finished, return early.
+			if ctx.Err() != nil {
+				yield(resource.ResourceLastImportTime{}, ctx.Err())
+				return
+			}
+
+			row := resource.ResourceLastImportTime{}
+			err = rows.Scan(&row.Namespace, &row.Group, &row.Resource, &row.LastImportTime)
+			if err != nil {
+				yield(resource.ResourceLastImportTime{}, err)
+				return
+			}
+
+			if !yield(row, nil) {
+				return
+			}
+		}
+
+		closeOnDefer = false
+
+		// Close and report error, if any.
+		err := rows.Close()
+		if err != nil {
+			yield(resource.ResourceLastImportTime{}, err)
+		}
+	}
 }

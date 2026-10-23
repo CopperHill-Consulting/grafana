@@ -1,24 +1,24 @@
-import { ReactElement, useMemo } from 'react';
+import { type ReactElement, useMemo } from 'react';
 
 import { LoadingState } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import {
-  CancelActivationHandler,
-  SceneComponentProps,
-  SceneDataProvider,
+  type CancelActivationHandler,
+  type SceneComponentProps,
+  type SceneDataProvider,
   sceneGraph,
   SceneObjectBase,
-  SceneObjectState,
+  type SceneObjectState,
   VizPanel,
 } from '@grafana/scenes';
-import { ConditionalRenderingDataKind } from '@grafana/schema/dist/esm/schema/dashboard/v2';
-import { Combobox, ComboboxOption } from '@grafana/ui';
+import { type ConditionalRenderingDataKind } from '@grafana/schema/apis/dashboard.grafana.app/v2';
+import { Combobox, type ComboboxOption } from '@grafana/ui';
 
-import { dashboardEditActions } from '../../edit-pane/shared';
+import { edit } from '../../actions/utils/edit';
 import { getLowerTranslatedObjectType } from '../object';
 
 import { ConditionalRenderingConditionWrapper } from './ConditionalRenderingConditionWrapper';
-import { ConditionalRenderingConditionsSerializerRegistryItem } from './serializers';
+import { type ConditionalRenderingConditionsSerializerRegistryItem } from './serializers';
 import { checkGroup, getObject, getObjectType } from './utils';
 
 interface ConditionalRenderingDataState extends SceneObjectState {
@@ -68,21 +68,28 @@ export class ConditionalRenderingData extends SceneObjectBase<ConditionalRenderi
     };
   }
 
-  private _getObjectDataProvider(): SceneDataProvider | undefined {
+  private _getPanelFromObject(): VizPanel | undefined {
     const object = getObject(this);
 
     if (!object) {
       return undefined;
     }
 
-    let panel: VizPanel | undefined;
+    if (object instanceof VizPanel) {
+      return object;
+    }
 
     for (const val of Object.values(object.state)) {
       if (val instanceof VizPanel) {
-        panel = val;
-        break;
+        return val;
       }
     }
+
+    return undefined;
+  }
+
+  private _getObjectDataProvider(): SceneDataProvider | undefined {
+    const panel = this._getPanelFromObject();
 
     if (!panel) {
       return undefined;
@@ -133,7 +140,11 @@ export class ConditionalRenderingData extends SceneObjectBase<ConditionalRenderi
     }
   }
 
-  public render(): ReactElement {
+  public forceCheck() {
+    this._check();
+  }
+
+  public renderCmp(): ReactElement {
     return <this.Component model={this} key={this.state.key} />;
   }
 
@@ -178,12 +189,13 @@ function ConditionalRenderingDataRenderer({ model }: SceneComponentProps<Conditi
       isObjectSupported={objectType === 'panel'}
       model={model}
       title={t('dashboard.conditional-rendering.conditions.data.label', 'Query result')}
+      ruleId="data"
     >
       <Combobox
         options={enableConditionOptions}
         value={enableConditionOption}
         onChange={({ value: newValue }) => {
-          dashboardEditActions.edit({
+          edit({
             description: t('dashboard.edit-actions.edit-query-result-rule', 'Change query result rule'),
             source: model,
             perform: () => model.changeValue(Boolean(newValue)),

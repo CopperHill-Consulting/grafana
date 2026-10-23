@@ -17,8 +17,22 @@ import { render, screen } from '@testing-library/react';
 import { createTheme, dateTime } from '@grafana/data';
 import { setPluginLinksHook } from '@grafana/runtime';
 
+// SpanDetailLinkButtons resolves data source settings via an async hook; return a
+// synchronous value so rendering doesn't trigger an un-acted state update in tests.
+jest.mock('@grafana/runtime/unstable', () => ({
+  ...jest.requireActual('@grafana/runtime/unstable'),
+  useDataSourceInstanceSettings: jest.fn().mockReturnValue({ isLoading: false, settings: undefined }),
+}));
+
+// useAttributePluginPromoGetter uses useAppPluginMetas (async); stub it so SpanDetail
+// doesn't schedule an un-acted state update when rendered via SpanDetailRow.
+jest.mock('./SpanDetail/pluginPromo/attributePluginPromos', () => ({
+  ...jest.requireActual('./SpanDetail/pluginPromo/attributePluginPromos'),
+  useAttributePluginPromoGetter: jest.fn(() => () => undefined),
+}));
+
 import DetailState from './SpanDetail/DetailState';
-import { UnthemedSpanDetailRow, SpanDetailRowProps } from './SpanDetailRow';
+import SpanDetailRow, { type SpanDetailRowProps } from './SpanDetailRow';
 
 const testSpan = {
   spanID: 'testSpanID',
@@ -40,7 +54,7 @@ const setup = (propOverrides?: SpanDetailRowProps) => {
     logItemToggle: jest.fn(),
     logsToggle: jest.fn(),
     processToggle: jest.fn(),
-    createFocusSpanLink: jest.fn(),
+    createFocusSpanLink: jest.fn().mockReturnValue({}),
     hoverIndentGuideIds: new Map(),
     span: testSpan,
     tagsToggle: jest.fn(),
@@ -57,7 +71,7 @@ const setup = (propOverrides?: SpanDetailRowProps) => {
     },
     ...propOverrides,
   };
-  return render(<UnthemedSpanDetailRow {...(props as SpanDetailRowProps)} />);
+  return render(<SpanDetailRow {...(props as SpanDetailRowProps)} />);
 };
 
 describe('SpanDetailRow tests', () => {

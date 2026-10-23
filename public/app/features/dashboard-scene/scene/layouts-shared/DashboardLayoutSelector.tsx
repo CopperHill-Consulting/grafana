@@ -1,15 +1,17 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { t } from '@grafana/i18n';
-import { RadioButtonGroup, Box } from '@grafana/ui';
+import { RadioButtonGroup, Box, ConfirmModal } from '@grafana/ui';
 import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneCategoryDescriptor';
 import { OptionsPaneItemDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
 
-import { DashboardLayoutManager } from '../types/DashboardLayoutManager';
-import { isLayoutParent } from '../types/LayoutParent';
-import { LayoutRegistryItem } from '../types/LayoutRegistryItem';
+import { TabsLayoutManager } from '../layout-tabs/TabsLayoutManager';
+import { type DashboardLayoutManager, isDashboardLayoutManager } from '../types/DashboardLayoutManager';
+import { type LayoutRegistryItem } from '../types/LayoutRegistryItem';
 
+import { hasDirectTabsChild } from './hasDirectTabsChild';
 import { layoutRegistry } from './layoutRegistry';
+import { changeLayoutTo } from './utils';
 
 export interface Props {
   layoutManager: DashboardLayoutManager;
@@ -18,49 +20,140 @@ export interface Props {
 export function DashboardLayoutSelector({ layoutManager }: Props) {
   const isGridLayout = layoutManager.descriptor.isGridLayout;
   const options = layoutRegistry.list().filter((layout) => layout.isGridLayout === isGridLayout);
+  const [newLayout, setNewLayout] = useState<LayoutRegistryItem | undefined>();
 
-  const onChangeLayout = useCallback(
-    (newLayout: LayoutRegistryItem) => {
-      const layoutParent = layoutManager.parent;
-
-      if (layoutParent && isLayoutParent(layoutParent)) {
-        layoutParent.switchLayout(newLayout.createFromLayout(layoutManager));
+  const disableTabsReason = useMemo((): 'parent' | 'child' | undefined => {
+    let parent = layoutManager.parent;
+    while (parent) {
+      if (isDashboardLayoutManager(parent)) {
+        if (parent instanceof TabsLayoutManager) {
+          return 'parent';
+        }
+        break;
       }
+      parent = parent.parent;
+    }
+
+    if (hasDirectTabsChild(layoutManager)) {
+      return 'child';
+    }
+
+    return undefined;
+  }, [layoutManager]);
+
+  const promptLayoutChange = useCallback((newLayout: LayoutRegistryItem) => setNewLayout(newLayout), []);
+
+  const switchLayout = useCallback(
+    (layoutItem: LayoutRegistryItem) => {
+      changeLayoutTo(layoutManager, layoutItem);
     },
     [layoutManager]
   );
 
-  const radioOptions = options.map((opt) => ({
-    value: opt,
-    label: opt.name,
-    icon: opt.icon,
-    description: opt.description,
-    ariaLabel: `layout-selection-option-${opt.name}`,
-  }));
+  const onConfirmNewLayout = useCallback(() => {
+    if (!newLayout) {
+      return;
+    }
+
+    switchLayout(newLayout);
+    setNewLayout(undefined);
+  }, [newLayout, switchLayout]);
+
+  const onDismissNewLayout = useCallback(() => setNewLayout(undefined), []);
+
+  const disabledOptions: string[] = [];
+
+  const radioOptions = options.map((opt) => {
+    let description = opt.description;
+    if (disableTabsReason && opt.id === TabsLayoutManager.descriptor.id) {
+      if (disableTabsReason === 'parent') {
+        description = t('dashboard.canvas-actions.disabled-nested-tabs', 'Tabs cannot be nested inside other tabs');
+      } else {
+        description = t(
+          'dashboard.canvas-actions.disabled-child-contains-tabs',
+          'Cannot change to tabs because a row already contains tabs'
+        );
+      }
+      disabledOptions.push(opt.id);
+    }
+
+    // The option value is the layout's stable id (not the registry item object) so that
+    // RadioButtonGroup can emit a per-option data-testid keyed on it.
+    return {
+      value: opt.id,
+      label: opt.name,
+      icon: opt.icon,
+      description,
+      ariaLabel: `layout-selection-option-${opt.name}`,
+    };
+  });
+
+  const onChangeLayout = useCallback(
+    (id: string) => {
+      const layoutItem = options.find((opt) => opt.id === id);
+      if (!layoutItem) {
+        return;
+      }
+
+      if (isGridLayout) {
+        promptLayoutChange(layoutItem);
+      } else {
+        switchLayout(layoutItem);
+      }
+    },
+    [options, isGridLayout, promptLayoutChange, switchLayout]
+  );
 
   return (
-    <Box paddingBottom={2} display="flex" grow={1} alignItems="center">
-      <RadioButtonGroup fullWidth value={layoutManager.descriptor} options={radioOptions} onChange={onChangeLayout} />
-    </Box>
+    <>
+      <Box paddingBottom={2} display="flex" grow={1} alignItems="stretch" gap={2} direction={'column'}>
+        <RadioButtonGroup
+          fullWidth
+          value={layoutManager.descriptor.id}
+          options={radioOptions}
+          onChange={onChangeLayout}
+          disabledOptions={disabledOptions}
+        />
+      </Box>
+      {isGridLayout && (
+        <ConfirmChangeLayoutModal isOpen={!!newLayout} onConfirm={onConfirmNewLayout} onDismiss={onDismissNewLayout} />
+      )}
+    </>
   );
 }
+
+export const ConfirmChangeLayoutModal = ({
+  isOpen,
+  onConfirm,
+  onDismiss,
+}: {
+  isOpen: boolean;
+  onConfirm: () => void;
+  onDismiss: () => void;
+}) => {
+  return (
+    <ConfirmModal
+      isOpen={isOpen}
+      title={t('dashboard.layout.panel.modal.title', 'Change layout')}
+      body={t('dashboard.layout.panel.modal.body', 'Changing the layout will reset all panel positions and sizes.')}
+      confirmText={t('dashboard.layout.panel.modal.confirm', 'Change layout')}
+      dismissText={t('dashboard.layout.panel.modal.dismiss', 'Cancel')}
+      confirmVariant="primary"
+      onConfirm={onConfirm}
+      onDismiss={onDismiss}
+    />
+  );
+};
+
 export function useLayoutCategory(layoutManager: DashboardLayoutManager) {
   return useMemo(() => {
-    const isGridLayout = layoutManager.descriptor.isGridLayout;
-
-    const groupLayout = new OptionsPaneCategoryDescriptor({
-      title: t('dashboard.layout.common.group-layout', 'Group layout'),
-      id: 'dash-group-layout',
-      isOpenDefault: false,
+    const layout = new OptionsPaneCategoryDescriptor({
+      title: t('dashboard.layout.common.layout', 'Layout'),
+      id: 'layout',
+      isOpenDefault: true,
     });
 
-    const gridLayout = new OptionsPaneCategoryDescriptor({
-      title: t('dashboard.layout.common.panel-layout', 'Panel layout'),
-      id: 'dash-grid-layout',
-      isOpenDefault: false,
-    });
-
-    gridLayout.addItem(
+    layout.addItem(
       new OptionsPaneItemDescriptor({
         title: '',
         id: 'dash-grid-layout-option',
@@ -69,33 +162,12 @@ export function useLayoutCategory(layoutManager: DashboardLayoutManager) {
       })
     );
 
-    if (isGridLayout) {
-      groupLayout.props.disabledText = t(
-        'dashboard.layout.common.group-layout-disabled',
-        'No groups exists on this level'
-      );
-    } else {
-      groupLayout.addItem(
-        new OptionsPaneItemDescriptor({
-          title: '',
-          id: 'dash-group-layout-option',
-          skipField: true,
-          render: () => <DashboardLayoutSelector layoutManager={layoutManager} />,
-        })
-      );
-
-      gridLayout.props.disabledText = t(
-        'dashboard.layout.common.panel-layout-disabled',
-        'Select a row or tab to change panel layout options'
-      );
-    }
-
     if (layoutManager.getOptions) {
       for (const option of layoutManager.getOptions()) {
-        gridLayout.addItem(option);
+        layout.addItem(option);
       }
     }
 
-    return [groupLayout, gridLayout];
+    return [layout];
   }, [layoutManager]);
 }

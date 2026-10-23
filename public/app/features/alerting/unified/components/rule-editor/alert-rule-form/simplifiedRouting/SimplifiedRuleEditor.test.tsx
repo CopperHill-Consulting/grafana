@@ -1,19 +1,20 @@
-import { UserEvent } from '@testing-library/user-event';
-import { ReactNode } from 'react';
+import { type UserEvent } from '@testing-library/user-event';
+import { HttpResponse, http } from 'msw';
+import { type ReactNode } from 'react';
 import { GrafanaRuleFormStep, renderRuleEditor, ui } from 'test/helpers/alertingRuleEditor';
 import { clickSelectOption } from 'test/helpers/selectOptionInTest';
-import { screen, waitFor, within } from 'test/test-utils';
+import { screen, testWithFeatureToggles, waitFor, within } from 'test/test-utils';
 import { byRole } from 'testing-library-selector';
 
 import { setPluginLinksHook } from '@grafana/runtime';
+import { mockComboboxRect } from '@grafana/test-utils';
 import { contextSrv } from 'app/core/services/context_srv';
 import { setupMswServer } from 'app/features/alerting/unified/mockApi';
 import { grantUserPermissions, mockDataSource } from 'app/features/alerting/unified/mocks';
 import { setAlertmanagerChoices } from 'app/features/alerting/unified/mocks/server/configure';
 import { PROMETHEUS_DATASOURCE_UID } from 'app/features/alerting/unified/mocks/server/constants';
 import { captureRequests, serializeRequests } from 'app/features/alerting/unified/mocks/server/events';
-import { FOLDER_TITLE_HAPPY_PATH } from 'app/features/alerting/unified/mocks/server/handlers/search';
-import { testWithFeatureToggles } from 'app/features/alerting/unified/test/test-utils';
+import { FOLDER_TITLE_HAPPY_PATH } from 'app/features/alerting/unified/mocks/server/handlers/folders';
 import { setupDataSources } from 'app/features/alerting/unified/testSetup/datasources';
 import { DataSourceType } from 'app/features/alerting/unified/utils/datasource';
 import { MANUAL_ROUTING_KEY, SIMPLIFIED_QUERY_EDITOR_KEY } from 'app/features/alerting/unified/utils/rule-form';
@@ -67,18 +68,7 @@ const server = setupMswServer();
 
 // combobox hack
 beforeEach(() => {
-  const mockGetBoundingClientRect = jest.fn(() => ({
-    width: 120,
-    height: 120,
-    top: 0,
-    left: 0,
-    bottom: 0,
-    right: 0,
-  }));
-
-  Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
-    value: mockGetBoundingClientRect,
-  });
+  mockComboboxRect();
 
   mockPreviewApiResponse(server, []);
 });
@@ -170,8 +160,72 @@ describe('Can create a new grafana managed alert using simplified routing', () =
     expect(screen.getByDisplayValue('lotsa-emails')).toBeInTheDocument();
   });
 
+  it('does not show contact points with canUse=false (imported) in the dropdown', async () => {
+    // Override the receivers handler to include a contact point that cannot be used (e.g., imported)
+    server.use(
+      http.get('/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers', () => {
+        return HttpResponse.json({
+          kind: 'ReceiverList',
+          apiVersion: 'notifications.alerting.grafana.app/v1beta1',
+          metadata: {},
+          items: [
+            {
+              metadata: {
+                uid: 'regular-receiver',
+                annotations: {
+                  'grafana.com/provenance': '',
+                  'grafana.com/canUse': 'true',
+                  'grafana.com/access/canAdmin': 'true',
+                  'grafana.com/access/canDelete': 'true',
+                  'grafana.com/access/canWrite': 'true',
+                },
+              },
+              spec: {
+                title: 'regular-receiver',
+                integrations: [{ type: 'email', settings: { addresses: 'test@example.com' } }],
+              },
+            },
+            {
+              metadata: {
+                uid: 'imported-receiver',
+                annotations: {
+                  'grafana.com/provenance': 'converted_prometheus',
+                  'grafana.com/canUse': 'false',
+                  'grafana.com/access/canAdmin': 'true',
+                  'grafana.com/access/canDelete': 'false',
+                  'grafana.com/access/canWrite': 'false',
+                },
+              },
+              spec: {
+                title: 'imported-receiver',
+                integrations: [{ type: 'email', settings: { addresses: 'imported@example.com' } }],
+              },
+            },
+          ],
+        });
+      })
+    );
+
+    const { user } = renderRuleEditor();
+
+    await user.click(await ui.inputs.simplifiedRouting.contactPointRouting.find());
+
+    // Open the contact point dropdown
+    const contactPointInput = await ui.inputs.simplifiedRouting.contactPoint.find();
+    const combobox = await within(contactPointInput).findByRole('combobox');
+    await user.click(combobox);
+
+    // Wait for options to load and verify contact point with canUse=false is not in the list
+    await waitFor(() => {
+      expect(screen.queryByRole('option', { name: /imported-receiver/i })).not.toBeInTheDocument();
+    });
+
+    // Verify that contact points with canUse=true are shown
+    expect(await screen.findByRole('option', { name: /regular-receiver/i })).toBeInTheDocument();
+  });
+
   describe('switch modes enabled', () => {
-    testWithFeatureToggles(['alertingQueryAndExpressionsStepMode', 'alertingNotificationsStepMode']);
+    testWithFeatureToggles({ enable: ['alertingNotificationsStepMode'] });
 
     it('can create the new grafana-managed rule with default modes', async () => {
       const contactPointName = 'lotsa-emails';

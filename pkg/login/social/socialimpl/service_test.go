@@ -61,7 +61,7 @@ func TestIntegrationSocialService_ProvideService(t *testing.T) {
 
 	secrets := secretsfake.NewMockService(t)
 	accessControl := acimpl.ProvideAccessControl(featuremgmt.WithFeatures())
-	sqlStore := db.InitTestDB(t)
+	sqlStore := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 
 	ssoSettingsSvc := ssosettingsimpl.ProvideService(
 		cfg,
@@ -146,11 +146,12 @@ func TestIntegrationSocialService_ProvideService_GrafanaComGrafanaNet(t *testing
 			enabled = false
 			client_id = grafanaNetClientId`,
 			expectedGrafanaComOAuthInfo: &social.OAuthInfo{
-				AuthStyle: "inheader",
-				AuthUrl:   "/oauth2/authorize",
-				TokenUrl:  "/api/oauth2/token",
-				Enabled:   true,
-				ClientId:  "grafanaComClientId",
+				AuthStyle:            "inheader",
+				AuthUrl:              "/oauth2/authorize",
+				TokenUrl:             "/api/oauth2/token",
+				TokenExchangeTimeout: 15,
+				Enabled:              true,
+				ClientId:             "grafanaComClientId",
 				Extra: map[string]string{
 					"allowed_organizations": "",
 				},
@@ -167,11 +168,12 @@ func TestIntegrationSocialService_ProvideService_GrafanaComGrafanaNet(t *testing
 			enabled = true
 			client_id = grafanaNetClientId`,
 			expectedGrafanaComOAuthInfo: &social.OAuthInfo{
-				AuthStyle: "inheader",
-				AuthUrl:   "/oauth2/authorize",
-				TokenUrl:  "/api/oauth2/token",
-				Enabled:   true,
-				ClientId:  "grafanaNetClientId",
+				AuthStyle:            "inheader",
+				AuthUrl:              "/oauth2/authorize",
+				TokenUrl:             "/api/oauth2/token",
+				TokenExchangeTimeout: 15,
+				Enabled:              true,
+				ClientId:             "grafanaNetClientId",
 				Extra: map[string]string{
 					"allowed_organizations": "",
 				},
@@ -188,11 +190,12 @@ func TestIntegrationSocialService_ProvideService_GrafanaComGrafanaNet(t *testing
 			enabled = true
 			client_id = grafanaNetClientId`,
 			expectedGrafanaComOAuthInfo: &social.OAuthInfo{
-				AuthStyle: "inheader",
-				AuthUrl:   "/oauth2/authorize",
-				TokenUrl:  "/api/oauth2/token",
-				Enabled:   true,
-				ClientId:  "grafanaComClientId",
+				AuthStyle:            "inheader",
+				AuthUrl:              "/oauth2/authorize",
+				TokenUrl:             "/api/oauth2/token",
+				TokenExchangeTimeout: 15,
+				Enabled:              true,
+				ClientId:             "grafanaComClientId",
 				Extra: map[string]string{
 					"allowed_organizations": "",
 				},
@@ -209,11 +212,12 @@ func TestIntegrationSocialService_ProvideService_GrafanaComGrafanaNet(t *testing
 			enabled = false
 			client_id = grafanaNetClientId`,
 			expectedGrafanaComOAuthInfo: &social.OAuthInfo{
-				AuthStyle: "inheader",
-				AuthUrl:   "/oauth2/authorize",
-				TokenUrl:  "/api/oauth2/token",
-				Enabled:   false,
-				ClientId:  "grafanaComClientId",
+				AuthStyle:            "inheader",
+				AuthUrl:              "/oauth2/authorize",
+				TokenUrl:             "/api/oauth2/token",
+				TokenExchangeTimeout: 15,
+				Enabled:              false,
+				ClientId:             "grafanaComClientId",
 				Extra: map[string]string{
 					"allowed_organizations": "",
 				},
@@ -231,7 +235,7 @@ func TestIntegrationSocialService_ProvideService_GrafanaComGrafanaNet(t *testing
 
 			secrets := secretsfake.NewMockService(t)
 			accessControl := acimpl.ProvideAccessControl(featuremgmt.WithFeatures())
-			sqlStore := db.InitTestDB(t)
+			sqlStore := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 
 			ssoSettingsSvc := ssosettingsimpl.ProvideService(
 				cfg,

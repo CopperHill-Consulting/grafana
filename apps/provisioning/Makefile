@@ -1,8 +1,8 @@
 include ../sdk.mk
 
-.PHONY: generate
+.PHONY: generate # Run Grafana App SDK code generation
 generate: install-app-sdk update-app-sdk
-	@$(APP_SDK_BIN) generate -g ./kinds --grouping=group --postprocess --defencoding=none --useoldmanifestkinds
+	@$(APP_SDK_BIN) generate --source=./kinds/
 
 .PHONY: build
 build: generate

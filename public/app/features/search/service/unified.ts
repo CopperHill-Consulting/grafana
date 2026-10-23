@@ -1,35 +1,47 @@
 import { isEmpty } from 'lodash';
 
-import { DataFrame, DataFrameView, getDisplayProcessor, SelectableValue, toDataFrame } from '@grafana/data';
+import { generatedAPI as legacyUserAPI } from '@grafana/api-clients/internal/rtkq/legacy/user';
+import {
+  API_GROUP as DASHBOARD_API_GROUP,
+  BASE_URL as v0alphaBaseURL,
+  type ManagedBy,
+} from '@grafana/api-clients/rtkq/dashboard/v0alpha1';
+import {
+  arrayToDataFrame,
+  type DataFrame,
+  DataFrameView,
+  getDisplayProcessor,
+  type SelectableValue,
+} from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { config, getBackendSrv } from '@grafana/runtime';
+import { generatedAPI, type ListStarsApiResponse } from 'app/api/clients/collections/v1alpha1';
 import { getAPIBaseURL } from 'app/api/utils';
-import { TermCount } from 'app/core/components/TagFilter/TagFilter';
+import { type TermCount } from 'app/core/components/TagFilter/TagFilter';
+import { contextSrv } from 'app/core/services/context_srv';
 import kbn from 'app/core/utils/kbn';
+import { dispatch } from 'app/store/store';
+
+import { isRootFolderUID } from '../constants';
 
 import { deletedDashboardsCache } from './deletedDashboardsCache';
 import {
-  DashboardQueryResult,
-  GrafanaSearcher,
-  LocationInfo,
-  QueryResponse,
-  SearchQuery,
-  SearchResultMeta,
+  type DashboardQueryResult,
+  type GrafanaSearcher,
+  type LocationInfo,
+  type QueryResponse,
+  type SearchQuery,
+  type SearchResultMeta,
 } from './types';
-import { replaceCurrentFolderQuery, filterSearchResults } from './utils';
+import { appendFrame, filterSearchResults, replaceCurrentFolderQuery } from './utils';
 
-// The backend returns an empty frame with a special name to indicate that the indexing engine is being rebuilt,
-// and that it can not serve any search requests. We are temporarily using the old SQL Search API as a fallback when that happens.
-const loadingFrameName = 'Loading';
-
-const baseURL = getAPIBaseURL('dashboard.grafana.app', 'v0alpha1');
-const searchURI = `${baseURL}/search`;
+const searchURI = `${v0alphaBaseURL}/search`;
 
 export type SearchHit = {
   resource: string; // dashboards | folders
   name: string;
   title: string;
-  location: string;
+  description?: string;
   folder: string;
   tags: string[];
 
@@ -37,6 +49,7 @@ export type SearchHit = {
 
   // calculated in the frontend
   url: string;
+  managedBy?: ManagedBy;
 };
 
 export type SearchAPIResponse = {
@@ -57,7 +70,7 @@ const folderViewSort = 'name_sort';
 export class UnifiedSearcher implements GrafanaSearcher {
   locationInfo: Promise<Record<string, LocationInfo>>;
 
-  constructor(private fallbackSearcher: GrafanaSearcher) {
+  constructor() {
     this.locationInfo = loadLocationInfo();
   }
 
@@ -73,7 +86,23 @@ export class UnifiedSearcher implements GrafanaSearcher {
       throw new Error('facets not supported!');
     }
     // get the starred dashboards
-    const starsIds = await getBackendSrv().get('api/user/stars');
+    let starsIds: string[] | undefined = [];
+    if (config.featureToggles.starsFromAPIServer) {
+      const name = `user-${contextSrv.user.uid}`;
+      const result: { data: ListStarsApiResponse } = await dispatch(
+        generatedAPI.endpoints.listStars.initiate({
+          fieldSelector: `metadata.name=${name}`,
+        })
+      );
+      const items = result.data.items;
+      starsIds = items?.length
+        ? items[0].spec.resource.find(({ group, kind }) => group === DASHBOARD_API_GROUP && kind === 'Dashboard')
+            ?.names || []
+        : [];
+    } else {
+      starsIds = await dispatch(legacyUserAPI.endpoints.getStars.initiate()).unwrap();
+    }
+
     if (starsIds?.length) {
       return this.doSearchQuery({
         ...query,
@@ -87,7 +116,7 @@ export class UnifiedSearcher implements GrafanaSearcher {
 
   async tags(query: SearchQuery): Promise<TermCount[]> {
     const qry = query.query ?? '*';
-    let uri = `${searchURI}?facet=tags&query=${qry}&limit=1`;
+    let uri = `${searchURI}?facet=tags&facetLimit=1000&query=${qry}&limit=1`;
     const resp = await getBackendSrv().get<SearchAPIResponse>(uri);
     return resp.facets?.tags?.terms || [];
   }
@@ -128,11 +157,11 @@ export class UnifiedSearcher implements GrafanaSearcher {
     } else {
       rsp = await this.fetchResponse(uri);
     }
-    const first = toDashboardResults(rsp, query.sort ?? '');
-    if (first.name === loadingFrameName) {
-      return this.fallbackSearcher.search(query);
-    }
 
+    const first = toDashboardResults(rsp, query.sort ?? '');
+
+    // We add parent folder information into meta.custom of the data frame. This is loaded separately in
+    // loadLocationInfo. Used to show parent information upstream.
     const customMeta = first.meta?.custom;
     const meta: SearchResultMeta = {
       count: customMeta?.count ?? first.length,
@@ -160,6 +189,11 @@ export class UnifiedSearcher implements GrafanaSearcher {
 
     let loadMax = 0;
     let pending: Promise<void> | undefined = undefined;
+
+    // This is the frame we will return. We keep this in closure of the getNextPage function, which may be appending
+    // to it if called upstream.
+    const view = new DataFrameView<DashboardQueryResult>(first);
+
     const getNextPage = async () => {
       while (loadMax > view.dataFrame.length) {
         const offset = view.dataFrame.length;
@@ -173,21 +207,10 @@ export class UnifiedSearcher implements GrafanaSearcher {
           console.log('no results', frame);
           return;
         }
-        if (frame.fields.length !== view.dataFrame.fields.length) {
-          console.log('invalid shape', frame, view.dataFrame);
-          return;
-        }
 
-        // Append the raw values to the same array buffer
-        const length = frame.length + view.dataFrame.length;
-        frame.fields.forEach((f) => {
-          const field = view.dataFrame.fields.find((vf) => vf.name === f.name);
-          if (field) {
-            field.values.push(...f.values);
-          }
-        });
-
-        view.dataFrame.length = length;
+        // We append the frames and align the fields here, but if there are new fields, view won't know about them
+        // and won't be accessible by doing `view.get(0).newField` for example
+        appendFrame(view.dataFrame, frame);
 
         // Add all the location lookup info
         const submeta = frame.meta?.custom;
@@ -202,17 +225,20 @@ export class UnifiedSearcher implements GrafanaSearcher {
       pending = undefined;
     };
 
-    const view = new DataFrameView<DashboardQueryResult>(first);
     return {
       totalRows: meta.count ?? first.length,
+
+      // This will be mutated when loadMoreItems is called.
       view,
-      loadMoreItems: async (startIndex: number, stopIndex: number): Promise<void> => {
+
+      loadMoreItems: async (stopIndex: number): Promise<void> => {
         loadMax = Math.max(loadMax, stopIndex + 1);
         if (!pending) {
           pending = getNextPage();
         }
         return pending;
       },
+
       isItemLoaded: (index: number): boolean => {
         return index < view.dataFrame.length;
       },
@@ -220,7 +246,14 @@ export class UnifiedSearcher implements GrafanaSearcher {
   }
 
   async fetchResponse(uri: string) {
+    // TODO: use API client for this
     const rsp = await getBackendSrv().get<SearchAPIResponse>(uri);
+
+    // we check the locationInfo staleness by whether we have all the folders info. This does not mean though
+    // that we actually have the latest info about the folders (like changed labels). Also we will never actually
+    // have folder access to folders in "shared with me" folder. We deal with it here, but it triggers a
+    // loadLocationInfo that is unneccessary.
+
     const isFolderCacheStale = await this.isFolderCacheStale(rsp.hits);
     if (!isFolderCacheStale) {
       return rsp;
@@ -235,13 +268,16 @@ export class UnifiedSearcher implements GrafanaSearcher {
 
     const locationInfo = await this.locationInfo;
     const hits = rsp.hits.map((hit) => {
-      if (hit.folder === undefined) {
-        return { ...hit, location: 'general', folder: 'general' };
+      // Root-parented hits arrive with "" or "general" — neither lives in
+      // locationInfo, since the root folder is synthetic. Collapse to
+      // "general" so the UI renders the hit under the root.
+      if (isRootFolderUID(hit.folder)) {
+        return { ...hit, folder: 'general' };
       }
 
       // this means a user has permission to see this dashboard, but not the folder contents
       if (locationInfo[hit.folder] === undefined) {
-        return { ...hit, location: 'sharedwithme', folder: 'sharedwithme' };
+        return { ...hit, folder: 'sharedwithme' };
       }
 
       return hit;
@@ -254,7 +290,12 @@ export class UnifiedSearcher implements GrafanaSearcher {
   async isFolderCacheStale(hits: SearchHit[]): Promise<boolean> {
     const locationInfo = await this.locationInfo;
     return hits.some((hit) => {
-      return hit.folder !== undefined && locationInfo[hit.folder] === undefined;
+      // Root-parented hits ("" or "general") never appear in locationInfo —
+      // skip them so we don't reload the cache and remap them to "Shared with me".
+      if (isRootFolderUID(hit.folder)) {
+        return false;
+      }
+      return locationInfo[hit.folder] === undefined;
     });
   }
 
@@ -278,6 +319,26 @@ export class UnifiedSearcher implements GrafanaSearcher {
       uri += '&' + query.kind.map((kind) => `type=${kind}`).join('&');
     }
 
+    if (query.ds_type?.length) {
+      uri += '&dataSourceType=' + query.ds_type;
+    }
+
+    if (query.panel_type?.length) {
+      uri += '&panelType=' + query.panel_type;
+    }
+
+    if (query.createdBy?.length) {
+      uri += '&createdBy=' + encodeURIComponent(query.createdBy);
+    }
+
+    if (query.ownerReference?.length) {
+      uri += '&' + query.ownerReference.map((ref) => `ownerReference=${encodeURIComponent(ref)}`).join('&');
+    }
+
+    if (query.panelTitleSearch) {
+      uri += '&panelTitleSearch=true';
+    }
+
     if (query.tags?.length) {
       uri += '&' + query.tags.map((tag) => `tag=${encodeURIComponent(tag)}`).join('&');
     }
@@ -299,8 +360,12 @@ export class UnifiedSearcher implements GrafanaSearcher {
       uri += '&' + query.uid.map((name) => `name=${encodeURIComponent(name)}`).join('&');
     }
 
+    if (query.permission) {
+      uri += `&permission=${query.permission}`;
+    }
+
     if (query.deleted) {
-      uri = `${getAPIBaseURL('dashboard.grafana.app', 'v1beta1')}/dashboards/?labelSelector=grafana.app/get-trash=true`;
+      uri = `${getAPIBaseURL(DASHBOARD_API_GROUP, 'v1beta1')}/dashboards/?labelSelector=grafana.app/get-trash=true`;
     }
     return uri;
   }
@@ -324,7 +389,7 @@ function noDataResponse(): QueryResponse | PromiseLike<QueryResponse> {
   return {
     view: new DataFrameView({ length: 0, fields: [] }),
     totalRows: 0,
-    loadMoreItems: async (startIndex: number, stopIndex: number): Promise<void> => {
+    loadMoreItems: async (stopIndex: number): Promise<void> => {
       return;
     },
     isItemLoaded: (index: number): boolean => {
@@ -349,10 +414,11 @@ export function toDashboardResults(rsp: SearchAPIResponse, sort: string): DataFr
     return { fields: [], length: 0 };
   }
   const dashboardHits = hits.map((hit) => {
-    let location = hit.folder;
-    if (hit.resource === 'dashboards' && isEmpty(location)) {
-      location = 'general';
-    }
+    // Collapse root-parented dashboards ("" or "general") into the "general"
+    // UID the rest of the search UI uses as the parent for root items.
+    const isRoot = hit.resource === 'dashboards' && isRootFolderUID(hit.folder);
+    const location = isRoot ? 'general' : hit.folder;
+    const folder = isRoot ? 'general' : hit.folder || 'general';
 
     // display null field values as "-"
     const field = Object.fromEntries(
@@ -363,15 +429,22 @@ export function toDashboardResults(rsp: SearchAPIResponse, sort: string): DataFr
       ...hit,
       uid: hit.name,
       url: toURL(hit.resource, hit.name, hit.title),
-      tags: hit.tags || [],
-      folder: hit.folder || 'general',
+      // Sort tags so we aren't reliant on the backend having done this for us
+      // Sorting order can be different between APIs/search implementations
+      tags: (hit.tags || []).sort(),
+      // The backend omits description when empty. arrayToDataFrame derives the frame's
+      // fields from the first row's keys, so without an explicit value here the column
+      // would be missing whenever the first hit has no description.
+      description: hit.description ?? '',
+      folder,
       location,
       name: hit.title, // 🤯 FIXME hit.name is k8s name, eg grafana dashboards UID
       kind: hit.resource.substring(0, hit.resource.length - 1), // dashboard "kind" is not plural
+      managedBy: hit.managedBy,
       ...field,
     };
   });
-  const frame = toDataFrame(dashboardHits);
+  const frame = arrayToDataFrame(dashboardHits);
   frame.meta = {
     custom: {
       count: rsp.totalHits,
@@ -390,8 +463,10 @@ export function toDashboardResults(rsp: SearchAPIResponse, sort: string): DataFr
 }
 
 async function loadLocationInfo(): Promise<Record<string, LocationInfo>> {
-  // TODO: use proper pagination for search.
-  const uri = `${searchURI}?type=folders&limit=100000`;
+  // TODO: use proper pagination and API client for search.
+  // TODO: This tries to load all the folders upfront even though it may not be neccessary if user does not render all
+  //  the search results.
+  const uri = `${searchURI}?type=folder&limit=100000`;
   const rsp = getBackendSrv()
     .get<SearchAPIResponse>(uri)
     .then((rsp) => {
@@ -399,7 +474,7 @@ async function loadLocationInfo(): Promise<Record<string, LocationInfo>> {
         general: {
           kind: 'folder',
           name: 'Dashboards',
-          url: '/dashboards',
+          url: `${config.appSubUrl}/dashboards`,
         }, // share location info with everyone
         sharedwithme: {
           kind: 'sharedwithme',
@@ -421,8 +496,8 @@ async function loadLocationInfo(): Promise<Record<string, LocationInfo>> {
 
 function toURL(resource: string, name: string, title: string): string {
   if (resource === 'folders') {
-    return `/dashboards/f/${name}`;
+    return `${config.appSubUrl}/dashboards/f/${name}`;
   }
   const slug = kbn.slugifyForUrl(title);
-  return `/d/${name}/${slug}`;
+  return `${config.appSubUrl}/d/${name}/${slug}`;
 }

@@ -1,14 +1,14 @@
-import { Observable, of, lastValueFrom, throwError } from 'rxjs';
+import { Observable, Subject, of, lastValueFrom, throwError } from 'rxjs';
 import { fromFetch } from 'rxjs/fetch';
 import { delay } from 'rxjs/operators';
 
-import { AppEvents, DataQueryErrorType, EventBusExtended, PathValidationError } from '@grafana/data';
-import { BackendSrvRequest, FetchError, FetchResponse } from '@grafana/runtime';
+import { AppEvents, DataQueryErrorType, type EventBusExtended, PathValidationError } from '@grafana/data';
+import { type BackendSrvRequest, type FetchError, type FetchResponse } from '@grafana/runtime';
 
 import { TokenRevokedModal } from '../../features/users/TokenRevokedModal';
 import { ShowModalReactEvent } from '../../types/events';
-import { BackendSrv, BackendSrvDependencies } from '../services/backend_srv';
-import { ContextSrv, User } from '../services/context_srv';
+import { BackendSrv, type BackendSrvDependencies } from '../services/backend_srv';
+import { type ContextSrv, type User } from '../services/context_srv';
 
 const getTestContext = (overides?: object, mockFromFetch = true) => {
   const defaults = {
@@ -18,6 +18,7 @@ const getTestContext = (overides?: object, mockFromFetch = true) => {
     statusText: 'Ok',
     isSignedIn: true,
     orgId: 1337,
+    authenticatedBy: undefined as string | undefined,
     redirected: false,
     type: 'basic',
     url: 'http://localhost:3000/api/some-mock',
@@ -47,6 +48,7 @@ const getTestContext = (overides?: object, mockFromFetch = true) => {
   const user: User = {
     isSignedIn: props.isSignedIn,
     orgId: props.orgId,
+    authenticatedBy: props.authenticatedBy,
   } as jest.MockedObject<User>;
   const contextSrvMock: ContextSrv = {
     user,
@@ -85,9 +87,24 @@ const getTestContext = (overides?: object, mockFromFetch = true) => {
   };
 };
 
+const createUnauthorizedResponse = () =>
+  ({
+    ok: false,
+    status: 401,
+    statusText: 'Unauthorized',
+    headers: new Map(),
+    text: jest.fn().mockResolvedValue(JSON.stringify({ message: 'Unauthorized' })),
+    redirected: false,
+    type: 'basic',
+    url: 'http://localhost:3000/api/some-mock',
+  }) as unknown as Response;
+
 jest.mock('app/core/utils/auth', () => ({
+  ...jest.requireActual('app/core/utils/auth'),
   getSessionExpiry: () => 1,
-  hasSessionExpiry: () => true,
+  // pretend the session expiry cookie is always present so only the auth method decides
+  hasRotatableSession: (authenticatedBy?: string) =>
+    jest.requireActual('app/core/utils/auth').canRotateSessionToken(authenticatedBy),
 }));
 
 describe('backendSrv', () => {
@@ -217,6 +234,48 @@ describe('backendSrv', () => {
       });
     });
 
+    describe('when making an unsuccessful call and the request was authenticated without a session', () => {
+      it('then it should not rotate the token', async () => {
+        const url = '/api/dashboard/';
+        const { backendSrv, logoutMock } = getTestContext({
+          ok: false,
+          status: 401,
+          statusText: errorMessage,
+          data: { message: errorMessage },
+          url,
+          authenticatedBy: 'jwt',
+        });
+
+        backendSrv.rotateToken = jest.fn();
+        backendSrv.loginPing = jest.fn().mockResolvedValue({ ok: true } as FetchResponse);
+
+        await backendSrv.request({ url, method: 'GET', retry: 0 }).catch(() => {
+          expect(backendSrv.rotateToken).not.toHaveBeenCalled();
+          expect(backendSrv.loginPing).toHaveBeenCalledTimes(1);
+          expect(logoutMock).not.toHaveBeenCalled();
+        });
+      });
+    });
+
+    it('rotates and retries when the server requires rotation despite a JWT auth label', async () => {
+      const { backendSrv, fromFetchMock } = getTestContext({ authenticatedBy: 'jwt' });
+      fromFetchMock.mockReturnValueOnce(
+        of({
+          ...createUnauthorizedResponse(),
+          text: async () => JSON.stringify({ messageId: 'session.token.rotate' }),
+        })
+      );
+
+      await expect(backendSrv.request({ url: '/api/ds/query', method: 'POST', retry: 0 })).resolves.toEqual({
+        test: 'hello world',
+      });
+      expect(fromFetchMock.mock.calls.map(([url]) => url)).toEqual([
+        '/api/ds/query',
+        '/api/user/auth-tokens/rotate',
+        '/api/ds/query',
+      ]);
+    });
+
     describe('when making an unsuccessful call because of soft token revocation', () => {
       it('then it should dispatch show Token Revoked modal event', async () => {
         const url = '/api/dashboard/';
@@ -282,6 +341,71 @@ describe('backendSrv', () => {
       });
     });
 
+    describe('when concurrent requests require a login check', () => {
+      it('performs a single login ping', async () => {
+        const { backendSrv, fromFetchMock } = getTestContext({ authenticatedBy: 'jwt' });
+        const loginPingResponse = new Subject<Response>();
+        const unauthorizedError = {
+          status: 401,
+          statusText: 'Unauthorized',
+          data: { message: 'Unauthorized' },
+        };
+
+        fromFetchMock.mockImplementation((input) => {
+          if (String(input).includes('/api/login/ping')) {
+            return loginPingResponse;
+          }
+          return throwError(() => unauthorizedError);
+        });
+
+        const requests = Array.from({ length: 10 }, (_, index) =>
+          backendSrv.request({ url: `/api/dashboards/${index}`, method: 'GET', retry: 0 })
+        );
+
+        loginPingResponse.error(unauthorizedError);
+        await Promise.allSettled(requests);
+
+        const loginPingRequests = fromFetchMock.mock.calls.filter(([input]) =>
+          String(input).includes('/api/login/ping')
+        );
+        expect(loginPingRequests).toHaveLength(1);
+      });
+
+      it('does not check the session for a request that fails after logout', async () => {
+        const { backendSrv, contextSrvMock, fromFetchMock, logoutMock } = getTestContext({ authenticatedBy: 'jwt' });
+        const firstResponse = new Subject<Response>();
+        const secondResponse = new Subject<Response>();
+        const unauthorizedResponse = createUnauthorizedResponse();
+
+        logoutMock.mockImplementation(() => {
+          contextSrvMock.user.isSignedIn = false;
+        });
+        fromFetchMock.mockImplementation((input) => {
+          const url = String(input);
+          if (url.includes('/api/login/ping')) {
+            return of(unauthorizedResponse);
+          }
+          return url.includes('/api/dashboards/first') ? firstResponse : secondResponse;
+        });
+
+        const firstRequest = backendSrv.request({ url: '/api/dashboards/first', method: 'GET', retry: 0 });
+        const secondRequest = backendSrv.request({ url: '/api/dashboards/second', method: 'GET', retry: 0 });
+
+        firstResponse.next(unauthorizedResponse);
+        firstResponse.complete();
+        await Promise.allSettled([firstRequest]);
+
+        secondResponse.next(unauthorizedResponse);
+        secondResponse.complete();
+        await Promise.allSettled([secondRequest]);
+
+        const loginPingRequests = fromFetchMock.mock.calls.filter(([input]) =>
+          String(input).includes('/api/login/ping')
+        );
+        expect(loginPingRequests).toHaveLength(1);
+      });
+    });
+
     describe('when showing error alert', () => {
       describe('when showErrorAlert is undefined and url is a normal api call', () => {
         it('It should emit alert event for normal api errors', async () => {
@@ -323,6 +447,66 @@ describe('backendSrv', () => {
             } as FetchError
           );
           expect(appEventsMock.emit).toHaveBeenCalledWith(AppEvents.alertError, ['Failed to fetch', '']);
+        });
+      });
+    });
+
+    describe('when error response body is HTML', () => {
+      it('should replace HTML body with status-based message', async () => {
+        jest.useFakeTimers();
+        const htmlBody = '<!DOCTYPE html><html><body><h1>502 Bad Gateway</h1></body></html>';
+        const { backendSrv, appEventsMock, expectRequestCallChain } = getTestContext({
+          ok: false,
+          status: 502,
+          statusText: 'Bad Gateway',
+          data: htmlBody,
+        });
+        const url = '/api/dashboard/';
+
+        await backendSrv
+          .request({ url, method: 'GET' })
+          .catch((error) => {
+            expect(error.data.message).toBe('502 Bad Gateway');
+            expect(error.data.response).toBe(htmlBody);
+            expectRequestCallChain({ url, method: 'GET' });
+            jest.advanceTimersByTime(50);
+          })
+          .catch((error) => {
+            expect(appEventsMock.emit).toHaveBeenCalledWith(AppEvents.alertError, ['502 Bad Gateway', '', undefined]);
+          });
+      });
+
+      it('should replace HTML body starting with <html> tag', async () => {
+        jest.useFakeTimers();
+        const htmlBody = '<html><body>503 Service Unavailable</body></html>';
+        const { backendSrv, expectRequestCallChain } = getTestContext({
+          ok: false,
+          status: 503,
+          statusText: 'Service Unavailable',
+          data: htmlBody,
+        });
+        const url = '/api/dashboard/';
+
+        await backendSrv.request({ url, method: 'GET' }).catch((error) => {
+          expect(error.data.message).toBe('503 Service Unavailable');
+          expect(error.data.response).toBe(htmlBody);
+          expectRequestCallChain({ url, method: 'GET' });
+        });
+      });
+
+      it('should not replace non-HTML string error bodies', async () => {
+        jest.useFakeTimers();
+        const { backendSrv, expectRequestCallChain } = getTestContext({
+          ok: false,
+          status: 500,
+          statusText: 'Internal Server Error',
+          data: 'some plain text error',
+        });
+        const url = '/api/dashboard/';
+
+        await backendSrv.request({ url, method: 'GET' }).catch((error) => {
+          expect(error.data.message).toBe('some plain text error');
+          expectRequestCallChain({ url, method: 'GET' });
         });
       });
     });

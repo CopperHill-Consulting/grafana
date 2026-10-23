@@ -1,14 +1,19 @@
 import { get as lodashGet, isEqual } from 'lodash';
 
-import { FrameGeometrySourceMode, getFrameMatchers, MapLayerOptions } from '@grafana/data';
-import { NestedPanelOptions, NestedValueAccess } from '@grafana/data/internal';
+import {
+  FrameGeometrySourceMode,
+  getFrameMatchers,
+  type MapLayerOptions,
+  type NestedPanelOptions,
+  type NestedValueAccess,
+} from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { setOptionImmutably } from 'app/features/dashboard/components/PanelEditor/utils';
 import { addLocationFields } from 'app/features/geo/editor/locationEditor';
 
 import { defaultMarkersConfig } from '../layers/data/markersLayer';
 import { DEFAULT_BASEMAP_CONFIG, geomapLayerRegistry, getLayersOptions } from '../layers/registry';
-import { MapLayerState } from '../types';
+import { type MapLayerState } from '../types';
 
 import { FrameSelectionEditor } from './FrameSelectionEditor';
 
@@ -101,7 +106,9 @@ export function getLayerEditor(opts: LayerEditorOptions): NestedPanelOptions<Map
         // If `filterData` exists filter data feeding into location editor
         if (options.filterData) {
           const matcherFunc = getFrameMatchers(options.filterData);
-          data = data.filter(matcherFunc);
+          if (data.some(matcherFunc)) {
+            data = data.filter(matcherFunc);
+          }
         }
 
         addLocationFields('Location', 'location.', builder, options.location, data);

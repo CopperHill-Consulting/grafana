@@ -8,6 +8,8 @@ keywords:
   - grafana
   - opentsdb
   - guide
+  - time series
+  - tsdb
 labels:
   products:
     - cloud
@@ -16,134 +18,80 @@ labels:
 menuTitle: OpenTSDB
 title: OpenTSDB data source
 weight: 1100
-refs:
-  provisioning-data-sources:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/#data-sources
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/#data-sources
-  variables:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/
-  data-source-management:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/
+review_date: 2026-08-11
 ---
 
 # OpenTSDB data source
 
-Grafana ships with advanced support for OpenTSDB.
-This topic explains configuration, variables, querying, and other features specific to the OpenTSDB data source.
+OpenTSDB is an open source time series database built on top of HBase. Use the OpenTSDB data source to visualize metrics, create alerts, and build dashboards from your time series data.
 
-For instructions on how to add a data source to Grafana, refer to the [administration documentation](ref:data-source-management).
-Only users with the organization administrator role can add data sources.
-Administrators can also [configure the data source via YAML](#provision-the-data-source) with Grafana's provisioning system.
+Grafana ships with OpenTSDB preinstalled in both Grafana OSS and Enterprise, so there's nothing for you to install. The data source is now packaged as a standalone plugin that updates independently of Grafana releases. For details, refer to [Plugin updates](#plugin-updates).
 
-## OpenTSDB settings
+## Supported features
 
-To configure basic settings for the data source, complete the following steps:
+The OpenTSDB data source supports the following features:
 
-1.  Click **Connections** in the left-side menu.
-1.  Under Your connections, click **Data sources**.
-1.  Enter `OpenTSDB` in the search bar.
-1.  Select **OpenTSDB**.
+| Feature            | Supported | Notes                                                                |
+| ------------------ | --------- | -------------------------------------------------------------------- |
+| Metrics queries    | Yes       | Query time series data with aggregation, downsampling, and filtering |
+| Alerting           | Yes       | Create alert rules based on OpenTSDB queries                         |
+| Annotations        | Yes       | Overlay events on graphs using metric-specific or global annotations |
+| Template variables | Yes       | Use dynamic variables in queries                                     |
+| Explore            | Yes       | Ad-hoc data exploration without dashboards                           |
 
-    The **Settings** tab of the data source is displayed.
+## Supported OpenTSDB versions
 
-1.  Set the data source's basic configuration options:
+The data source supports OpenTSDB versions 2.1 through 2.4. Some features are version-specific:
 
-| Name                | Description                                                                              |
-| ------------------- | ---------------------------------------------------------------------------------------- |
-| **Name**            | The data source name. This is how you refer to the data source in panels and queries.    |
-| **Default**         | Default data source that will be be pre-selected for new panels.                         |
-| **URL**             | The HTTP protocol, IP, and port of your OpenTSDB server (default port is usually 4242).  |
-| **Allowed cookies** | Listing of cookies to forward to the data source.                                        |
-| **Version**         | The OpenTSDB version (supported versions are: 2.4, 2.3, 2.2 and versions less than 2.1). |
-| **Resolution**      | Metrics from OpenTSDB may have data points with either second or millisecond resolution. |
-| **Lookup limit**    | Default is 1000.                                                                         |
+| Feature       | Minimum version |
+| ------------- | --------------- |
+| Filters       | 2.2             |
+| Fill policies | 2.2             |
+| Explicit tags | 2.3             |
 
-### Provision the data source
+## Get started
 
-You can define and configure the data source in YAML files as part of Grafana's provisioning system.
-For more information about provisioning, and for available configuration options, refer to [Provisioning Grafana](ref:provisioning-data-sources).
+The following documents help you get started with the OpenTSDB data source:
 
-#### Provisioning example
+- [Configure the OpenTSDB data source](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/opentsdb/configure/) - Set up authentication and connect to OpenTSDB.
+- [OpenTSDB query editor](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/opentsdb/query-editor/) - Create and edit queries with aggregation, downsampling, and filtering.
+- [Template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/opentsdb/template-variables/) - Create dynamic dashboards with OpenTSDB variables.
+- [Troubleshooting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/opentsdb/troubleshooting/) - Solve common configuration and query errors.
 
-```yaml
-apiVersion: 1
+## Plugin updates
 
-datasources:
-  - name: OpenTSDB
-    type: opentsdb
-    access: proxy
-    url: http://localhost:4242
-    jsonData:
-      tsdbResolution: 1
-      tsdbVersion: 1
+Starting with Grafana v13.2, the OpenTSDB data source is a standalone plugin, preinstalled in both Grafana OSS and Enterprise. This enables more frequent updates independent of Grafana releases. Grafana automatically checks the plugin catalog and installs the latest version on each server restart.
+
+To adjust this behavior:
+
+- **Opt out of auto-updates:** Set `preinstall_auto_update` to `false` in your [configuration file](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/).
+- **Update manually:** Update at any time from the **Administration > Plugins** page without restarting Grafana.
+
+The standalone plugin requires Grafana 12.3.0 or later. The OpenTSDB data source bundled with Grafana 12.2 and earlier continues to work as before. These versions are unaffected by the externalization.
+
+Users running Grafana 12.3.x through 13.1.x can install the standalone plugin from the plugin catalog if they want the latest features before upgrading to Grafana 13.2. To use the standalone plugin with these versions, add the following to your [configuration file](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/):
+
+```ini
+[plugin.opentsdb]
+as_external = true
+
+[plugins]
+; Install the latest version on startup:
+preinstall_sync = opentsdb
+; Or install a specific version:
+; preinstall_sync = opentsdb@<version>
 ```
 
-## Query editor
+## Additional features
 
-Open a graph in edit mode by click the title. Query editor will differ if the data source has version <=2.1 or = 2.2.
-In the former version, only tags can be used to query OpenTSDB. But in the latter version, filters as well as tags
-can be used to query OpenTSDB. Fill Policy is also introduced in OpenTSDB 2.2.
+After you have configured the OpenTSDB data source, you can:
 
-![](/static/img/docs/v43/opentsdb_query_editor.png)
+- Add [Annotations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/opentsdb/annotations/) to overlay OpenTSDB events on your graphs.
+- Configure and use [Template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/opentsdb/template-variables/) for dynamic dashboards.
+- Set up [Alerting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/opentsdb/alerting/) rules based on your time series queries.
+- Use [Explore](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/explore/) to investigate your OpenTSDB data without building a dashboard.
 
-{{< admonition type="note" >}}
-While using OpenTSDB 2.2 data source, make sure you use either Filters or Tags as they are mutually exclusive. If used together, might give you weird results.
-{{< /admonition >}}
+## Related resources
 
-{{< admonition type="note" >}}
-When using OpenTSDB 2.4 with alerting, queries are executed with the parameter `arrays=true`. This causes OpenTSDB to return data points as an array of arrays instead of a map of key-value pairs. Grafana then converts this data into the appropriate data frame format.
-{{< /admonition >}}
-
-### Auto complete suggestions
-
-As you begin typing metric names, tag names, or tag values, highlighted autocomplete suggestions will appear.
-The autocomplete only works if the OpenTSDB suggest API is enabled.
-
-## Templating queries
-
-Instead of hard-coding things like server, application and sensor name in your metric queries you can use variables in their place.
-Variables are shown as dropdown select boxes at the top of the dashboard. These dropdowns make it easy to change the data
-being displayed in your dashboard.
-
-Check out the [Templating](ref:variables) documentation for an introduction to the templating feature and the different
-types of template variables.
-
-### Query variable
-
-Grafana's OpenTSDB data source supports template variable queries. This means you can create template variables
-that fetch the values from OpenTSDB. For example, metric names, tag names, or tag values.
-
-When using OpenTSDB with a template variable of `query` type you can use following syntax for lookup.
-
-| Query                       | Description                                                                       |
-| --------------------------- | --------------------------------------------------------------------------------- |
-| `metrics(prefix)`           | Returns metric names with specific prefix (can be empty)                          |
-| `tag_names(cpu)`            | Returns tag names (i.e. keys) for a specific cpu metric                           |
-| `tag_values(cpu, hostname)` | Returns tag values for metric cpu and tag key hostname                            |
-| `suggest_tagk(prefix)`      | Returns tag names (i.e. keys) for all metrics with specific prefix (can be empty) |
-| `suggest_tagv(prefix)`      | Returns tag values for all metrics with specific prefix (can be empty)            |
-
-If you do not see template variables being populated in `Preview of values` section, you need to enable
-`tsd.core.meta.enable_realtime_ts` in the OpenTSDB server settings. Also, to populate metadata of
-the existing time series data in OpenTSDB, you need to run `tsdb uid metasync` on the OpenTSDB server.
-
-### Nested templating
-
-One template variable can be used to filter tag values for another template variable. First parameter is the metric name,
-second parameter is the tag key for which you need to find tag values, and after that all other dependent template variables.
-Some examples are mentioned below to make nested template queries work successfully.
-
-| Query                                                 | Description                                                                                              |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `tag_values(cpu, hostname, env=$env)`                 | Return tag values for cpu metric, selected env tag value and tag key hostname                            |
-| `tag_values(cpu, hostname, env=$env, region=$region)` | Return tag values for cpu metric, selected env tag value, selected region tag value and tag key hostname |
-
-For details on OpenTSDB metric queries, check out the official [OpenTSDB documentation](http://opentsdb.net/docs/build/html/index.html)
+- [Official OpenTSDB documentation](http://opentsdb.net/docs/build/html/index.html)
+- [Grafana community forums](https://community.grafana.com/)

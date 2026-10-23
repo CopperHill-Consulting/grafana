@@ -17,6 +17,11 @@ func NewCheckReport() *CheckReport {
 	}
 }
 
+// OpenAPIModelName returns the OpenAPI model name for CheckReport.
+func (CheckReport) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.advisor.pkg.apis.advisor.v0alpha1.CheckReport"
+}
+
 // +k8s:openapi-gen=true
 type CheckReportFailure struct {
 	// Severity of the failure
@@ -40,17 +45,30 @@ func NewCheckReportFailure() *CheckReportFailure {
 	}
 }
 
+// OpenAPIModelName returns the OpenAPI model name for CheckReportFailure.
+func (CheckReportFailure) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.advisor.pkg.apis.advisor.v0alpha1.CheckReportFailure"
+}
+
 // +k8s:openapi-gen=true
 type CheckErrorLink struct {
 	// URL to a page with more information about the error
 	Url string `json:"url"`
 	// Human readable error message
 	Message string `json:"message"`
+	// i18n key for the message (e.g. "advisor.link.fix-me"), so the
+	// frontend can translate without deriving the key from the text
+	MessageKey *string `json:"messageKey,omitempty"`
 }
 
 // NewCheckErrorLink creates a new CheckErrorLink object.
 func NewCheckErrorLink() *CheckErrorLink {
 	return &CheckErrorLink{}
+}
+
+// OpenAPIModelName returns the OpenAPI model name for CheckErrorLink.
+func (CheckErrorLink) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.advisor.pkg.apis.advisor.v0alpha1.CheckErrorLink"
 }
 
 // +k8s:openapi-gen=true
@@ -71,6 +89,11 @@ func NewCheckstatusOperatorState() *CheckstatusOperatorState {
 	return &CheckstatusOperatorState{}
 }
 
+// OpenAPIModelName returns the OpenAPI model name for CheckstatusOperatorState.
+func (CheckstatusOperatorState) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.advisor.pkg.apis.advisor.v0alpha1.CheckstatusOperatorState"
+}
+
 // +k8s:openapi-gen=true
 type CheckStatus struct {
 	Report CheckReport `json:"report"`
@@ -88,6 +111,11 @@ func NewCheckStatus() *CheckStatus {
 	}
 }
 
+// OpenAPIModelName returns the OpenAPI model name for CheckStatus.
+func (CheckStatus) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.advisor.pkg.apis.advisor.v0alpha1.CheckStatus"
+}
+
 // +k8s:openapi-gen=true
 type CheckReportFailureSeverity string
 
@@ -95,6 +123,11 @@ const (
 	CheckReportFailureSeverityHigh CheckReportFailureSeverity = "high"
 	CheckReportFailureSeverityLow  CheckReportFailureSeverity = "low"
 )
+
+// OpenAPIModelName returns the OpenAPI model name for CheckReportFailureSeverity.
+func (CheckReportFailureSeverity) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.advisor.pkg.apis.advisor.v0alpha1.CheckReportFailureSeverity"
+}
 
 // +k8s:openapi-gen=true
 type CheckStatusOperatorStateState string
@@ -104,3 +137,8 @@ const (
 	CheckStatusOperatorStateStateInProgress CheckStatusOperatorStateState = "in_progress"
 	CheckStatusOperatorStateStateFailed     CheckStatusOperatorStateState = "failed"
 )
+
+// OpenAPIModelName returns the OpenAPI model name for CheckStatusOperatorStateState.
+func (CheckStatusOperatorStateState) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.advisor.pkg.apis.advisor.v0alpha1.CheckStatusOperatorStateState"
+}

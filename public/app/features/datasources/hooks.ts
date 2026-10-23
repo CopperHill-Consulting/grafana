@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useRef } from 'react';
-import * as React from 'react';
-import { useLocalStorage } from 'react-use';
-import { Observable } from 'rxjs';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type * as React from 'react';
+import { useAsync, useLocalStorage } from 'react-use';
+import { type Observable } from 'rxjs';
 
-import { DataSourceInstanceSettings, DataSourceRef } from '@grafana/data';
-import { GetDataSourceListFilters, getDataSourceSrv } from '@grafana/runtime';
+import { type DataSourceInstanceSettings, type DataSourceRef, type ScopedVars } from '@grafana/data';
+import { type GetDataSourceListFilters, getDataSourceSrv } from '@grafana/runtime';
+import {
+  type GetDataSourceInstanceListFilters,
+  getDataSourceInstanceList,
+  getDataSourceInstanceSettings,
+} from '@grafana/runtime/unstable';
 
-export const LOCAL_STORAGE_KEY = 'grafana.features.datasources.components.picker.DataSourceDropDown.history';
+const LOCAL_STORAGE_KEY = 'grafana.features.datasources.components.picker.DataSourceDropDown.history';
 
 /**
  * Stores the uid of the last 5 data sources selected by the user. The last UID is the one most recently used.
@@ -42,6 +47,10 @@ export function useRecentlyUsedDataSources(): [string[], (ds: DataSourceInstance
   return [value, pushRecentlyUsedDataSource];
 }
 
+/**
+ * @deprecated Use {@link useDatasourcesAsync} instead — call sites are being migrated to it
+ * one by one, and once all are done it takes over this hook's name.
+ */
 export function useDatasources(filters: GetDataSourceListFilters, datasources?: DataSourceInstanceSettings[]) {
   if (datasources) {
     return datasources;
@@ -52,60 +61,83 @@ export function useDatasources(filters: GetDataSourceListFilters, datasources?: 
   return dataSources;
 }
 
-export function useDatasource(dataSource: string | DataSourceRef | DataSourceInstanceSettings | null | undefined) {
-  const dataSourceSrv = getDataSourceSrv();
-
-  if (typeof dataSource === 'string') {
-    return dataSourceSrv.getInstanceSettings(dataSource);
-  }
-
-  return dataSourceSrv.getInstanceSettings(dataSource);
-}
-
-export interface KeybaordNavigatableListProps {
-  keyboardEvents?: Observable<React.KeyboardEvent>;
-  containerRef: React.RefObject<HTMLElement>;
+export interface UseDatasourcesAsyncResult {
+  isLoading: boolean;
+  error?: Error;
+  dataSources: DataSourceInstanceSettings[];
 }
 
 /**
- * Allows navigating lists of elements where the data-role attribute is set to "keyboardSelectableItem"
- * @param props
+ * Async replacement for {@link useDatasources}, resolving the data sources matching `filters`
+ * from the in-memory cache with explicit loading and error state. While a re-fetch is pending,
+ * the previous list is kept with `isLoading: true`.
+ *
+ * Known limitation: the result is only re-fetched when `filters` change, so a mounted consumer
+ * does not pick up data sources added or removed via reloadDataSourceInstanceSettings() until
+ * it remounts or its filters change.
  */
-export function useKeyboardNavigatableList(props: KeybaordNavigatableListProps): [Record<string, string>, string] {
-  const { keyboardEvents, containerRef } = props;
-  const selectedIndex = useRef<number>(0);
+export function useDatasourcesAsync(filters: GetDataSourceInstanceListFilters = {}): UseDatasourcesAsyncResult {
+  // Consumers pass `filters` as an inline object literal — a new reference on every render.
+  // Serialize it for the useAsync() deps so the fetch only re-runs when a filter value
+  // actually changes. The `filter` callback can't be serialized; it is compared by reference.
+  const { filter: filterFunc, ...serializableFilters } = filters;
+  const filtersKey = JSON.stringify(serializableFilters);
 
-  const attributeName = 'data-role';
-  const roleName = 'keyboardSelectableItem';
-  const navigatableItemProps = { ...{ [attributeName]: roleName } };
-  const querySelectorNavigatableElements = `[${attributeName}="${roleName}"`;
-
-  const selectedAttributeName = 'data-selectedItem';
-  const selectedItemCssSelector = `[${selectedAttributeName}="true"]`;
-
-  const selectItem = useCallback(
-    (index: number) => {
-      const listItems = containerRef?.current?.querySelectorAll<HTMLElement | HTMLButtonElement | HTMLAnchorElement>(
-        querySelectorNavigatableElements
-      );
-      const selectedItem = listItems?.item(index % listItems?.length);
-
-      listItems?.forEach((li) => li.setAttribute(selectedAttributeName, 'false'));
-
-      if (selectedItem) {
-        selectedItem.scrollIntoView({ block: 'center' });
-        selectedItem.setAttribute(selectedAttributeName, 'true');
-      }
+  const { loading, error, value } = useAsync(
+    async () => {
+      const items = await getDataSourceInstanceList(filters);
+      // getDataSourceInstanceList() returns slim list items, but the pickers built on this
+      // hook pass full DataSourceInstanceSettings to their public onChange/filter props, so
+      // fetch the full settings for each item. Both calls read the same in-memory cache.
+      const settings = await Promise.all(items.map((item) => getDataSourceInstanceSettings(item.uid)));
+      return settings.filter((s) => s !== undefined);
     },
-    [containerRef, querySelectorNavigatableElements]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtersKey, filterFunc]
   );
 
-  const clickSelectedElement = useCallback(() => {
-    containerRef?.current
-      ?.querySelector<HTMLElement | HTMLButtonElement | HTMLAnchorElement>(selectedItemCssSelector)
-      ?.querySelector<HTMLButtonElement>('button') // This is a bit weird. The main use for this would be to select card items, however the root of the card component does not have the click event handler, instead it's attached to a button inside it.
-      ?.click();
-  }, [containerRef, selectedItemCssSelector]);
+  return { isLoading: loading, error, dataSources: value ?? [] };
+}
+
+export function useDatasource(
+  dataSource: string | DataSourceRef | DataSourceInstanceSettings | null | undefined,
+  scopedVars?: ScopedVars
+) {
+  const dataSourceSrv = getDataSourceSrv();
+
+  if (typeof dataSource === 'string') {
+    return dataSourceSrv.getInstanceSettings(dataSource, scopedVars);
+  }
+
+  return dataSourceSrv.getInstanceSettings(dataSource, scopedVars);
+}
+
+export interface KeyboardNavigatableListProps {
+  keyboardEvents?: Observable<React.KeyboardEvent>;
+  itemCount: number;
+  scrollToIndex?: (index: number) => void;
+  onSelect?: (index: number) => void;
+}
+
+/**
+ * Index-based keyboard navigation for (virtualized) lists.
+ * Returns the currently selected index.
+ */
+export function useKeyboardNavigatableList(props: KeyboardNavigatableListProps): number {
+  const { keyboardEvents, itemCount } = props;
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selectedIndexRef = useRef(0);
+  const scrollToIndexRef = useRef(props.scrollToIndex);
+  const onSelectRef = useRef(props.onSelect);
+
+  scrollToIndexRef.current = props.scrollToIndex;
+  onSelectRef.current = props.onSelect;
+
+  // Reset selection when item count changes (e.g. filtering)
+  useEffect(() => {
+    selectedIndexRef.current = 0;
+    setSelectedIndex(0);
+  }, [itemCount]);
 
   useEffect(() => {
     if (!keyboardEvents) {
@@ -115,47 +147,29 @@ export function useKeyboardNavigatableList(props: KeybaordNavigatableListProps):
       next: (keyEvent) => {
         switch (keyEvent?.code) {
           case 'ArrowDown': {
-            selectItem(++selectedIndex.current);
+            const next = itemCount > 0 ? (selectedIndexRef.current + 1) % itemCount : 0;
+            selectedIndexRef.current = next;
+            setSelectedIndex(next);
+            scrollToIndexRef.current?.(next);
             keyEvent.preventDefault();
             break;
           }
-          case 'ArrowUp':
-            selectedIndex.current = selectedIndex.current > 0 ? selectedIndex.current - 1 : selectedIndex.current;
-            selectItem(selectedIndex.current);
+          case 'ArrowUp': {
+            const next = selectedIndexRef.current > 0 ? selectedIndexRef.current - 1 : selectedIndexRef.current;
+            selectedIndexRef.current = next;
+            setSelectedIndex(next);
+            scrollToIndexRef.current?.(next);
             keyEvent.preventDefault();
             break;
+          }
           case 'Enter':
-            clickSelectedElement();
+            onSelectRef.current?.(selectedIndexRef.current);
             break;
         }
       },
     });
     return () => sub.unsubscribe();
-  }, [keyboardEvents, selectItem, clickSelectedElement]);
+  }, [keyboardEvents, itemCount]);
 
-  useEffect(() => {
-    // This observer is used to keep track of the number of items in the list
-    // that can change dinamically (e.g. when filtering a dropdown list)
-    const listObserver = new MutationObserver((mutations) => {
-      const listHasChanged = mutations.some(
-        (mutation) =>
-          (mutation.addedNodes && mutation.addedNodes.length > 0) ||
-          (mutation.removedNodes && mutation.removedNodes.length > 0)
-      );
-
-      listHasChanged && selectItem(0);
-    });
-
-    if (containerRef.current) {
-      listObserver.observe(containerRef.current, {
-        childList: true,
-      });
-    }
-
-    return () => {
-      listObserver.disconnect();
-    };
-  }, [containerRef, querySelectorNavigatableElements, selectItem]);
-
-  return [navigatableItemProps, selectedItemCssSelector];
+  return selectedIndex;
 }

@@ -16,7 +16,7 @@ import (
 func TestIntegration_RetryingDisabled(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	store, _ := InitTestDB(t)
+	store, _ := InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	retryErrors := getRetryErrors(t, store)
 
 	require.Equal(t, 0, store.dbCfg.QueryRetries)
@@ -66,7 +66,7 @@ func TestIntegration_RetryingDisabled(t *testing.T) {
 func TestIntegration_RetryingOnFailures(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	store, _ := InitTestDB(t)
+	store, _ := InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	retryErrors := getRetryErrors(t, store)
 	store.dbCfg.QueryRetries = 5
 
@@ -143,7 +143,7 @@ func getRetryErrors(t *testing.T, store *SQLStore) []error {
 	var retryErrors []error
 	switch store.GetDialect().DriverName() {
 	case migrator.SQLite:
-		retryErrors = []error{sqlite.TestErrBusy, sqlite.TestErrLocked}
+		retryErrors = []error{sqlite.ErrTestBusy, sqlite.ErrTestLocked}
 	}
 
 	if len(retryErrors) == 0 {

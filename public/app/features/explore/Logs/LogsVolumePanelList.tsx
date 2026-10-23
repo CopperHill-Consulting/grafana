@@ -1,32 +1,39 @@
 import { css } from '@emotion/css';
+import { useBooleanFlagValue } from '@openfeature/react-sdk';
 import { flatten, groupBy, mapValues, sortBy } from 'lodash';
 import { useCallback, useMemo } from 'react';
 import * as React from 'react';
 
 import {
-  AbsoluteTimeRange,
-  DataFrame,
-  DataQueryResponse,
+  type AbsoluteTimeRange,
+  arrayToDataFrame,
+  type DataFrame,
+  type DataQueryResponse,
   DataTopic,
   dateTime,
-  EventBus,
+  type EventBus,
   getFrameDisplayName,
-  GrafanaTheme2,
+  type GrafanaTheme2,
   LoadingState,
+  type LogRowModel,
   shallowCompare,
-  SplitOpen,
-  TimeRange,
-  TimeZone,
+  type SplitOpen,
+  type TimeRange,
+  type TimeZone,
 } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
-import { config } from '@grafana/runtime';
-import { Button, InlineField, Alert, useStyles2, SeriesVisibilityChangeMode } from '@grafana/ui';
+import { Button, InlineField, Alert, useStyles2, type SeriesVisibilityChangeMode } from '@grafana/ui';
 
-import { mergeLogsVolumeDataFrames, isLogsVolumeLimited, getLogsVolumeMaximumRange } from '../../logs/utils';
+import {
+  mergeLogsVolumeDataFrames,
+  isLogsVolumeLimited,
+  getLogsVolumeMaximumRange,
+  getLogsVisibleRange,
+} from '../../logs/utils';
 import { SupplementaryResultError } from '../SupplementaryResultError';
 
 import { LogsVolumePanel } from './LogsVolumePanel';
-import { isTimeoutErrorResponse } from './utils/logsVolumeResponse';
+import { isMaxBytesErrorResponse, isTimeoutErrorResponse } from './utils/logsVolumeResponse';
 
 type Props = {
   logsVolumeData: DataQueryResponse | undefined;
@@ -40,8 +47,10 @@ type Props = {
   eventBus: EventBus;
   onClose?(): void;
   toggleLegendRef?: React.MutableRefObject<(name: string | undefined, mode: SeriesVisibilityChangeMode) => void>;
+  logs: LogRowModel[];
 };
 
+const VISIBLE_RANGE_FRAME_NAME = 'Visible range';
 export const LogsVolumePanelList = ({
   logsVolumeData,
   absoluteRange,
@@ -54,6 +63,7 @@ export const LogsVolumePanelList = ({
   timeZone,
   onClose,
   toggleLegendRef,
+  logs,
 }: Props) => {
   const {
     logVolumes,
@@ -63,6 +73,7 @@ export const LogsVolumePanelList = ({
   } = useMemo(() => {
     let maximumValue = -Infinity;
     const data = logsVolumeData?.data.filter((frame: DataFrame) => frame.meta?.dataTopic !== DataTopic.Annotations);
+    // Loading frame from query splitting.
     const annotations =
       logsVolumeData?.data.filter((frame: DataFrame) => frame.meta?.dataTopic === DataTopic.Annotations) || [];
     const sorted = sortBy(data || [], 'meta.custom.datasourceName');
@@ -73,15 +84,41 @@ export const LogsVolumePanelList = ({
       return mergedData.dataFrames;
     });
     const maximumRange = getLogsVolumeMaximumRange(flatten(Object.values(logVolumes)));
+
+    // No loading frame, show visible range
+    if (!annotations.length && logs.length) {
+      const { start, end } = getLogsVisibleRange(logs);
+      if (start > 0 && end > 0) {
+        const frame = arrayToDataFrame([
+          {
+            color: 'rgba(58, 113, 255, 0.3)',
+            isRegion: true,
+            text: t(
+              'explore.logs-volume-panel-list.visible-range-description',
+              'Range from oldest to newest logs in display'
+            ),
+            time: start,
+            timeEnd: end,
+          },
+        ]);
+        frame.name = VISIBLE_RANGE_FRAME_NAME;
+        frame.meta = {
+          dataTopic: DataTopic.Annotations,
+        };
+        annotations.push(frame);
+      }
+    }
+
     return {
       maximumValue,
       maximumRange,
       logVolumes,
       annotations,
     };
-  }, [logsVolumeData]);
+  }, [logs, logsVolumeData?.data]);
 
   const styles = useStyles2(getStyles);
+  const lokiShardSplittingEnabled = useBooleanFlagValue('lokiShardSplitting', false);
 
   const numberOfLogVolumes = Object.keys(logVolumes).length;
 
@@ -90,10 +127,10 @@ export const LogsVolumePanelList = ({
     return !isLogsVolumeLimited(data) && zoomRatio && zoomRatio < 1;
   });
 
-  const canShowPartialData =
-    config.featureToggles.lokiShardSplitting && logsVolumeData && logsVolumeData.data.length > 0;
+  const canShowPartialData = lokiShardSplittingEnabled && logsVolumeData && logsVolumeData.data.length > 0;
   const timeoutError = isTimeoutErrorResponse(logsVolumeData);
-
+  const maxBytesError = isMaxBytesErrorResponse(logsVolumeData);
+  const queryTooLargeError = timeoutError || maxBytesError;
   const from = dateTime(Math.max(absoluteRange.from, allLogsVolumeMaximumRange.from));
   const to = dateTime(Math.min(absoluteRange.to, allLogsVolumeMaximumRange.to));
   const visibleRange: TimeRange = { from, to, raw: { from, to } };
@@ -123,7 +160,7 @@ export const LogsVolumePanelList = ({
         <Trans i18nKey="explore.logs-volume-panel-list.loading">Loading...</Trans>
       </span>
     );
-  } else if (timeoutError && !canShowPartialData) {
+  } else if (queryTooLargeError && !canShowPartialData) {
     return (
       <SupplementaryResultError
         title={t('explore.logs-volume-panel-list.title-unable-to-show-log-volume', 'Unable to show log volume')}
@@ -131,9 +168,16 @@ export const LogsVolumePanelList = ({
         message={
           <>
             <p>
-              <Trans i18nKey="explore.logs.logs-volume.much-data">
-                The query is trying to access too much data. Try one or more of the following:
-              </Trans>
+              {timeoutError && (
+                <Trans i18nKey="explore.logs.logs-volume.much-data">
+                  The query is trying to access too much data. Try one or more of the following:
+                </Trans>
+              )}
+              {maxBytesError && (
+                <Trans i18nKey="explore.logs.logs-volume.max-bytes-error">
+                  The query would read too many bytes. Try one or more of the following:
+                </Trans>
+              )}
             </p>
             <ul>
               <li>
@@ -184,10 +228,24 @@ export const LogsVolumePanelList = ({
 
   return (
     <div className={styles.listContainer}>
-      {timeoutError && canShowPartialData && (
+      {queryTooLargeError && canShowPartialData && (
         <SupplementaryResultError
           title={t('explore.logs-volume-panel-list.title-showing-partial-data', 'Showing partial data')}
-          message="The query is trying to access too much data and some sharded requests could not be completed. Try decreasing the time range or adding more labels to your query."
+          message={
+            timeoutError
+              ? t(
+                  'explore.logs-volume-panel-list.message-showing-partial-data-timeout',
+                  'The query is trying to access too much data and some sharded requests could not be completed. '
+                )
+              : t(
+                  'explore.logs-volume-panel-list.message-showing-partial-data-max-bytes',
+                  'The query would read too many bytes and some sharded requests could not be completed. '
+                ) +
+                t(
+                  'explore.logs-volume-panel.partial-data-tips',
+                  'Try decreasing the time range or adding more labels to your query.'
+                )
+          }
           severity="info"
           dismissable
         />

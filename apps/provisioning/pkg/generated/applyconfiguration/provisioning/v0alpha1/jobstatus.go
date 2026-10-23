@@ -10,15 +10,26 @@ import (
 
 // JobStatusApplyConfiguration represents a declarative configuration of the JobStatus type for use
 // with apply.
+//
+// The job status
 type JobStatusApplyConfiguration struct {
-	State    *provisioningv0alpha1.JobState             `json:"state,omitempty"`
-	Started  *int64                                     `json:"started,omitempty"`
-	Finished *int64                                     `json:"finished,omitempty"`
-	Message  *string                                    `json:"message,omitempty"`
-	Errors   []string                                   `json:"errors,omitempty"`
-	Progress *float64                                   `json:"progress,omitempty"`
-	Summary  []*provisioningv0alpha1.JobResourceSummary `json:"summary,omitempty"`
-	URLs     *RepositoryURLsApplyConfiguration          `json:"url,omitempty"`
+	State    *provisioningv0alpha1.JobState `json:"state,omitempty"`
+	Started  *int64                         `json:"started,omitempty"`
+	Finished *int64                         `json:"finished,omitempty"`
+	Message  *string                        `json:"message,omitempty"`
+	Errors   []string                       `json:"errors,omitempty"`
+	Warnings []string                       `json:"warnings,omitempty"`
+	// Optional value 0-100 that can be set while running
+	Progress *float64 `json:"progress,omitempty"`
+	// ProgressUpdates is the number of times the job's status has been written
+	// while it was processed. It is carried over to the historic job so the total
+	// number of progress updates a job went through remains observable after
+	// completion.
+	ProgressUpdates *int64 `json:"progressUpdates,omitempty"`
+	// Summary of processed actions
+	Summary []*provisioningv0alpha1.JobResourceSummary `json:"summary,omitempty"`
+	// URLs contains URLs for the reference branch or commit if applicable.
+	URLs *RepositoryURLsApplyConfiguration `json:"url,omitempty"`
 }
 
 // JobStatusApplyConfiguration constructs a declarative configuration of the JobStatus type for use with
@@ -69,11 +80,29 @@ func (b *JobStatusApplyConfiguration) WithErrors(values ...string) *JobStatusApp
 	return b
 }
 
+// WithWarnings adds the given value to the Warnings field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Warnings field.
+func (b *JobStatusApplyConfiguration) WithWarnings(values ...string) *JobStatusApplyConfiguration {
+	for i := range values {
+		b.Warnings = append(b.Warnings, values[i])
+	}
+	return b
+}
+
 // WithProgress sets the Progress field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the Progress field is set to the value of the last call.
 func (b *JobStatusApplyConfiguration) WithProgress(value float64) *JobStatusApplyConfiguration {
 	b.Progress = &value
+	return b
+}
+
+// WithProgressUpdates sets the ProgressUpdates field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ProgressUpdates field is set to the value of the last call.
+func (b *JobStatusApplyConfiguration) WithProgressUpdates(value int64) *JobStatusApplyConfiguration {
+	b.ProgressUpdates = &value
 	return b
 }
 

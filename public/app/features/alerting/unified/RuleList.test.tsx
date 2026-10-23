@@ -1,4 +1,4 @@
-import { SerializedError } from '@reduxjs/toolkit';
+import { type SerializedError } from '@reduxjs/toolkit';
 import { TestProvider } from 'test/helpers/TestProvider';
 import { render, screen, waitFor, within } from 'test/test-utils';
 import { byRole, byTestId, byText } from 'testing-library-selector';
@@ -6,7 +6,7 @@ import { byRole, byTestId, byText } from 'testing-library-selector';
 import { PluginExtensionTypes } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { locationService, setAppEvents, usePluginLinks } from '@grafana/runtime';
-import appEvents from 'app/core/app_events';
+import { appEvents } from 'app/core/app_events';
 import { setupMswServer } from 'app/features/alerting/unified/mockApi';
 import { setAlertmanagerChoices } from 'app/features/alerting/unified/mocks/server/configure';
 import * as actions from 'app/features/alerting/unified/state/actions';
@@ -45,6 +45,9 @@ jest.mock('@grafana/runtime', () => ({
 jest.mock('./api/buildInfo');
 jest.mock('./api/prometheus');
 jest.mock('./api/ruler');
+jest.mock('@grafana/assistant', () => ({
+  useAssistant: () => ({ isAvailable: false, openAssistant: jest.fn() }),
+}));
 
 jest.spyOn(actions, 'rulesInSameGroupHaveInvalidFor').mockReturnValue([]);
 jest.spyOn(apiRuler, 'rulerUrlBuilder');
@@ -106,7 +109,7 @@ const ui = {
   rulesTable: byTestId('rules-table'),
   ruleRow: byTestId('row'),
   expandedContent: byTestId(selectors.components.AlertRules.expandedContent),
-  rulesFilterInput: byTestId('search-query-input'),
+  rulesFilterInput: byTestId(selectors.pages.Alerting.searchInput),
   moreErrorsButton: byRole('button', { name: /more errors/ }),
   editCloudGroupIcon: byTestId('edit-group'),
   newRuleButton: byRole('link', { name: 'New alert rule' }),
@@ -375,7 +378,7 @@ describe('RuleList', () => {
     expect(labels[0]).toHaveTextContent('severitywarning');
     expect(labels[1]).toHaveTextContent('foobar');
 
-    expect(ruleDetails).toHaveTextContent('Expressiontopk ( 5 , foo ) [ 5m ]');
+    expect(ruleDetails).toHaveTextContent('Expressiontopk(5, foo)[5m]');
     expect(ruleDetails).toHaveTextContent('messagegreat alert');
     expect(ruleDetails).toHaveTextContent('Instances');
 

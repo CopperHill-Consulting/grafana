@@ -18,7 +18,7 @@ jobs:
       github.repository == 'grafana/grafana' &&
       github.event.pull_request.merged == true &&
       contains(join(github.event.pull_request.labels.*.name, ','), 'backport v')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-arm64-small
     steps:
       # TODO: save this as job summary instead?
       - name: Trigger
@@ -40,7 +40,7 @@ jobs:
           }' "$GITHUB_EVENT_PATH" > /tmp/pr_info.json
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: pr_info
           path: /tmp/pr_info.json

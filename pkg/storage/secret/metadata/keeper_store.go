@@ -2,7 +2,10 @@ package metadata
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strconv"
 	"time"
 
@@ -77,43 +80,44 @@ func (s *keeperMetadataStorage) Create(ctx context.Context, keeper *secretv1beta
 		return nil, fmt.Errorf("failed to create row: %w", err)
 	}
 
+	usedSecureValues := slices.Collect(maps.Keys(extractSecureValues(keeper)))
+
 	req := createKeeper{
-		SQLTemplate: sqltemplate.New(s.dialect),
-		Row:         row,
+		SQLTemplate:      sqltemplate.New(s.dialect),
+		Row:              row,
+		UsedSecureValues: usedSecureValues,
+		SystemKeeperName: contracts.SystemKeeperName,
 	}
 	query, err := sqltemplate.Execute(sqlKeeperCreate, req)
 	if err != nil {
 		return nil, fmt.Errorf("execute template %q: %w", sqlKeeperCreate.Name(), err)
 	}
 
-	err = s.db.Transaction(ctx, func(ctx context.Context) error {
-		// Validate before inserting that any `secureValues` referenced exist and do not reference other third-party keepers.
-		if err := s.validateSecureValueReferences(ctx, keeper); err != nil {
-			return err
-		}
-
-		result, err := s.db.ExecContext(ctx, query, req.GetArgs()...)
-		if err != nil {
-			if sql.IsRowAlreadyExistsError(err) {
-				return fmt.Errorf("namespace=%s name=%s: %w", keeper.Namespace, keeper.Name, contracts.ErrKeeperAlreadyExists)
-			}
-
-			return fmt.Errorf("inserting row: %w", err)
-		}
-
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("getting rows affected: %w", err)
-		}
-
-		if rowsAffected != 1 {
-			return fmt.Errorf("expected 1 row affected, got %d for %s on %s", rowsAffected, keeper.Name, keeper.Namespace)
-		}
-
-		return nil
-	})
+	result, err := s.db.ExecContext(ctx, query, req.GetArgs()...)
 	if err != nil {
-		return nil, fmt.Errorf("db failure: %w", err)
+		if sql.IsRowAlreadyExistsError(err) {
+			return nil, fmt.Errorf("namespace=%s name=%s: %w", keeper.Namespace, keeper.Name, contracts.ErrKeeperAlreadyExists)
+		}
+
+		return nil, fmt.Errorf("inserting row: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("getting rows affected: %w", err)
+	}
+
+	if rowsAffected != 1 {
+		// In case nothing was inserted, and if there are used secure values,
+		// this must have failed the check where a secure value is referencing a keeper.
+		// We can now test which one is causing the insert to error.
+		if rowsAffected == 0 && len(usedSecureValues) > 0 {
+			if validateErr := s.validateSecureValueReferences(ctx, keeper); validateErr != nil {
+				return nil, validateErr
+			}
+		}
+
+		return nil, fmt.Errorf("expected 1 row affected, got %d for %s on %s", rowsAffected, keeper.Name, keeper.Namespace)
 	}
 
 	createdKeeper, err := row.toKubernetes()
@@ -186,19 +190,24 @@ func (s *keeperMetadataStorage) read(ctx context.Context, namespace, name string
 	defer func() { _ = res.Close() }()
 
 	if !res.Next() {
-		return nil, contracts.ErrKeeperNotFound
+		return nil, fmt.Errorf("keeper=%s: %w", name, contracts.ErrKeeperNotFound)
 	}
 
 	var keeper keeperDB
 	err = res.Scan(
 		&keeper.GUID, &keeper.Name, &keeper.Namespace, &keeper.Annotations, &keeper.Labels, &keeper.Created,
 		&keeper.CreatedBy, &keeper.Updated, &keeper.UpdatedBy, &keeper.Description, &keeper.Type, &keeper.Payload,
+		&keeper.Active,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to scan keeper row: %w", err)
 	}
 	if err := res.Err(); err != nil {
 		return nil, fmt.Errorf("read rows error: %w", err)
+	}
+	if keeper.Namespace != namespace || keeper.Name != name {
+		return nil, fmt.Errorf("bug: expected to find keeper namespace=%+v name=%+v but got keeper namespace=%+v name%+v",
+			namespace, name, keeper.Namespace, keeper.Name)
 	}
 
 	return &keeper, nil
@@ -232,56 +241,53 @@ func (s *keeperMetadataStorage) Update(ctx context.Context, newKeeper *secretv1b
 		s.metrics.KeeperMetadataUpdateDuration.WithLabelValues(strconv.FormatBool(success)).Observe(time.Since(start).Seconds())
 	}()
 
-	var newRow *keeperDB
-
-	err := s.db.Transaction(ctx, func(ctx context.Context) error {
-		// Validate before updating that any `secureValues` referenced exists and does not reference other third-party keepers.
-		if err := s.validateSecureValueReferences(ctx, newKeeper); err != nil {
-			return err
-		}
-
-		// Read old value first.
-		oldKeeperRow, err := s.read(ctx, newKeeper.Namespace, newKeeper.Name, contracts.ReadOpts{ForUpdate: true})
-		if err != nil {
-			return err
-		}
-
-		// Generate an update row model.
-		var updateErr error
-		newRow, updateErr = toKeeperUpdateRow(oldKeeperRow, newKeeper, actorUID)
-		if updateErr != nil {
-			return fmt.Errorf("failed to map into update row: %w", updateErr)
-		}
-
-		// Update query with new model.
-		req := &updateKeeper{
-			SQLTemplate: sqltemplate.New(s.dialect),
-			Row:         newRow,
-		}
-
-		query, err := sqltemplate.Execute(sqlKeeperUpdate, req)
-		if err != nil {
-			return fmt.Errorf("execute template %q: %w", sqlKeeperUpdate.Name(), err)
-		}
-
-		result, err := s.db.ExecContext(ctx, query, req.GetArgs()...)
-		if err != nil {
-			return fmt.Errorf("updating row: %w", err)
-		}
-
-		rowsAffected, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("getting rows affected: %w", err)
-		}
-
-		if rowsAffected != 1 {
-			return fmt.Errorf("expected 1 row affected, got %d for %s on %s", rowsAffected, newKeeper.Name, newKeeper.Namespace)
-		}
-
-		return nil
-	})
+	// Read old value first.
+	oldKeeperRow, err := s.read(ctx, newKeeper.Namespace, newKeeper.Name, contracts.ReadOpts{})
 	if err != nil {
-		return nil, fmt.Errorf("db failure: %w", err)
+		return nil, err
+	}
+
+	// Generate an update row model.
+	newRow, err := toKeeperUpdateRow(oldKeeperRow, newKeeper, actorUID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to map into update row: %w", err)
+	}
+
+	usedSecureValues := slices.Collect(maps.Keys(extractSecureValues(newKeeper)))
+
+	req := &updateKeeper{
+		SQLTemplate:      sqltemplate.New(s.dialect),
+		Row:              newRow,
+		UsedSecureValues: usedSecureValues,
+		SystemKeeperName: contracts.SystemKeeperName,
+	}
+
+	query, err := sqltemplate.Execute(sqlKeeperUpdate, req)
+	if err != nil {
+		return nil, fmt.Errorf("execute template %q: %w", sqlKeeperUpdate.Name(), err)
+	}
+
+	result, err := s.db.ExecContext(ctx, query, req.GetArgs()...)
+	if err != nil {
+		return nil, fmt.Errorf("updating row: %w", err)
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("getting rows affected: %w", err)
+	}
+
+	if rowsAffected != 1 {
+		// In case nothing was inserted, and if there are used secure values,
+		// this must have failed the check where a secure value is referencing a keeper.
+		// We can now test which one is causing the insert to error.
+		if rowsAffected == 0 && len(usedSecureValues) > 0 {
+			if validateErr := s.validateSecureValueReferences(ctx, newKeeper); validateErr != nil {
+				return nil, validateErr
+			}
+		}
+
+		return nil, contracts.ErrKeeperNotFound
 	}
 
 	keeper, err := newRow.toKubernetes()
@@ -399,9 +405,14 @@ func (s *keeperMetadataStorage) List(ctx context.Context, namespace xkube.Namesp
 		err = rows.Scan(
 			&row.GUID, &row.Name, &row.Namespace, &row.Annotations, &row.Labels, &row.Created,
 			&row.CreatedBy, &row.Updated, &row.UpdatedBy, &row.Description, &row.Type, &row.Payload,
+			&row.Active,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("error reading keeper row: %w", err)
+		}
+
+		if row.Namespace != namespace.String() {
+			return nil, fmt.Errorf("bug: expected to list keepers for namespace %+v but got one from namespace %+v", namespace, row.Namespace)
 		}
 
 		keeper, err := row.toKubernetes()
@@ -435,23 +446,17 @@ func (s *keeperMetadataStorage) validateSecureValueReferences(ctx context.Contex
 		}
 	}()
 
-	usedSecureValues := extractSecureValues(keeper)
+	usedSecureValues := slices.Collect(maps.Keys(extractSecureValues(keeper)))
 
 	// No secure values are referenced, return early.
 	if len(usedSecureValues) == 0 {
 		return nil
 	}
 
-	// SQL templates do not support maps.
-	usedSecureValuesList := make([]string, 0, len(usedSecureValues))
-	for sv := range usedSecureValues {
-		usedSecureValuesList = append(usedSecureValuesList, sv)
-	}
-
 	reqSecureValue := listByNameSecureValue{
 		SQLTemplate:      sqltemplate.New(s.dialect),
 		Namespace:        keeper.Namespace,
-		UsedSecureValues: usedSecureValuesList,
+		UsedSecureValues: usedSecureValues,
 	}
 
 	querySecureValueList, err := sqltemplate.Execute(sqlSecureValueListByName, reqSecureValue)
@@ -490,7 +495,7 @@ func (s *keeperMetadataStorage) validateSecureValueReferences(ctx context.Contex
 		// We are guaranteed that the returned `secureValueRows` are a subset of `usedSecureValues`,
 		// so we don't need to check the other way around.
 		missing := make(map[string]struct{}, len(usedSecureValues))
-		for sv := range usedSecureValues {
+		for _, sv := range usedSecureValues {
 			missing[sv] = struct{}{}
 		}
 
@@ -501,76 +506,29 @@ func (s *keeperMetadataStorage) validateSecureValueReferences(ctx context.Contex
 		return contracts.NewErrKeeperInvalidSecureValues(missing)
 	}
 
-	// If all secure values exist, we need to guarantee that the third-party keeper is not referencing another third-party,
-	// it must reference only the system keeper (when keeper=null) to keep the dependency tree flat (n=1).
-	keeperNames := make([]string, 0, len(secureValueRows))
-	keeperSecureValues := make(map[string][]string, 0)
-
+	// Every referenced secure value must use the system keeper to keep the dependency tree flat (n=1).
+	invalidSecureValues := make(map[string]string, 0)
 	for _, svRow := range secureValueRows {
-		// Using the system keeper (null).
-		if svRow.Keeper == nil {
-			continue
+		keeperName := ""
+		if svRow.Keeper != nil {
+			keeperName = *svRow.Keeper
 		}
-
-		keeperNames = append(keeperNames, *svRow.Keeper)
-		keeperSecureValues[*svRow.Keeper] = append(keeperSecureValues[*svRow.Keeper], svRow.Name)
-	}
-
-	// We didn't find any secure values that reference third-party keepers.
-	if len(keeperNames) == 0 {
-		return nil
-	}
-
-	reqKeeper := listByNameKeeper{
-		SQLTemplate: sqltemplate.New(s.dialect),
-		Namespace:   keeper.Namespace,
-		KeeperNames: keeperNames,
-	}
-
-	qKeeper, err := sqltemplate.Execute(sqlKeeperListByName, reqKeeper)
-	if err != nil {
-		return fmt.Errorf("template %q: %w", sqlKeeperListByName.Name(), err)
-	}
-
-	keepersRows, err := s.db.QueryContext(ctx, qKeeper, reqKeeper.GetArgs()...)
-	if err != nil {
-		return fmt.Errorf("listing by name %q: %w", qKeeper, err)
-	}
-	defer func() { _ = keepersRows.Close() }()
-
-	thirdPartyKeepers := make([]string, 0)
-	for keepersRows.Next() {
-		var name string
-		if err := keepersRows.Scan(&name); err != nil {
-			return fmt.Errorf("error reading keeper row: %w", err)
+		if keeperName != contracts.SystemKeeperName {
+			invalidSecureValues[svRow.Name] = keeperName
 		}
-
-		thirdPartyKeepers = append(thirdPartyKeepers, name)
 	}
 
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("third party keeper rows error: %w", err)
-	}
-
-	// Found secureValueNames that are referenced by third-party keepers.
-	if len(thirdPartyKeepers) > 0 {
-		invalidSecureValues := make(map[string]string, 0)
-
-		for _, keeperName := range thirdPartyKeepers {
-			for _, svName := range keeperSecureValues[keeperName] {
-				invalidSecureValues[svName] = keeperName
-			}
-		}
-
+	if len(invalidSecureValues) > 0 {
 		return contracts.NewErrKeeperInvalidSecureValuesReference(invalidSecureValues)
 	}
 
 	return nil
 }
 
-func (s *keeperMetadataStorage) GetKeeperConfig(ctx context.Context, namespace string, name *string, opts contracts.ReadOpts) (_ secretv1beta1.KeeperConfig, getErr error) {
+func (s *keeperMetadataStorage) GetKeeperConfig(ctx context.Context, namespace string, name string, opts contracts.ReadOpts) (_ secretv1beta1.KeeperConfig, getErr error) {
 	ctx, span := s.tracer.Start(ctx, "KeeperMetadataStorage.GetKeeperConfig", trace.WithAttributes(
 		attribute.String("namespace", namespace),
+		attribute.String("name", name),
 		attribute.Bool("isForUpdate", opts.ForUpdate),
 	))
 	start := time.Now()
@@ -581,6 +539,7 @@ func (s *keeperMetadataStorage) GetKeeperConfig(ctx context.Context, namespace s
 
 		args := []any{
 			"namespace", namespace,
+			"name", name,
 			"isForUpdate", strconv.FormatBool(opts.ForUpdate),
 		}
 
@@ -597,20 +556,121 @@ func (s *keeperMetadataStorage) GetKeeperConfig(ctx context.Context, namespace s
 	}()
 
 	// Check if keeper is the systemwide one.
-	if name == nil {
-		return &secretv1beta1.SystemKeeperConfig{}, nil
+	if name == contracts.SystemKeeperName {
+		return secretv1beta1.NewNamedKeeperConfig(contracts.SystemKeeperName, &secretv1beta1.SystemKeeperConfig{}), nil
 	}
 
-	span.SetAttributes(attribute.String("name", *name))
-
 	// Load keeper config from metadata store, or TODO: keeper cache.
-	kp, err := s.read(ctx, namespace, *name, opts)
+	kp, err := s.read(ctx, namespace, name, opts)
 	if err != nil {
 		return nil, err
 	}
 
-	keeperConfig := toProvider(secretv1beta1.KeeperType(kp.Type), kp.Payload)
+	keeperConfig := parseKeeperConfigJson(kp.Name, secretv1beta1.KeeperType(kp.Type), kp.Payload)
 
 	// TODO: this would be a good place to check if credentials are secure values and load them.
 	return keeperConfig, nil
+}
+
+func (s *keeperMetadataStorage) SetAsActive(ctx context.Context, namespace xkube.Namespace, name string) error {
+	req := setKeeperAsActive{
+		SQLTemplate: sqltemplate.New(s.dialect),
+		Namespace:   namespace.String(),
+		Name:        name,
+	}
+
+	query, err := sqltemplate.Execute(sqlKeeperSetAsActive, req)
+	if err != nil {
+		return fmt.Errorf("template %q: %w", sqlKeeperSetAsActive.Name(), err)
+	}
+
+	_, err = s.db.ExecContext(ctx, query, req.GetArgs()...)
+	if err != nil {
+		return fmt.Errorf("setting keeper as active %q: %w", query, err)
+	}
+
+	return nil
+}
+
+func (s *keeperMetadataStorage) GetActiveKeeper(ctx context.Context, namespace string) (keeper *secretv1beta1.Keeper, readErr error) {
+	start := time.Now()
+	ctx, span := s.tracer.Start(ctx, "KeeperMetadataStorage.GetActiveKeeper", trace.WithAttributes(
+		attribute.String("namespace", namespace),
+	))
+	defer span.End()
+
+	defer func() {
+		success := readErr == nil
+
+		args := []any{
+			"namespace", namespace,
+		}
+
+		args = append(args, "success", success)
+		if !success {
+			span.SetStatus(codes.Error, "KeeperMetadataStorage.GetActiveKeeper failed")
+			span.RecordError(readErr)
+			args = append(args, "error", readErr)
+		}
+
+		logging.FromContext(ctx).Info("KeeperMetadataStorage.GetActiveKeeper", args...)
+
+		s.metrics.KeeperMetadataGetDuration.WithLabelValues(strconv.FormatBool(success)).Observe(time.Since(start).Seconds())
+	}()
+
+	req := &readActiveKeeper{
+		SQLTemplate: sqltemplate.New(s.dialect),
+		Namespace:   namespace,
+	}
+
+	query, err := sqltemplate.Execute(sqlKeeperReadActive, req)
+	if err != nil {
+		return nil, fmt.Errorf("execute template %q: %w", sqlKeeperReadActive.Name(), err)
+	}
+
+	res, err := s.db.QueryContext(ctx, query, req.GetArgs()...)
+	if err != nil {
+		return nil, fmt.Errorf("executing query to fetch active keeper in namespace %s: %w", namespace, err)
+	}
+	defer func() { _ = res.Close() }()
+
+	if !res.Next() {
+		return nil, contracts.ErrKeeperNotFound
+	}
+
+	var keeperDB keeperDB
+	err = res.Scan(
+		&keeperDB.GUID, &keeperDB.Name, &keeperDB.Namespace, &keeperDB.Annotations, &keeperDB.Labels, &keeperDB.Created,
+		&keeperDB.CreatedBy, &keeperDB.Updated, &keeperDB.UpdatedBy, &keeperDB.Description, &keeperDB.Type, &keeperDB.Payload,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scan keeper row: %w", err)
+	}
+	if err := res.Err(); err != nil {
+		return nil, fmt.Errorf("read rows error: %w", err)
+	}
+
+	keeper, readErr = keeperDB.toKubernetes()
+	if readErr != nil {
+		return keeper, fmt.Errorf("converting from keeperDB to kubernetes struct: %w", err)
+	}
+
+	if keeperDB.Namespace != namespace {
+		return nil, fmt.Errorf("bug: expected to find keeper to namespace %+v but got one for namespace %+v", namespace, keeperDB.Namespace)
+	}
+
+	return keeper, nil
+}
+
+func (s *keeperMetadataStorage) GetActiveKeeperConfig(ctx context.Context, namespace string) (string, secretv1beta1.KeeperConfig, error) {
+	keeper, err := s.GetActiveKeeper(ctx, namespace)
+	if err != nil {
+		// When there are not active keepers, default to the system keeper
+		if errors.Is(err, contracts.ErrKeeperNotFound) {
+			return contracts.SystemKeeperName, secretv1beta1.NewNamedKeeperConfig(contracts.SystemKeeperName, &secretv1beta1.SystemKeeperConfig{}), nil
+		}
+		return "", nil, fmt.Errorf("fetching active keeper from db: %w", err)
+	}
+
+	return keeper.Name, getKeeperConfig(keeper), nil
 }

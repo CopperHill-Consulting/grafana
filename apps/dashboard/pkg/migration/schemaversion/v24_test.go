@@ -44,6 +44,16 @@ func TestV24TablePanelMigration(t *testing.T) {
 			},
 			description: "V24 migration should not add empty transformations arrays to table panels",
 		},
+		{
+			name: "migrate_table_old_to_table",
+			input: map[string]interface{}{
+				"type": "table-old",
+			},
+			expected: map[string]interface{}{
+				"type": "table",
+			},
+			description: "V24 migration should migrate table-old to table",
+		},
 	}
 
 	for _, tt := range tests {
@@ -82,4 +92,53 @@ func TestV24TablePanelMigration(t *testing.T) {
 			t.Logf("✓ %s: %s", tt.name, tt.description)
 		})
 	}
+}
+
+func TestV24NestedRowPanelMigration(t *testing.T) {
+	tests := []migrationTestCase{
+		{
+			name: "auto-migrates angular table for panels nested in collapsed rows",
+			input: map[string]interface{}{
+				"schemaVersion": 23,
+				"panels": []interface{}{
+					map[string]interface{}{
+						"type":      "row",
+						"collapsed": true,
+						"panels": []interface{}{
+							map[string]interface{}{
+								"type": "table",
+								"styles": []interface{}{
+									map[string]interface{}{
+										"alias": "",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			expected: map[string]interface{}{
+				"schemaVersion": 24,
+				"panels": []interface{}{
+					map[string]interface{}{
+						"type":      "row",
+						"collapsed": true,
+						"panels": []interface{}{
+							map[string]interface{}{
+								"type":            "table",
+								"autoMigrateFrom": "table-old",
+								"styles": []interface{}{
+									map[string]interface{}{
+										"alias": "",
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	runMigrationTests(t, tests, V24)
 }

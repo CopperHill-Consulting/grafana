@@ -5,44 +5,18 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/grafana/grafana/pkg/apimachinery/utils"
+	"github.com/grafana/grafana/pkg/registry/fieldselectors"
 )
 
 const (
 	GROUP      = "iam.grafana.app"
 	VERSION    = "v0alpha1"
 	APIVERSION = GROUP + "/" + VERSION
-)
-
-var CoreRoleInfo = utils.NewResourceInfo(GROUP, VERSION,
-	"coreroles", "corerole", "CoreRole",
-	func() runtime.Object { return &CoreRole{} },
-	func() runtime.Object { return &CoreRoleList{} },
-	utils.TableColumns{
-		Definition: []metav1.TableColumnDefinition{
-			{Name: "Name", Type: "string", Format: "name"},
-			{Name: "Group", Type: "string", Format: "group", Description: "Core role group"},
-			{Name: "Title", Type: "string", Format: "string", Description: "Core role name"},
-			{Name: "Created At", Type: "date"},
-		},
-		Reader: func(obj any) ([]interface{}, error) {
-			core, ok := obj.(*CoreRole)
-			if ok {
-				if core != nil {
-					return []interface{}{
-						core.Name,
-						core.Spec.Group,
-						core.Spec.Title,
-						core.CreationTimestamp.UTC().Format(time.RFC3339),
-					}, nil
-				}
-			}
-			return nil, fmt.Errorf("expected core role")
-		},
-	},
 )
 
 var RoleInfo = utils.NewResourceInfo(GROUP, VERSION,
@@ -69,6 +43,33 @@ var RoleInfo = utils.NewResourceInfo(GROUP, VERSION,
 				}
 			}
 			return nil, fmt.Errorf("expected role")
+		},
+	},
+)
+
+var GlobalRoleInfo = globalRoleInfo.WithClusterScope()
+var globalRoleInfo = utils.NewResourceInfo(GROUP, VERSION,
+	"globalroles", "globalrole", "GlobalRole",
+	func() runtime.Object { return &GlobalRole{} },
+	func() runtime.Object { return &GlobalRoleList{} },
+	utils.TableColumns{
+		Definition: []metav1.TableColumnDefinition{
+			{Name: "Name", Type: "string", Format: "name"},
+			{Name: "Group", Type: "string", Format: "group", Description: "Role group"},
+			{Name: "Title", Type: "string", Format: "string", Description: "Role name"},
+			{Name: "Created At", Type: "date"},
+		},
+		Reader: func(obj any) ([]interface{}, error) {
+			globalRole, ok := obj.(*GlobalRole)
+			if ok {
+				return []interface{}{
+					globalRole.Name,
+					globalRole.Spec.Group,
+					globalRole.Spec.Title,
+					globalRole.CreationTimestamp.UTC().Format(time.RFC3339),
+				}, nil
+			}
+			return nil, fmt.Errorf("expected global role")
 		},
 	},
 )
@@ -205,6 +206,83 @@ var TeamBindingResourceInfo = utils.NewResourceInfo(
 	},
 )
 
+var teamLBACRuleKind = TeamLBACRuleKind()
+var TeamLBACRuleInfo = utils.NewResourceInfo(
+	teamLBACRuleKind.Group(), teamLBACRuleKind.Version(),
+	teamLBACRuleKind.GroupVersionResource().Resource,
+	strings.ToLower(teamLBACRuleKind.Kind()), teamLBACRuleKind.Kind(),
+	func() runtime.Object { return teamLBACRuleKind.ZeroValue() },
+	func() runtime.Object { return teamLBACRuleKind.ZeroListValue() },
+	utils.TableColumns{
+		Definition: []metav1.TableColumnDefinition{
+			{Name: "Name", Type: "string", Format: "name"},
+			{Name: "Datasource Type", Type: "string", Format: "string", Description: "Data source type"},
+			{Name: "Datasource UID", Type: "string", Format: "string", Description: "Data source UID"},
+			{Name: "Created At", Type: "date"},
+		},
+		Reader: func(obj any) ([]interface{}, error) {
+			t, ok := obj.(*TeamLBACRule)
+			if !ok {
+				return nil, fmt.Errorf("expected teamlbacrule")
+			}
+			return []interface{}{
+				t.Name,
+				t.Spec.DatasourceType,
+				t.Spec.DatasourceUid,
+				t.CreationTimestamp.UTC().Format(time.RFC3339),
+			}, nil
+		},
+	},
+)
+
+var ExternalGroupMappingResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
+	"externalgroupmappings", "externalgroupmapping", "ExternalGroupMapping",
+	func() runtime.Object { return &ExternalGroupMapping{} },
+	func() runtime.Object { return &ExternalGroupMappingList{} },
+	utils.TableColumns{
+		Definition: []metav1.TableColumnDefinition{
+			{Name: "Name", Type: "string", Format: "name"},
+			{Name: "Created At", Type: "date"},
+		},
+		Reader: func(obj any) ([]interface{}, error) {
+			mapping, ok := obj.(*ExternalGroupMapping)
+			if ok {
+				if mapping != nil {
+					return []interface{}{
+						mapping.Name,
+						mapping.CreationTimestamp.UTC().Format(time.RFC3339),
+					}, nil
+				}
+			}
+			return nil, fmt.Errorf("expected external group mapping")
+		},
+	},
+)
+
+var RoleBindingInfo = utils.NewResourceInfo(GROUP, VERSION,
+	"rolebindings", "rolebinding", "RoleBinding",
+	func() runtime.Object { return &RoleBinding{} },
+	func() runtime.Object { return &RoleBindingList{} },
+	utils.TableColumns{
+		Definition: []metav1.TableColumnDefinition{
+			{Name: "Name", Type: "string", Format: "name"},
+			{Name: "Created At", Type: "date"},
+		},
+		Reader: func(obj any) ([]interface{}, error) {
+			roleBinding, ok := obj.(*RoleBinding)
+			if ok {
+				if roleBinding != nil {
+					return []interface{}{
+						roleBinding.Name,
+						roleBinding.CreationTimestamp.UTC().Format(time.RFC3339),
+					}, nil
+				}
+			}
+			return nil, fmt.Errorf("expected role binding")
+		},
+	},
+)
+
 var (
 	SchemeBuilder      runtime.SchemeBuilder
 	localSchemeBuilder = &SchemeBuilder
@@ -233,10 +311,22 @@ func init() {
 
 func AddAuthZKnownTypes(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(SchemeGroupVersion,
-		&CoreRole{},
-		&CoreRoleList{},
 		&Role{},
 		&RoleList{},
+		&RoleBinding{},
+		&RoleBindingList{},
+
+		// What is this about?
+		&metav1.PartialObjectMetadata{},
+		&metav1.PartialObjectMetadataList{},
+	)
+	return nil
+}
+
+func AddTeamLBACRuleTypes(scheme *runtime.Scheme) error {
+	scheme.AddKnownTypes(SchemeGroupVersion,
+		&TeamLBACRule{},
+		&TeamLBACRuleList{},
 
 		// What is this about?
 		&metav1.PartialObjectMetadata{},
@@ -249,10 +339,19 @@ func AddResourcePermissionKnownTypes(scheme *runtime.Scheme, version schema.Grou
 	scheme.AddKnownTypes(version,
 		&ResourcePermission{},
 		&ResourcePermissionList{},
+		&PermissionsSearchResult{},
 
 		// What is this about?
 		&metav1.PartialObjectMetadata{},
 		&metav1.PartialObjectMetadataList{},
+	)
+	return nil
+}
+
+func AddGlobalRoleKnownTypes(scheme *runtime.Scheme) error {
+	scheme.AddKnownTypes(SchemeGroupVersion,
+		&GlobalRole{},
+		&GlobalRoleList{},
 	)
 	return nil
 }
@@ -266,19 +365,47 @@ func AddAuthNKnownTypes(scheme *runtime.Scheme) error {
 		&ServiceAccountList{},
 		&Team{},
 		&TeamList{},
+		&GetSearchTeamsResponse{},
 		&TeamBinding{},
 		&TeamBindingList{},
+		&ExternalGroupMapping{},
+		&ExternalGroupMappingList{},
+		&GetTeamGroupsResponse{},
+		&GetTeamMembersResponse{},
+		&CreateTeamMemberResponse{},
+		&DeleteTeamMemberResponse{},
+		&GetUserTeamsResponse{},
+		&ListServiceAccountTokensResponse{},
+		&GetServiceAccountTokenResponse{},
+		&CreateServiceAccountTokenResponse{},
+		&DeleteServiceAccountTokenResponse{},
 		// For now these are registered in pkg/apis/iam/v0alpha1/register.go
 		// &UserTeamList{},
-		// &ServiceAccountTokenList{},
 		// &DisplayList{},
 		// &SSOSetting{},
 		// &SSOSettingList{},
-		// &TeamMemberList{},
 
 		&metav1.PartialObjectMetadata{},
 		&metav1.PartialObjectMetadataList{},
 	)
+
+	// Enable field selectors for TeamBinding
+	err := fieldselectors.AddSelectableFieldLabelConversions(scheme, SchemeGroupVersion, TeamBindingKind())
+	if err != nil {
+		return err
+	}
+
+	// Enable field selectors for ExternalGroupMapping
+	err = fieldselectors.AddSelectableFieldLabelConversions(scheme, SchemeGroupVersion, ExternalGroupMappingKind())
+	if err != nil {
+		return err
+	}
+
+	// Enable field selectors for User
+	err = fieldselectors.AddSelectableFieldLabelConversions(scheme, SchemeGroupVersion, UserKind())
+	if err != nil {
+		return err
+	}
 	return nil
 }
 

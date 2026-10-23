@@ -4,36 +4,48 @@ import { Trans, t } from '@grafana/i18n';
 import { Spinner, Stack, Text } from '@grafana/ui';
 import { useGetRepositoryJobsWithPathQuery } from 'app/api/clients/provisioning/v0alpha1';
 
-import { StepStatusInfo } from '../Wizard/types';
+import { type StepStatusInfo } from '../Wizard/types';
+import { type JobType } from '../types';
 
 import { JobContent } from './JobContent';
+import { getJobMessages } from './getJobMessage';
+
+const MAX_FINISHED_JOB_RETRIES = 5;
+const RETRY_DELAY_MS = 1000;
 
 export interface FinishedJobProps {
   jobUid: string;
   repositoryName: string;
-  jobType: 'sync' | 'delete' | 'move';
+  jobType: JobType;
   onStatusChange?: (statusInfo: StepStatusInfo) => void;
+  onRetry?: () => void;
 }
 
-export function FinishedJobStatus({ jobUid, repositoryName, jobType, onStatusChange }: FinishedJobProps) {
-  const hasRetried = useRef(false);
+export function FinishedJobStatus({ jobUid, repositoryName, jobType, onStatusChange, onRetry }: FinishedJobProps) {
+  const retryCount = useRef(0);
+  const pendingRetry = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const finishedQuery = useGetRepositoryJobsWithPathQuery({
     name: repositoryName,
     uid: jobUid,
   });
-  const retryFailed = hasRetried.current && finishedQuery.isError;
+  const retryFailed =
+    retryCount.current >= MAX_FINISHED_JOB_RETRIES &&
+    !pendingRetry.current &&
+    !finishedQuery.isFetching &&
+    finishedQuery.isError;
 
   const job = finishedQuery.data;
 
   useEffect(() => {
-    const shouldRetry = !job && !hasRetried.current && !finishedQuery.isFetching;
-    let timeoutId: ReturnType<typeof setTimeout>;
+    const shouldRetry =
+      !job && !finishedQuery.isFetching && !pendingRetry.current && retryCount.current < MAX_FINISHED_JOB_RETRIES;
 
     if (shouldRetry) {
-      hasRetried.current = true;
-      timeoutId = setTimeout(() => {
+      retryCount.current += 1;
+      pendingRetry.current = setTimeout(() => {
+        pendingRetry.current = undefined;
         finishedQuery.refetch();
-      }, 1000);
+      }, RETRY_DELAY_MS);
     }
 
     if (retryFailed) {
@@ -51,14 +63,26 @@ export function FinishedJobStatus({ jobUid, repositoryName, jobType, onStatusCha
     }
 
     if (finishedQuery.isSuccess && job?.status) {
-      const { state, message, errors } = job.status;
+      const { state } = job.status;
+      const messages = getJobMessages(job.status);
 
       if (state === 'error') {
+        const warningInfo = messages.warning
+          ? {
+              title: t('provisioning.job-status.status.title-warning-running-job', 'Job completed with warnings'),
+              message: messages.warning,
+            }
+          : undefined;
         onStatusChange?.({
           status: 'error',
           error: {
             title: t('provisioning.job-status.status.title-error-running-job', 'Error running job'),
-            message: errors?.length ? errors : message,
+            message: messages.error,
+          },
+          warning: warningInfo,
+          action: onRetry && {
+            label: t('provisioning.job-status.retry-action', 'Retry'),
+            onClick: onRetry,
           },
         });
       } else if (state === 'success') {
@@ -73,18 +97,27 @@ export function FinishedJobStatus({ jobUid, repositoryName, jobType, onStatusCha
           status: 'warning',
           warning: {
             title: t('provisioning.job-status.status.title-warning-running-job', 'Job completed with warnings'),
-            message: errors?.length ? errors : message,
+            message: messages.warning,
           },
         });
       }
     }
+  }, [finishedQuery, job, onStatusChange, onRetry, retryFailed]);
 
+  // Clear a scheduled retry only on unmount; clearing in the main effect's cleanup
+  // would cancel a pending retry on every re-render of the watched (now-empty) list.
+  useEffect(() => {
     return () => {
-      if (timeoutId) {
-        clearTimeout(timeoutId);
+      if (pendingRetry.current) {
+        clearTimeout(pendingRetry.current);
       }
     };
-  }, [finishedQuery, job, onStatusChange, retryFailed]);
+  }, []);
+
+  // If retry failed, return null - parent handles the error via onStatusChange
+  if (retryFailed) {
+    return null;
+  }
 
   if (!job || finishedQuery.isLoading || finishedQuery.isFetching) {
     return (
@@ -97,5 +130,7 @@ export function FinishedJobStatus({ jobUid, repositoryName, jobType, onStatusCha
     );
   }
 
-  return <JobContent job={job} isFinishedJob={true} onStatusChange={onStatusChange} jobType={jobType} />;
+  return (
+    <JobContent job={job} isFinishedJob={true} onStatusChange={onStatusChange} jobType={jobType} onRetry={onRetry} />
+  );
 }

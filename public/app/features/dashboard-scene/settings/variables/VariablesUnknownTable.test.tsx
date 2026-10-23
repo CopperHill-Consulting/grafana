@@ -5,13 +5,9 @@ import * as runtime from '@grafana/runtime';
 import { TestVariable } from '@grafana/scenes';
 
 import * as utils from '../../variables/utils';
-import { UsagesToNetwork } from '../../variables/utils';
+import { type UsagesToNetwork } from '../../variables/utils';
 
-import {
-  SLOW_VARIABLES_EXPANSION_THRESHOLD,
-  VariablesUnknownTable,
-  VariablesUnknownTableProps,
-} from './VariablesUnknownTable';
+import { VariablesUnknownTable, type VariablesUnknownTableProps } from './VariablesUnknownTable';
 
 async function getTestContext(
   overrides: Partial<VariablesUnknownTableProps> | undefined = {},
@@ -26,9 +22,7 @@ async function getTestContext(
   };
   const props = { ...defaults, ...overrides };
   const { rerender } = render(<VariablesUnknownTable {...props} />);
-  await waitFor(() =>
-    expect(screen.getByRole('heading', { name: /renamed or missing variables/i })).toBeInTheDocument()
-  );
+  await waitFor(() => expect(screen.getByLabelText('Renamed or missing variables')).toBeInTheDocument());
 
   return { reportInteractionSpy, getUnknownsNetworkSpy, rerender };
 }
@@ -44,14 +38,14 @@ describe('VariablesUnknownTable', () => {
     it('then it should call getUnknownsNetwork', async () => {
       const { getUnknownsNetworkSpy } = await getTestContext();
 
-      await userEvent.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
+      await userEvent.click(screen.getByLabelText('Renamed or missing variables'));
       await waitFor(() => expect(getUnknownsNetworkSpy).toHaveBeenCalledTimes(1));
     });
 
     it('then it should report the interaction', async () => {
       const { reportInteractionSpy } = await getTestContext();
 
-      await userEvent.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
+      await userEvent.click(screen.getByLabelText('Renamed or missing variables'));
 
       expect(reportInteractionSpy).toHaveBeenCalledTimes(1);
       expect(reportInteractionSpy).toHaveBeenCalledWith('Unknown variables section expanded');
@@ -61,14 +55,14 @@ describe('VariablesUnknownTable', () => {
       it('then it should not call getUnknownsNetwork', async () => {
         const { getUnknownsNetworkSpy } = await getTestContext();
 
-        await userEvent.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
+        await userEvent.click(screen.getByLabelText('Renamed or missing variables'));
         await waitFor(() => expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true'));
         expect(getUnknownsNetworkSpy).toHaveBeenCalledTimes(1);
 
-        await userEvent.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
+        await userEvent.click(screen.getByLabelText('Renamed or missing variables'));
         await waitFor(() => expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'false'));
 
-        await userEvent.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
+        await userEvent.click(screen.getByLabelText('Renamed or missing variables'));
         await waitFor(() => expect(screen.getByRole('button')).toHaveAttribute('aria-expanded', 'true'));
 
         expect(getUnknownsNetworkSpy).toHaveBeenCalledTimes(1);
@@ -79,7 +73,7 @@ describe('VariablesUnknownTable', () => {
       it('then it should render the correct message', async () => {
         await getTestContext();
 
-        await userEvent.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
+        await userEvent.click(screen.getByLabelText('Renamed or missing variables'));
 
         expect(screen.getByText('No renamed or missing variables found.')).toBeInTheDocument();
       });
@@ -89,62 +83,13 @@ describe('VariablesUnknownTable', () => {
       it('then it should render the table', async () => {
         const variable = new TestVariable({ name: 'Renamed Variable', query: 'A.*', value: '', text: '', options: [] });
         const usages = [{ variable, nodes: [], edges: [], showGraph: false }];
-        const { reportInteractionSpy } = await getTestContext({}, usages);
+        await getTestContext({}, usages);
 
-        await userEvent.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
+        await userEvent.click(screen.getByLabelText('Renamed or missing variables'));
 
         expect(screen.queryByText('No renamed or missing variables found.')).not.toBeInTheDocument();
         expect(screen.getByText('Renamed Variable')).toBeInTheDocument();
         expect(screen.getByLabelText('Show usages')).toBeInTheDocument();
-
-        // make sure we don't report the interaction for slow expansion
-        expect(reportInteractionSpy).toHaveBeenCalledTimes(1);
-        expect(reportInteractionSpy).toHaveBeenCalledWith('Unknown variables section expanded');
-      });
-
-      describe('but when the unknown processing takes a while', () => {
-        let user: ReturnType<typeof userEvent.setup>;
-
-        beforeEach(() => {
-          jest.useFakeTimers();
-          // Need to use delay: null here to work with fakeTimers
-          // see https://github.com/testing-library/user-event/issues/833
-          user = userEvent.setup({ delay: null });
-        });
-
-        afterEach(() => {
-          jest.useRealTimers();
-        });
-
-        it('then it should report slow expansion', async () => {
-          const variable = new TestVariable({
-            name: 'Renamed Variable',
-            query: 'A.*',
-            value: '',
-            text: '',
-            options: [],
-          });
-          const usages = [{ variable, nodes: [], edges: [], showGraph: false }];
-          const { getUnknownsNetworkSpy, reportInteractionSpy } = await getTestContext({}, usages);
-          getUnknownsNetworkSpy.mockImplementation(() => {
-            return new Promise((resolve) => {
-              setTimeout(() => {
-                resolve(usages);
-              }, SLOW_VARIABLES_EXPANSION_THRESHOLD);
-            });
-          });
-
-          await user.click(screen.getByRole('heading', { name: /renamed or missing variables/i }));
-
-          jest.advanceTimersByTime(SLOW_VARIABLES_EXPANSION_THRESHOLD);
-
-          // make sure we report the interaction for slow expansion
-          await waitFor(() =>
-            expect(reportInteractionSpy).toHaveBeenCalledWith('Slow unknown variables expansion', {
-              elapsed: expect.any(Number),
-            })
-          );
-        });
       });
     });
   });

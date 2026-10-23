@@ -1,18 +1,15 @@
-import { EntityState } from '@reduxjs/toolkit';
+import { type EntityState } from '@reduxjs/toolkit';
 
 import {
-  PluginType,
-  PluginSignatureStatus,
-  PluginSignatureType,
-  PluginDependencies,
-  PluginErrorCode,
-  WithAccessControlMetadata,
+  type PluginType,
+  type PluginSignatureStatus,
+  type PluginSignatureType,
+  type PluginDependencies,
+  type PluginErrorCode,
+  type WithAccessControlMetadata,
 } from '@grafana/data';
-import { IconName } from '@grafana/ui';
-import { PluginsState } from 'app/types/plugins';
-import { StoreState } from 'app/types/store';
-
-export type PluginTypeCode = 'app' | 'panel' | 'datasource';
+import { type PluginsState } from 'app/types/plugins';
+import { type StoreState } from 'app/types/store';
 
 export enum PluginAdminRoutes {
   Home = 'plugins-home',
@@ -39,7 +36,6 @@ export interface CatalogPlugin extends WithAccessControlMetadata {
   isInstalled: boolean;
   isDisabled: boolean;
   isDeprecated: boolean;
-  isManaged: boolean; // Indicates that the plugin version is managed by Grafana
   isPreinstalled: { found: boolean; withVersion: boolean }; // Indicates that the plugin is pre-installed
   // `isPublished` is TRUE if the plugin is published to grafana.com
   isPublished: boolean;
@@ -55,6 +51,7 @@ export interface CatalogPlugin extends WithAccessControlMetadata {
   updatedAt: string;
   installedVersion?: string;
   details?: CatalogPluginDetails;
+  insights?: CatalogPluginInsights;
   error?: PluginErrorCode;
   angularDetected?: boolean;
   // instance plugins may not be fully installed, which means a new instance
@@ -65,6 +62,12 @@ export interface CatalogPlugin extends WithAccessControlMetadata {
   iam?: IdentityAccessManagement;
   isProvisioned?: boolean;
   url?: string;
+  managed: {
+    enabled: boolean;
+    strategy?: PluginUpdateStrategy;
+  };
+  category?: string;
+  distributionType?: string;
 }
 export interface Screenshots {
   path: string;
@@ -90,7 +93,41 @@ export interface CatalogPluginDetails {
   screenshots?: Screenshots[] | null;
 }
 
-export interface CatalogPluginInfo {
+export type InsightLevel = 'ok' | 'warning' | 'danger' | 'good' | 'info';
+
+export const SCORE_LEVELS = {
+  EXCELLENT: 'Excellent',
+  GOOD: 'Good',
+  FAIR: 'Fair',
+  POOR: 'Poor',
+  CRITICAL: 'Critical',
+} as const;
+
+type ScoreLevel = (typeof SCORE_LEVELS)[keyof typeof SCORE_LEVELS];
+
+interface InsightItem {
+  id: string;
+  name: string;
+  description?: string;
+  level: InsightLevel;
+  link?: string;
+}
+
+interface InsightCategory {
+  name: string;
+  items: InsightItem[];
+  scoreValue: number;
+  scoreLevel: ScoreLevel;
+}
+
+export interface CatalogPluginInsights {
+  id: number;
+  name: string;
+  version: string;
+  insights: InsightCategory[];
+}
+
+interface CatalogPluginInfo {
   logos: { large: string; small: string };
   keywords: string[];
 }
@@ -141,7 +178,18 @@ export type RemotePlugin = {
   sponsorshipUrl?: string;
   repositoryUrl?: string;
   raiseAnIssueUrl?: string;
+  managed: {
+    enabled: boolean;
+    strategy?: PluginUpdateStrategy;
+  };
+  category?: string;
+  versionDistributionType?: string;
 };
+
+export enum PluginUpdateStrategy {
+  MajorAligned = 'major-aligned',
+  Assigned = 'assigned',
+}
 
 // The available status codes on GCOM are available here:
 // https://github.com/grafana/grafana-com/blob/main/packages/grafana-com-plugins-api/src/plugins/plugin.model.js#L74
@@ -154,7 +202,6 @@ export enum RemotePluginStatus {
 }
 
 export type LocalPlugin = WithAccessControlMetadata & {
-  category: string;
   defaultNavUrl: string;
   dev?: boolean;
   enabled: boolean;
@@ -182,6 +229,7 @@ export type LocalPlugin = WithAccessControlMetadata & {
   dependencies: PluginDependencies;
   angularDetected: boolean;
   iam?: IdentityAccessManagement;
+  category?: string;
 };
 
 interface IdentityAccessManagement {
@@ -198,7 +246,7 @@ interface Rel {
   url: string;
 }
 
-export interface Build {
+interface Build {
   time?: number;
   repo?: string;
   branch?: string;
@@ -212,25 +260,8 @@ export interface Version {
   isCompatible: boolean;
   grafanaDependency: string | null;
   angularDetected?: boolean;
+  status?: string; // Status of the version: 'active', 'deprecated'
 }
-
-export interface PluginDetails {
-  remote?: RemotePlugin;
-  remoteVersions?: Version[];
-  local?: LocalPlugin;
-}
-
-export interface Org {
-  slug: string;
-  name: string;
-  url: string;
-  createdAt: string;
-  updatedAt: string;
-  avatar: string;
-  avatarUrl: string;
-}
-
-export type CatalogPluginsState = { loading: boolean; error?: Error; plugins: CatalogPlugin[] };
 
 export enum PluginStatus {
   INSTALL = 'INSTALL',
@@ -271,21 +302,13 @@ export enum RequestStatus {
   Fulfilled = 'Fulfilled',
   Rejected = 'Rejected',
 }
-export type RemotePluginResponse = { plugins: RemotePlugin[]; error?: Error };
 
-export type RequestInfo = {
+type RequestInfo = {
   status: RequestStatus;
   // The whole error object
   error?: any;
   // An optional error message
   errorMessage?: string;
-};
-
-export type PluginDetailsTab = {
-  label: PluginTabLabels | string;
-  icon?: IconName;
-  id: PluginTabIds | string;
-  href?: string;
 };
 
 // TODO<remove `PluginsState &` when the "plugin_admin_enabled" feature flag is removed>

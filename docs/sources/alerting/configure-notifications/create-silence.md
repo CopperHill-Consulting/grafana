@@ -22,42 +22,6 @@ labels:
     - oss
 title: Configure silences
 weight: 440
-refs:
-  configure-alertmanager:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/set-up/configure-alertmanager/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/set-up/configure-alertmanager/
-  silence-url:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/reference/#alert
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/template-notifications/reference/#alert
-  shared-alert-labels:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/alert-rules/annotation-label/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/fundamentals/alert-rules/annotation-label/
-  shared-notification-policies:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/notifications/notification-policies/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/fundamentals/notifications/notification-policies/
-  shared-silences:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/create-silence/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/create-silence/
-  shared-mute-timings:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/mute-timings/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/mute-timings/
-  alertmanager-architecture:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/set-up/configure-alertmanager/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/set-up/configure-alertmanager/
 ---
 
 # Configure silences
@@ -65,12 +29,14 @@ refs:
 Silences stop notifications from being created for a specified time window but do not interrupt alert evaluation. Use them to temporarily prevent alert notifications, such as during incident response or a maintenance window.
 
 {{< admonition type="note" >}}
-Silences are assigned to a [specific Alertmanager](ref:alertmanager-architecture) and only suppress notifications for alerts managed by that Alertmanager.
+Silences are assigned to a [specific Alertmanager](/docs/grafana/<GRAFANA_VERSION>/alerting/set-up/configure-alertmanager/) and only suppress notifications for alerts managed by that Alertmanager.
+
+In Grafana Cloud, the standalone Alertmanager UI is deprecated and no longer available. Manage silences here in the Grafana Alerting UI instead. For details, refer to [Configure Alertmanagers](/docs/grafana/<GRAFANA_VERSION>/alerting/set-up/configure-alertmanager/).
 {{< /admonition >}}
 
-## Mute and active timings vs silences
+## Mute timings and active time intervals vs silences
 
-[Mute and active timings](ref:shared-mute-timings) and [silences](ref:shared-silences) are distinct methods to suppress notifications. They do not prevent alert rules from being evaluated or stop alert instances from appearing in the user interface; they only prevent notifications from being created.
+[Mute timings and active time intervals](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/mute-timings/) and [silences](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/create-silence/) are distinct methods to suppress notifications. They do not prevent alert rules from being evaluated or stop alert instances from appearing in the user interface; they only prevent notifications from being created.
 
 The following table highlights the key differences between mute timings and silences.
 
@@ -95,7 +61,7 @@ To add a silence, complete the following steps.
 
    {{< collapse title="How label matching works" >}}
 
-Use [labels](ref:shared-alert-labels) and label matchers to link alert rules to [notification policies](ref:shared-notification-policies) and [silences](ref:shared-silences). This allows for a flexible way to manage your alert instances, specify which policy should handle them, and which alerts to silence.
+Use [labels](/docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/alert-rules/annotation-label/) and label matchers to link alert rules to [notification policies](/docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/notifications/notification-policies/) and [silences](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/create-silence/). This allows for a flexible way to manage your alert instances, specify which policy should handle them, and which alerts to silence.
 
 A label matchers consists of 3 distinct parts, the **label**, the **value** and the **operator**.
 
@@ -168,7 +134,22 @@ To remove a silence, complete the following steps.
 1. Click **Silences** to view the list of existing silences.
 1. Select the silence you want to end, then click **Unsilence**.
 
-> **Note:** You cannot remove a silence manually. Silences that have ended are retained and listed for five days.
+{{< admonition type="note" >}}
+Clicking **Unsilence** ends the silence immediately, which is the only way to end a silence before its configured end time. Silences cannot be permanently deleted manually.
+{{< /admonition >}}
+
+## Silence duration and retention
+
+**Duration limits**
+
+There is no maximum duration for a silence. You can create a silence for any length of time. However, administrators can configure the following limits:
+
+- `alertmanager_max_silences_count`: Maximum number of active and pending silences per tenant (default: 0, no limit), expired silences are also counted.
+- `alertmanager_max_silence_size_bytes`: Maximum size of a silence in bytes (default: 0, no limit).
+
+**Expired silence retention**
+
+Expired silences are automatically deleted after 5 days. This retention period is not configurable. The cleanup process runs automatically every 15 minutes to remove expired silences that are older than the retention period.
 
 ## Rule-specific silences
 
@@ -180,9 +161,9 @@ As opposed to general silences, rule-specific silence access is tied directly to
 
 Default notification messages often include a link to silence alerts.
 
-In custom notification templates, you can use [`.Alert.SilenceURL`](ref:silence-url) to redirect users to the UI where they can silence the given alert.
+In custom notification templates, you can use [`.Alert.SilenceURL`](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/reference/#alert) to redirect users to the UI where they can silence the given alert.
 
-If [`.Alert.SilenceURL`](ref:silence-url) doesn’t fit your specific use case, you can also create a custom silence link for your custom templates.
+If [`.Alert.SilenceURL`](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/reference/#alert) doesn’t fit your specific use case, you can also create a custom silence link for your custom templates.
 
 {{< collapse title="Create a custom silence link" >}}
 
@@ -196,6 +177,4 @@ To link to a new silence page for an external Alertmanager, add a `alertmanager`
 
 ## Inhibition rules
 
-Inhibition rules are supported in the Prometheus Alertmanager. You can [configure a Prometheus Alertmanager](ref:configure-alertmanager) to handle the notification of alerts and suppress notifications via inhibition rules.
-
-Inhibition rules are not currently supported in the Grafana Alertmanager. For tracking the progress of this feature request, follow [this GitHub issue](https://github.com/grafana/grafana/issues/68822).
+Inhibition rules suppress notifications for target alerts when a related source alert is already firing. For more information, refer to [Configure inhibition rules](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/inhibition-rules/).

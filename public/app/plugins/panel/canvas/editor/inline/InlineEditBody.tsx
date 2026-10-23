@@ -1,10 +1,16 @@
 import { css } from '@emotion/css';
 import { get as lodashGet } from 'lodash';
 import { useMemo, useState } from 'react';
-import { useObservable } from 'react-use';
 
-import { DataFrame, GrafanaTheme2, PanelOptionsEditorBuilder, StandardEditorContext } from '@grafana/data';
-import { NestedValueAccess, PanelOptionsSupplier } from '@grafana/data/internal';
+import {
+  type DataFrame,
+  type GrafanaTheme2,
+  type NestedValueAccess,
+  type PanelOptionsEditorBuilder,
+  type PanelOptionsSupplier,
+  type StandardEditorContext,
+} from '@grafana/data';
+import { useObservable } from '@grafana/data/unstable';
 import { Trans, t } from '@grafana/i18n';
 import { useStyles2 } from '@grafana/ui';
 import { AddLayerButton } from 'app/core/components/Layers/AddLayerButton';
@@ -14,9 +20,9 @@ import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components
 import { fillOptionsPaneItems } from 'app/features/dashboard/components/PanelEditor/getVisualizationOptions';
 import { setOptionImmutably } from 'app/features/dashboard/components/PanelEditor/utils';
 
-import { activePanelSubject, InstanceState } from '../../CanvasPanel';
+import { activePanelSubject, type InstanceState } from '../../CanvasPanel';
 import { addStandardCanvasEditorOptions } from '../../module';
-import { Options } from '../../panelcfg.gen';
+import { type Options } from '../../panelcfg.gen';
 import { InlineEditTabs } from '../../types';
 import { getElementTypes, onAddItem } from '../../utils';
 import { getConnectionEditor } from '../connectionEditor';
@@ -106,7 +112,7 @@ export function InlineEditBody() {
 
   return (
     <>
-      <div style={topLevelItemsContainerStyle}>{pane.items.map((item) => item.render())}</div>
+      <div style={topLevelItemsContainerStyle}>{pane.items.map((item) => item.renderElement())}</div>
       <div style={topLevelItemsContainerStyle}>
         <AddLayerButton
           onChange={(sel) => onAddItem(sel, rootLayer)}
@@ -131,7 +137,7 @@ export function InlineEditBody() {
 function renderOptionsPaneCategoryDescriptor(pane: OptionsPaneCategoryDescriptor) {
   return (
     <OptionsPaneCategory {...pane.props} key={pane.props.id}>
-      <div>{pane.items.map((v) => v.render())}</div>
+      <div>{pane.items.map((v) => v.renderElement())}</div>
       {pane.categories.map((c) => renderOptionsPaneCategoryDescriptor(c))}
     </OptionsPaneCategory>
   );

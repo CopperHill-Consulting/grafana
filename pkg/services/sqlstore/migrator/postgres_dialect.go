@@ -121,7 +121,7 @@ func (db *PostgresDialect) DropIndexSQL(tableName string, index *Index) string {
 }
 
 func (db *PostgresDialect) UpdateTableSQL(tableName string, columns []*Column) string {
-	var statements = []string{}
+	statements := make([]string, 0, len(columns))
 
 	for _, col := range columns {
 		statements = append(statements, "ALTER "+db.Quote(col.Name)+" TYPE "+db.SQLType(col))
@@ -294,6 +294,10 @@ func (db *PostgresDialect) UpsertMultipleSQL(tableName string, keyCols, updateCo
 	return s, nil
 }
 
+func (db *PostgresDialect) SupportsAdvisoryLocks() bool {
+	return true
+}
+
 func (db *PostgresDialect) Lock(cfg LockCfg) error {
 	// trying to obtain the lock for a resource identified by a 64-bit or 32-bit key value
 	// the lock is exclusive: multiple lock requests stack, so that if the same resource is locked three times
@@ -346,7 +350,7 @@ func (db *PostgresDialect) Unlock(cfg LockCfg) error {
 
 func (db *PostgresDialect) GetDBName(dsn string) (string, error) {
 	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
-		parsedDSN, err := pq.ParseURL(dsn)
+		parsedDSN, err := pq.ParseURL(dsn) // nolint:staticcheck
 		if err != nil {
 			return "", err
 		}

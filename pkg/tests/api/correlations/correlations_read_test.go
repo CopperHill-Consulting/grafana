@@ -109,7 +109,7 @@ func TestIntegrationReadCorrelation(t *testing.T) {
 	var created int64 = 0
 	err := ctx.env.SQLStore.WithDbSession(context.Background(), func(sess *db.Session) error {
 		var innerError error
-		created, innerError = sess.InsertMulti(&[]correlations.Correlation{
+		created, innerError = sess.Omit("source_type", "target_type").InsertMulti(&[]correlations.Correlation{
 			{
 				UID:       "uid-1",
 				SourceUID: dsWithoutCorrelations.UID,
@@ -172,6 +172,7 @@ func TestIntegrationReadCorrelation(t *testing.T) {
 
 			require.Len(t, response.Correlations, 1)
 			require.EqualValues(t, correlation, response.Correlations[0])
+			require.EqualValues(t, response.TotalCount, 1)
 
 			require.NoError(t, res.Body.Close())
 		})
@@ -191,6 +192,7 @@ func TestIntegrationReadCorrelation(t *testing.T) {
 			require.NoError(t, err)
 
 			require.Len(t, response.Correlations, 0)
+			require.EqualValues(t, response.TotalCount, 0)
 
 			require.NoError(t, res.Body.Close())
 		})

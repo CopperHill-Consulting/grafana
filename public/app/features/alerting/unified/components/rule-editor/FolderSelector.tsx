@@ -1,11 +1,12 @@
 import { useCallback } from 'react';
 import { Controller, useFormContext } from 'react-hook-form';
 
+import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import { Field, Label, Stack } from '@grafana/ui';
-import { NestedFolderPicker } from 'app/core/components/NestedFolderPicker/NestedFolderPicker';
+import { ProvisioningAwareFolderPicker } from 'app/features/provisioning/components/Shared/ProvisioningAwareFolderPicker';
 
-import { Folder, RuleFormValues } from '../../types/rule-form';
+import { type Folder, type RuleFormValues } from '../../types/rule-form';
 import { CreateNewFolder } from '../create-folder/CreateNewFolder';
 
 export function FolderSelector() {
@@ -42,15 +43,16 @@ export function FolderSelector() {
             </Label>
           }
           error={errors.folder?.message}
-          data-testid="folder-picker"
+          data-testid={selectors.components.AlertRules.folderPicker}
         >
           <Stack direction="row" alignItems="center">
             <Controller
               render={({ field: { ref, ...field } }) => (
                 <div style={{ width: 420 }}>
-                  <NestedFolderPicker
+                  <ProvisioningAwareFolderPicker
                     permission="view"
                     showRootFolder={false}
+                    repositoryName={undefined}
                     invalid={!!errors.folder?.message}
                     {...field}
                     value={folder?.uid}

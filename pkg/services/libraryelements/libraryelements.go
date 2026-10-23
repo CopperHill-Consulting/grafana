@@ -30,20 +30,24 @@ func ProvideService(cfg *setting.Cfg, sqlStore db.DB, routeRegister routing.Rout
 		AccessControl:     ac,
 		k8sHandler:        newLibraryElementsK8sHandler(cfg, clientConfigProvider, folderService, userService, dashboardsService),
 	}
+	//nolint:staticcheck // not yet migrated to OpenFeature
+	l.treeCache = newFolderTreeCache(folderService, features != nil && features.IsEnabledGlobally(featuremgmt.FlagLibraryElementsFolderTreeViaSearch))
 
-	l.registerAPIEndpoints()
-	ac.RegisterScopeAttributeResolver(LibraryPanelUIDScopeResolver(l, l.folderService))
-
+	if routeRegister != nil {
+		l.registerAPIEndpoints()
+	}
+	if folderService != nil {
+		ac.RegisterScopeAttributeResolver(LibraryPanelUIDScopeResolver(l, l.folderService))
+	}
 	return l
 }
 
 // Service is a service for operating on library elements.
 type Service interface {
 	CreateElement(c context.Context, signedInUser identity.Requester, cmd model.CreateLibraryElementCommand) (model.LibraryElementDTO, error)
+	PatchLibraryElement(c context.Context, signedInUser identity.Requester, cmd model.PatchLibraryElementCommand, uid string) (model.LibraryElementDTO, error)
+	DeleteLibraryElement(c context.Context, signedInUser identity.Requester, uid string) (int64, error)
 	GetElement(c context.Context, signedInUser identity.Requester, cmd model.GetLibraryElementCommand) (model.LibraryElementDTO, error)
-	GetElementsForDashboard(c context.Context, dashboardID int64) (map[string]model.LibraryElementDTO, error)
-	ConnectElementsToDashboard(c context.Context, signedInUser identity.Requester, elementUIDs []string, dashboardID int64) error
-	DisconnectElementsFromDashboard(c context.Context, dashboardID int64) error
 	DeleteLibraryElementsInFolder(c context.Context, signedInUser identity.Requester, folderUID string) error
 	GetAllElements(c context.Context, signedInUser identity.Requester, query model.SearchLibraryElementsQuery) (model.LibraryElementSearchResult, error)
 }
@@ -59,33 +63,14 @@ type LibraryElementService struct {
 	features          featuremgmt.FeatureToggles
 	AccessControl     accesscontrol.AccessControl
 	k8sHandler        *libraryElementsK8sHandler
+	treeCache         *folderTreeCache
 }
 
 var _ Service = (*LibraryElementService)(nil)
 
-// CreateElement creates a Library Element.
-func (l *LibraryElementService) CreateElement(c context.Context, signedInUser identity.Requester, cmd model.CreateLibraryElementCommand) (model.LibraryElementDTO, error) {
-	return l.createLibraryElement(c, signedInUser, cmd)
-}
-
 // GetElement gets an element from a UID.
 func (l *LibraryElementService) GetElement(c context.Context, signedInUser identity.Requester, cmd model.GetLibraryElementCommand) (model.LibraryElementDTO, error) {
-	return l.getLibraryElementByUid(c, signedInUser, cmd)
-}
-
-// GetElementsForDashboard gets all connected elements for a specific dashboard.
-func (l *LibraryElementService) GetElementsForDashboard(c context.Context, dashboardID int64) (map[string]model.LibraryElementDTO, error) {
-	return l.getElementsForDashboardID(c, dashboardID)
-}
-
-// ConnectElementsToDashboard connects elements to a specific dashboard.
-func (l *LibraryElementService) ConnectElementsToDashboard(c context.Context, signedInUser identity.Requester, elementUIDs []string, dashboardID int64) error {
-	return l.connectElementsToDashboardID(c, signedInUser, elementUIDs, dashboardID)
-}
-
-// DisconnectElementsFromDashboard disconnects elements from a specific dashboard.
-func (l *LibraryElementService) DisconnectElementsFromDashboard(c context.Context, dashboardID int64) error {
-	return l.disconnectElementsFromDashboardID(c, dashboardID)
+	return l.getLibraryElementByUid(c, signedInUser, cmd, nil)
 }
 
 // DeleteLibraryElementsInFolder deletes all elements for a specific folder.

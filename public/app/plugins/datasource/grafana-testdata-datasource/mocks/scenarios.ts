@@ -76,6 +76,12 @@ export const scenarios = [
   },
   {
     description: '',
+    id: TestDataQueryType.QueryMeta,
+    name: 'Query Metadata',
+    stringInput: '',
+  },
+  {
+    description: '',
     id: TestDataQueryType.RandomWalk,
     name: 'Random Walk',
     stringInput: '',
@@ -103,6 +109,18 @@ export const scenarios = [
     id: TestDataQueryType.SlowQuery,
     name: 'Slow Query',
     stringInput: '5s',
+  },
+  {
+    description: '',
+    id: TestDataQueryType.FlakyQuery,
+    name: 'Flaky Query',
+    stringInput: '',
+  },
+  {
+    description: '',
+    id: TestDataQueryType.Exemplars,
+    name: 'Exemplars',
+    stringInput: '',
   },
   {
     description: '',

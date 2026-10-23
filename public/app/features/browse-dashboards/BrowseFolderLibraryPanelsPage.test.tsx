@@ -5,8 +5,8 @@ import { render, screen } from 'test/test-utils';
 import { config, setBackendSrv } from '@grafana/runtime';
 import server, { setupMockServer } from '@grafana/test-utils/server';
 import { getFolderFixtures } from '@grafana/test-utils/unstable';
-import { contextSrv } from 'app/core/core';
 import { backendSrv } from 'app/core/services/backend_srv';
+import { contextSrv } from 'app/core/services/context_srv';
 
 import BrowseFolderLibraryPanelsPage from './BrowseFolderLibraryPanelsPage';
 import { getLibraryElementsResponse } from './fixtures/libraryElements.fixture';
@@ -88,11 +88,11 @@ describe('browse-dashboards BrowseFolderLibraryPanelsPage', () => {
     expect(await screen.findByRole('tab', { name: 'Dashboards' })).toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: 'Dashboards' })).toHaveAttribute('aria-selected', 'false');
 
-    expect(await screen.findByRole('tab', { name: 'Panels' })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Panels' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: /^Panels/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /^Panels/ })).toHaveAttribute('aria-selected', 'true');
 
-    expect(await screen.findByRole('tab', { name: 'Alert rules' })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Alert rules' })).toHaveAttribute('aria-selected', 'false');
+    expect(await screen.findByRole('tab', { name: /^Alert rules/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /^Alert rules/ })).toHaveAttribute('aria-selected', 'false');
   });
 
   it('displays the library panels returned by the API', async () => {

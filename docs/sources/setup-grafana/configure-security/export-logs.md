@@ -66,6 +66,10 @@ Logs of usage insights contain the following fields, where the fields followed b
 
 ## Configuration
 
+{{< admonition type="caution" >}}
+Grafana Cloud provides provisioned dashboards for usage insights. Refer to the [Grafana Cloud documentation](/docs/grafana-cloud/usage-insights/) for more information. If you export usage insights to a separate Loki instance, these dashboards stop receiving usage insights data. This is a current limitation of the feature in Grafana Cloud.
+{{< /admonition >}}
+
 To export your logs, enable the usage insights feature and [configure](../../configure-grafana/) an export location in the configuration file:
 
 ```ini
@@ -94,6 +98,14 @@ tls = true
 # Set the tenant ID for Loki communication, which is disabled by default.
 # The tenant ID is required to interact with Loki running in multi-tenant mode.
 tenant_id =
+# How long to wait before sending a request to Loki with the batch of events. Uses duration format: e.g. 5s, 1m
+# Whatever happens first between `batch_wait_duration` and `batch_size_bytes` will trigger the batch to be sent to Loki.
+# If the wait duration is very long and the `batch_size_bytes` is very high, events may take a long time to be sent.
+batch_wait_duration = 5s
+# How many events (in bytes) to accumulate in a single batch before sending it to Loki.
+# Whatever happens first between `batch_wait_duration` and `batch_size_bytes` will trigger the batch to be sent to Loki.
+# If you wish to always wait for the `batch_wait_duration`, set this to a very high number.
+batch_size_bytes = 102400 # 100KiB
 ```
 
 Using `logger` will print usage insights to your [Grafana server log](../../configure-grafana/#log).

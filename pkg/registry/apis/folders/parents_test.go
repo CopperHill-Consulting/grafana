@@ -9,7 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	folders "github.com/grafana/grafana/apps/folder/pkg/apis/folder/v1beta1"
+	folders "github.com/grafana/grafana/apps/folder/pkg/apis/folder/v1"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
 )
@@ -110,21 +110,6 @@ func TestParents(t *testing.T) {
 					}, nil).Maybe()
 			},
 			expectedErr: "cyclic folder references found",
-		},
-		{
-			name: "too deep",
-			request: input{
-				name:   "test",
-				folder: "p1",
-			},
-			maxDepth:    3,
-			expectedErr: "[folder.maximum-depth-reached]",
-			expected: &folders.FolderInfoList{Items: []folders.FolderInfo{
-				{Name: "test", Parent: "p1"},
-				{Name: "p1", Parent: "p2"},
-				{Name: "p2", Parent: "p3"},
-				{Name: "p3", Parent: "p4"}, // should not try calling p4
-			}},
 		},
 	}
 

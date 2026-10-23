@@ -2,12 +2,12 @@ import FingerprintJS from '@fingerprintjs/fingerprintjs';
 import {
   from,
   lastValueFrom,
-  MonoTypeOperatorFunction,
+  type MonoTypeOperatorFunction,
   Observable,
-  Observer,
-  OperatorFunction,
+  type Observer,
+  type OperatorFunction,
   Subject,
-  Subscriber,
+  type Subscriber,
   Subscription,
   throwError,
 } from 'rxjs';
@@ -24,20 +24,24 @@ import {
   tap,
   throwIfEmpty,
 } from 'rxjs/operators';
-import { v4 as uuidv4 } from 'uuid';
 
-import { AppEvents, DataQueryErrorType, deprecationWarning } from '@grafana/data';
-import { BackendSrv as BackendService, BackendSrvRequest, config, FetchError, FetchResponse } from '@grafana/runtime';
-import appEvents from 'app/core/app_events';
+import { AppEvents, DataQueryErrorType, deprecationWarning, generateUUID } from '@grafana/data';
+import {
+  type BackendSrv as BackendService,
+  type BackendSrvRequest,
+  config,
+  type FetchError,
+  type FetchResponse,
+} from '@grafana/runtime';
+import { appEvents } from 'app/core/app_events';
 import { getConfig } from 'app/core/config';
-import { getSessionExpiry, hasSessionExpiry } from 'app/core/utils/auth';
+import { getSessionExpiry, hasRotatableSession } from 'app/core/utils/auth';
 import { loadUrlToken } from 'app/core/utils/urlToken';
 import { getDashboardAPI } from 'app/features/dashboard/api/dashboard_api';
-import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
-import { DashboardSearchItem } from 'app/features/search/types';
+import { type DashboardSearchItem } from 'app/features/search/types';
 import { TokenRevokedModal } from 'app/features/users/TokenRevokedModal';
-import { DashboardDTO } from 'app/types/dashboard';
-import { FolderDTO } from 'app/types/folders';
+import { type DashboardDTO } from 'app/types/dashboard';
+import { type FolderDTO } from 'app/types/folders';
 
 import { ShowModalReactEvent } from '../../types/events';
 import { isContentTypeJson, parseInitFromOptions, parseResponseBody, parseUrlFromOptions } from '../utils/fetch';
@@ -46,7 +50,7 @@ import { isDataQuery, isLocalUrl } from '../utils/query';
 import { FetchQueue } from './FetchQueue';
 import { FetchQueueWorker } from './FetchQueueWorker';
 import { ResponseQueue } from './ResponseQueue';
-import { ContextSrv, contextSrv } from './context_srv';
+import { type ContextSrv, contextSrv } from './context_srv';
 
 const CANCEL_ALL_REQUESTS_REQUEST_ID = 'cancel_all_requests_request_id';
 
@@ -76,6 +80,7 @@ export class BackendSrv implements BackendService {
   private readonly fetchQueue: FetchQueue;
   private readonly responseQueue: ResponseQueue;
   private _tokenRotationInProgress?: Observable<FetchResponse> | null = null;
+  private _loginPingInProgress?: Observable<FetchResponse> | null = null;
   private deviceID?: string | null = null;
 
   private dependencies: BackendSrvDependencies = {
@@ -121,7 +126,7 @@ export class BackendSrv implements BackendService {
 
   fetch<T>(options: BackendSrvRequest): Observable<FetchResponse<T>> {
     // We need to match an entry added to the queue stream with the entry that is eventually added to the response stream
-    const id = uuidv4();
+    const id = generateUUID();
     const fetchQueue = this.fetchQueue;
 
     return new Observable((observer) => {
@@ -173,7 +178,6 @@ export class BackendSrv implements BackendService {
         .subscribe(this.getChunkedResponseObserver({ controller, observer, options, requestId }));
 
       return function unsubscribe() {
-        console.log(requestId, 'unsubscribe');
         controller.abort('unsubscribe');
         sub.unsubscribe();
       };
@@ -218,7 +222,6 @@ export class BackendSrv implements BackendService {
         // Setup onabort callback so that we can cancel the reader properly
         controller.signal.onabort = () => {
           reader.cancel(controller.signal.reason);
-          console.log(requestId, 'signal.aborted');
         };
 
         async function process() {
@@ -230,13 +233,11 @@ export class BackendSrv implements BackendService {
             });
             if (chunk.done) {
               done = true;
-              console.log(requestId, 'done');
             }
           }
         }
         process()
           .then(() => {
-            console.log(requestId, 'complete');
             observer.complete();
           }) // runs in background
           .catch((e) => {
@@ -436,8 +437,9 @@ export class BackendSrv implements BackendService {
     err.data = err.data ?? { message: 'Unexpected error' };
 
     if (typeof err.data === 'string') {
+      const message = isHtmlResponse(err.data) ? `${err.status} ${err.statusText ?? 'Error'}` : err.data;
       err.data = {
-        message: err.data,
+        message,
         error: err.statusText,
         response: err.data,
       };
@@ -486,8 +488,6 @@ export class BackendSrv implements BackendService {
   }
 
   private handleStreamError<T>(options: BackendSrvRequest): MonoTypeOperatorFunction<FetchResponse<T>> {
-    const { isSignedIn } = this.dependencies.contextSrv.user;
-
     return (inputStream) =>
       inputStream.pipe(
         retryWhen((attempts) =>
@@ -495,7 +495,12 @@ export class BackendSrv implements BackendService {
             mergeMap((error, i) => {
               const firstAttempt = i === 0 && options.retry === 0;
 
-              if (error.status === 401 && isLocalUrl(options.url) && firstAttempt && isSignedIn) {
+              if (
+                error.status === 401 &&
+                isLocalUrl(options.url) &&
+                firstAttempt &&
+                this.dependencies.contextSrv.user.isSignedIn
+              ) {
                 if (error.data?.error?.id === 'ERR_TOKEN_REVOKED') {
                   this.dependencies.appEvents.publish(
                     new ShowModalReactEvent({
@@ -510,20 +515,23 @@ export class BackendSrv implements BackendService {
                 }
 
                 let authChecker = this.loginPing();
-                if (hasSessionExpiry()) {
+                if (hasRotatableSession(this.dependencies.contextSrv.user.authenticatedBy)) {
                   const expired = getSessionExpiry() * 1000 < Date.now();
                   if (expired) {
                     authChecker = this.rotateToken();
                   }
                 }
+                if (error.data?.messageId === 'session.token.rotate') {
+                  authChecker = this.rotateToken();
+                }
 
                 return from(authChecker).pipe(
                   catchError((err) => {
                     if (err.status === 401) {
-                      this.dependencies.logout();
-                      return throwError(err);
+                      // Rethrow the original per-request error instead so each caller gets its own config/traceId
+                      return throwError(() => error);
                     }
-                    return throwError(err);
+                    return throwError(() => err);
                   })
                 );
               }
@@ -614,6 +622,14 @@ export class BackendSrv implements BackendService {
     }
 
     this._tokenRotationInProgress = this.fetch({ url: '/api/user/auth-tokens/rotate', method: 'POST', retry: 1 }).pipe(
+      // Runs once against the shared source, upstream of share(), so a failure logs out exactly once
+      // no matter how many requests are waiting on this same rotation.
+      catchError((err) => {
+        if (err.status === 401) {
+          this.dependencies.logout();
+        }
+        return throwError(() => err);
+      }),
       finalize(() => {
         this._tokenRotationInProgress = null;
       }),
@@ -624,7 +640,26 @@ export class BackendSrv implements BackendService {
   }
 
   loginPing() {
-    return this.fetch({ url: '/api/login/ping', method: 'GET', retry: 1 });
+    if (this._loginPingInProgress) {
+      return this._loginPingInProgress;
+    }
+
+    this._loginPingInProgress = this.fetch({ url: '/api/login/ping', method: 'GET', retry: 1 }).pipe(
+      // Runs once against the shared source, upstream of share(), so a failure logs out exactly once
+      // no matter how many requests are waiting on this same ping.
+      catchError((err) => {
+        if (err.status === 401) {
+          this.dependencies.logout();
+        }
+        return throwError(() => err);
+      }),
+      finalize(() => {
+        this._loginPingInProgress = null;
+      }),
+      share()
+    );
+
+    return this._loginPingInProgress;
   }
 
   /** @deprecated */
@@ -637,24 +672,19 @@ export class BackendSrv implements BackendService {
     // NOTE: When this is removed, we can also remove most instances of:
     // jest.mock('app/features/live/dashboard/dashboardWatcher
     deprecationWarning('backend_srv', 'getDashboardByUid(uid)', 'getDashboardAPI().getDashboardDTO(uid)');
-    return getDashboardAPI('v1').getDashboardDTO(uid);
-  }
-
-  validateDashboard(dashboard: DashboardModel): Promise<ValidateDashboardResponse> {
-    // support for this function will be implemented in the k8s flavored api-server
-    // hidden by experimental feature flag:
-    //  config.featureToggles.showDashboardValidationWarnings
-    return Promise.resolve({
-      isValid: false,
-      message: 'dashboard validation is not supported',
-    });
+    return getDashboardAPI('v1').then((api) => api.getDashboardDTO(uid));
   }
 
   getPublicDashboardByUid(uid: string) {
     return this.get<DashboardDTO>(`/api/public/dashboards/${uid}`);
   }
 
+  /**
+   * @deprecated Use getFolderByUidFacade from app/api/clients/folder/v1beta1/hooks instead
+   * or manually handle calling legacy vs app platform API based on feature toggles
+   */
   getFolderByUid(uid: string, options: FolderRequestOptions = {}) {
+    deprecationWarning('backend_srv', 'getFolderByUid(uid)', 'getFolderByUidFacade(uid)');
     const queryParams = new URLSearchParams();
     if (options.withAccessControl) {
       queryParams.set('accesscontrol', 'true');
@@ -666,11 +696,11 @@ export class BackendSrv implements BackendService {
   }
 }
 
+function isHtmlResponse(value: string): boolean {
+  const trimmed = value.trimStart().toLowerCase();
+  return trimmed.startsWith('<!doctype') || trimmed.startsWith('<html');
+}
+
 // Used for testing and things that really need BackendSrv
 export const backendSrv = new BackendSrv();
 export const getBackendSrv = (): BackendSrv => backendSrv;
-
-interface ValidateDashboardResponse {
-  isValid: boolean;
-  message?: string;
-}

@@ -18,12 +18,12 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/google/uuid"
-	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/prometheus/alertmanager/pkg/labels"
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/expr"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
@@ -53,10 +53,11 @@ func TestIntegrationAlertRulePermissions(t *testing.T) {
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
+		DisableAuthZClientCache: true,
+		DisableLegacyAlerting:   true,
+		EnableUnifiedAlerting:   true,
+		DisableAnonymous:        true,
+		AppModeProduction:       true,
 	})
 
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, p)
@@ -360,10 +361,11 @@ func TestIntegrationAlertRuleNestedPermissions(t *testing.T) {
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
+		DisableAuthZClientCache: true,
+		DisableLegacyAlerting:   true,
+		EnableUnifiedAlerting:   true,
+		DisableAnonymous:        true,
+		AppModeProduction:       true,
 	})
 
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, p)
@@ -714,28 +716,15 @@ func TestIntegrationAlertRuleNestedPermissions(t *testing.T) {
 func TestIntegrationAlertRulePostExport(t *testing.T) {
 	testinfra.SQLiteIntegrationTest(t)
 
-	// Setup Grafana and its Database
-	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
-	})
-
-	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, p)
+	grafanaListedAddr, env := getStandardSharedEnv(t)
 	permissionsStore := resourcepermissions.NewStore(env.Cfg, env.SQLStore, featuremgmt.WithFeatures())
-
-	// Create a user to make authenticated requests
-	userID := createUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
-		DefaultOrgRole: string(org.RoleEditor),
-		Password:       "password",
-		Login:          "grafana",
-	})
+	userID := standardGrafanaUserID
 
 	apiClient := newAlertingApiClient(grafanaListedAddr, "grafana", "password")
 
-	// Create the namespace we'll save our alerts to.
-	apiClient.CreateFolder(t, "folder1", "folder1")
+	folderUID := util.GenerateShortUID()
+	apiClient.CreateFolder(t, folderUID, folderUID)
+	t.Cleanup(func() { deleteFolder(t, grafanaListedAddr, folderUID) })
 
 	var group1 apimodels.PostableRuleGroupConfig
 
@@ -749,7 +738,7 @@ func TestIntegrationAlertRulePostExport(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, json.Unmarshal(getGroup1Raw, &expected))
 
-		status, actualRaw := apiClient.PostRulesExportWithStatus(t, "folder1", &group1, &apimodels.ExportQueryParams{
+		status, actualRaw := apiClient.PostRulesExportWithStatus(t, folderUID, &group1, &apimodels.ExportQueryParams{
 			Download: false,
 			Format:   "json",
 		})
@@ -774,14 +763,14 @@ func TestIntegrationAlertRulePostExport(t *testing.T) {
 
 		require.Empty(t, diff)
 
-		require.Equal(t, actual.Groups[0].Folder, "folder1")
+		require.Equal(t, actual.Groups[0].Folder, folderUID)
 	})
 
 	t.Run("should return 403 when no access to folder", func(t *testing.T) {
-		removeFolderPermission(t, permissionsStore, 1, userID, org.RoleEditor, "folder1")
+		removeFolderPermission(t, permissionsStore, 1, userID, org.RoleEditor, folderUID)
 		apiClient.ReloadCachedPermissions(t)
 
-		status, _ := apiClient.PostRulesExportWithStatus(t, "folder1", &group1, &apimodels.ExportQueryParams{
+		status, _ := apiClient.PostRulesExportWithStatus(t, folderUID, &group1, &apimodels.ExportQueryParams{
 			Download: false,
 			Format:   "json",
 		})
@@ -1166,6 +1155,7 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 						"expression": "2 + 3 \u003e 1",
 						"intervalMs": 1000,
 						"maxDataPoints": 43200,
+						"refId": "A",
 						"type": "math"
 					}
 				}],
@@ -1209,6 +1199,7 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 						"expression": "2 + 3 \u003e 1",
 						"intervalMs": 1000,
 						"maxDataPoints": 43200,
+						"refId": "A",
 						"type": "math"
 					}
 				}],
@@ -1264,6 +1255,7 @@ func TestIntegrationRulerRulesFilterByDashboard(t *testing.T) {
 						"expression": "2 + 3 \u003e 1",
 						"intervalMs": 1000,
 						"maxDataPoints": 43200,
+						"refId": "A",
 						"type": "math"
 					}
 				}],
@@ -1426,10 +1418,11 @@ func TestIntegrationRuleGroupSequence(t *testing.T) {
 	testinfra.SQLiteIntegrationTest(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
+		DisableAuthZClientCache: true,
+		DisableLegacyAlerting:   true,
+		EnableUnifiedAlerting:   true,
+		DisableAnonymous:        true,
+		AppModeProduction:       true,
 	})
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
 
@@ -1555,8 +1548,8 @@ func TestIntegrationRuleCreate(t *testing.T) {
 			Rules: []apimodels.PostableExtendedRuleNode{
 				{
 					ApiRuleNode: &apimodels.ApiRuleNode{
-						For:           util.Pointer(model.Duration(2 * time.Minute)),
-						KeepFiringFor: util.Pointer(model.Duration(1 * time.Minute)),
+						For:           new(model.Duration(2 * time.Minute)),
+						KeepFiringFor: new(model.Duration(1 * time.Minute)),
 						Labels: map[string]string{
 							"foo🙂":  "bar",
 							"_bar1": "baz🙂",
@@ -1589,8 +1582,8 @@ func TestIntegrationRuleCreate(t *testing.T) {
 			Rules: []apimodels.GettableExtendedRuleNode{
 				{
 					ApiRuleNode: &apimodels.ApiRuleNode{
-						For:           util.Pointer(model.Duration(2 * time.Minute)),
-						KeepFiringFor: util.Pointer(model.Duration(1 * time.Minute)),
+						For:           new(model.Duration(2 * time.Minute)),
+						KeepFiringFor: new(model.Duration(1 * time.Minute)),
 						Labels: map[string]string{
 							"foo🙂":  "bar",
 							"_bar1": "baz🙂",
@@ -1610,7 +1603,7 @@ func TestIntegrationRuleCreate(t *testing.T) {
 									To:   apimodels.Duration(15 * time.Minute),
 								},
 								DatasourceUID: expr.DatasourceUID,
-								Model:         json.RawMessage(`{"expression":"1","intervalMs":1000,"maxDataPoints":43200,"type":"math"}`),
+								Model:         json.RawMessage(`{"expression":"1","intervalMs":1000,"maxDataPoints":43200,"refId":"A","type":"math"}`),
 							},
 						},
 						UpdatedBy: &apimodels.UserInfo{
@@ -1762,34 +1755,34 @@ func TestIntegrationRuleUpdate(t *testing.T) {
 			{
 				name:           "should be able to set missing_series_evals_to_resolve to 5",
 				initialValue:   nil,
-				updatedValue:   util.Pointer[int64](5),
-				expectedValue:  util.Pointer[int64](5),
+				updatedValue:   new(int64(5)),
+				expectedValue:  new(int64(5)),
 				expectedStatus: http.StatusAccepted,
 			},
 			{
 				name:           "should be able to update missing_series_evals_to_resolve",
-				initialValue:   util.Pointer[int64](1),
-				updatedValue:   util.Pointer[int64](2),
-				expectedValue:  util.Pointer[int64](2),
+				initialValue:   new(int64(1)),
+				updatedValue:   new(int64(2)),
+				expectedValue:  new(int64(2)),
 				expectedStatus: http.StatusAccepted,
 			},
 			{
 				name:           "should preserve missing_series_evals_to_resolve when it's set nil",
-				initialValue:   util.Pointer[int64](5),
+				initialValue:   new(int64(5)),
 				updatedValue:   nil,
-				expectedValue:  util.Pointer[int64](5),
+				expectedValue:  new(int64(5)),
 				expectedStatus: http.StatusAccepted,
 			},
 			{
 				name:           "should reject missing_series_evals_to_resolve < 0",
-				initialValue:   util.Pointer[int64](1),
-				updatedValue:   util.Pointer[int64](-1),
+				initialValue:   new(int64(1)),
+				updatedValue:   new(int64(-1)),
 				expectedStatus: http.StatusBadRequest,
 			},
 			{
 				name:           "should be able to reset missing_series_evals_to_resolve by setting it to 0",
-				initialValue:   util.Pointer[int64](1),
-				updatedValue:   util.Pointer[int64](0),
+				initialValue:   new(int64(1)),
+				updatedValue:   new(int64(0)),
 				expectedValue:  nil,
 				expectedStatus: http.StatusAccepted,
 			},
@@ -2681,6 +2674,7 @@ func TestIntegrationQuota(t *testing.T) {
 							   "expression":"2 + 4 \u003E 1",
 							   "intervalMs":1000,
 							   "maxDataPoints":43200,
+							   "refId":"A",
 							   "type":"math"
 							}
 						     }
@@ -2798,6 +2792,7 @@ func TestIntegrationDeleteFolderWithRules(t *testing.T) {
 												"expression": "2 + 3 > 1",
 												"intervalMs": 1000,
 												"maxDataPoints": 43200,
+												"refId": "A",
 												"type": "math"
 											}
 										}
@@ -3285,6 +3280,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3331,6 +3327,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3461,7 +3458,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 						},
 						NoDataState:                 apimodels.NoDataState(ngmodels.Alerting),
 						ExecErrState:                apimodels.ExecutionErrorState(ngmodels.AlertingErrState),
-						MissingSeriesEvalsToResolve: util.Pointer[int64](2), // If UID is specified, this field is required
+						MissingSeriesEvalsToResolve: new(int64(2)), // If UID is specified, this field is required
 					},
 				},
 			},
@@ -3683,6 +3680,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3729,6 +3727,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 								   "expression":"2 + 3 \u003e 1",
 								   "intervalMs":1000,
 								   "maxDataPoints":43200,
+								   "refId":"A",
 								   "type":"math"
 								}
 							 }
@@ -3872,6 +3871,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 		                           "expression":"2 + 3 \u003C 1",
 		                           "intervalMs":1000,
 		                           "maxDataPoints":43200,
+								   "refId":"A",
 		                           "type":"math"
 		                        }
 		                     }
@@ -3995,6 +3995,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 						   "expression":"2 + 3 \u003C 1",
 						   "intervalMs":1000,
 						   "maxDataPoints":43200,
+						   "refId":"A",
 						   "type":"math"
 						}
 					     }
@@ -4093,6 +4094,7 @@ func TestIntegrationAlertRuleCRUD(t *testing.T) {
 						   "expression":"2 + 3 \u003C 1",
 						   "intervalMs":1000,
 						   "maxDataPoints":43200,
+						   "refId":"A",
 						   "type":"math"
 						}
 					     }
@@ -4834,7 +4836,7 @@ func TestIntegrationRuleSoftDelete(t *testing.T) {
 		require.NotEmptyf(t, response.Created, "Expected created to be set")
 
 		// create some versions of the rule
-		for i := 0; i < 3; i++ {
+		for range 3 {
 			groups, status := adminClient.GetRulesGroup(t, "folder1", group1.Name)
 			require.Equal(t, http.StatusAccepted, status)
 			group1 = convertGettableRuleGroupToPostable(groups.GettableRuleGroupConfig)
@@ -5090,42 +5092,70 @@ func rulesNamespaceWithoutVariableValues(t *testing.T, b []byte) (string, map[st
 	return string(json), m
 }
 
-func createRule(t *testing.T, client apiClient, folder string) (apimodels.PostableRuleGroupConfig, string) {
+type ruleOption func(*ruleConfig)
+
+type ruleConfig struct {
+	rule      *apimodels.PostableExtendedRuleNode
+	groupName string
+}
+
+func withLabels(labels map[string]string) ruleOption {
+	return func(cfg *ruleConfig) {
+		cfg.rule.Labels = labels
+	}
+}
+
+func withRuleGroup(groupName string) ruleOption {
+	return func(cfg *ruleConfig) {
+		cfg.groupName = groupName
+	}
+}
+
+func createRule(t *testing.T, client apiClient, folder string, opts ...ruleOption) (apimodels.PostableRuleGroupConfig, string) {
 	t.Helper()
 
 	interval, err := model.ParseDuration("1m")
 	require.NoError(t, err)
 	doubleInterval := 2 * interval
-	rules := apimodels.PostableRuleGroupConfig{
-		Name:     "arulegroup",
-		Interval: interval,
-		Rules: []apimodels.PostableExtendedRuleNode{
-			{
-				ApiRuleNode: &apimodels.ApiRuleNode{
-					For:         &doubleInterval,
-					Labels:      map[string]string{"label1": "val1"},
-					Annotations: map[string]string{"annotation1": "val1"},
-				},
-				GrafanaManagedAlert: &apimodels.PostableGrafanaRule{
-					Title:     fmt.Sprintf("rule under folder %s", folder),
-					Condition: "A",
-					Data: []apimodels.AlertQuery{
-						{
-							RefID: "A",
-							RelativeTimeRange: apimodels.RelativeTimeRange{
-								From: apimodels.Duration(time.Duration(5) * time.Hour),
-								To:   apimodels.Duration(time.Duration(3) * time.Hour),
-							},
-							DatasourceUID: expr.DatasourceUID,
-							Model: json.RawMessage(`{
-								"type": "math",
-								"expression": "2 + 3 > 1"
-								}`),
-						},
+
+	rule := apimodels.PostableExtendedRuleNode{
+		ApiRuleNode: &apimodels.ApiRuleNode{
+			For:         &doubleInterval,
+			Labels:      map[string]string{"label1": "val1"},
+			Annotations: map[string]string{"annotation1": "val1"},
+		},
+		GrafanaManagedAlert: &apimodels.PostableGrafanaRule{
+			Title:     fmt.Sprintf("rule under folder %s", folder),
+			Condition: "A",
+			Data: []apimodels.AlertQuery{
+				{
+					RefID: "A",
+					RelativeTimeRange: apimodels.RelativeTimeRange{
+						From: apimodels.Duration(time.Duration(5) * time.Hour),
+						To:   apimodels.Duration(time.Duration(3) * time.Hour),
 					},
+					DatasourceUID: expr.DatasourceUID,
+					Model: json.RawMessage(`{
+						"type": "math",
+						"expression": "2 + 3 > 1"
+						}`),
 				},
 			},
 		},
+	}
+
+	cfg := &ruleConfig{
+		rule:      &rule,
+		groupName: "arulegroup",
+	}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	rules := apimodels.PostableRuleGroupConfig{
+		Name:     cfg.groupName,
+		Interval: interval,
+		Rules:    []apimodels.PostableExtendedRuleNode{*cfg.rule},
 	}
 	resp, status, _ := client.PostRulesGroupWithStatus(t, folder, &rules, false)
 	require.Equal(t, http.StatusAccepted, status)

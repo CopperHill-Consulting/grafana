@@ -2,17 +2,17 @@ import { css } from '@emotion/css';
 import { skipToken } from '@reduxjs/toolkit/query';
 import { useMemo } from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { isFetchError } from '@grafana/runtime';
 import { Alert, useStyles2 } from '@grafana/ui';
-import { DataSourceRuleGroupIdentifier } from 'app/types/unified-alerting';
+import { type DataSourceRuleGroupIdentifier } from 'app/types/unified-alerting';
 import {
-  PromRuleDTO,
-  PromRuleGroupDTO,
-  RulerCloudRuleDTO,
-  RulerRuleGroupDTO,
-  RulesSourceApplication,
+  type PromRuleDTO,
+  type PromRuleGroupDTO,
+  type RulerCloudRuleDTO,
+  type RulerRuleGroupDTO,
+  type RulesSourceApplication,
 } from 'app/types/unified-alerting-dto';
 
 import { alertRuleApi } from '../api/alertRuleApi';
@@ -171,12 +171,7 @@ interface RulerBasedGroupRulesProps {
   application: RulesSourceApplication;
 }
 
-export function RulerBasedGroupRules({
-  groupIdentifier,
-  application,
-  promGroup,
-  rulerGroup,
-}: RulerBasedGroupRulesProps) {
+function RulerBasedGroupRules({ groupIdentifier, application, promGroup, rulerGroup }: RulerBasedGroupRulesProps) {
   const styles = useStyles2(getStyles);
   const { namespace, groupName } = groupIdentifier;
 
@@ -191,24 +186,29 @@ export function RulerBasedGroupRules({
 
   return (
     <>
-      {pageItems.map((rulerRule) => {
+      {pageItems.map((rulerRule, index) => {
+        // If rules are indistinguishable by name, labels, annotations, and query, we need to use the index to disambiguate
         const promRule = matches.get(rulerRule);
 
-        return promRule ? (
-          <DataSourceRuleListItem
-            key={hashRule(promRule)}
-            rule={promRule}
-            rulerRule={rulerRule}
-            groupIdentifier={groupIdentifier}
-            application={application}
-            actions={
-              <RuleActionsButtons rule={rulerRule} promRule={promRule} groupIdentifier={groupIdentifier} compact />
-            }
-            showLocation={false}
-          />
-        ) : (
+        if (promRule) {
+          return (
+            <DataSourceRuleListItem
+              key={`${hashRule(promRule)}-${index}`}
+              rule={promRule}
+              rulerRule={rulerRule}
+              groupIdentifier={groupIdentifier}
+              application={application}
+              actions={
+                <RuleActionsButtons rule={rulerRule} promRule={promRule} groupIdentifier={groupIdentifier} compact />
+              }
+              showLocation={false}
+            />
+          );
+        }
+
+        return (
           <RuleOperationListItem
-            key={getRuleName(rulerRule)}
+            key={`${getRuleName(rulerRule)}-${index}`}
             name={getRuleName(rulerRule)}
             namespace={namespace.name}
             group={groupName}
@@ -219,18 +219,20 @@ export function RulerBasedGroupRules({
           />
         );
       })}
-      {promOnlyRules.map((rule) => (
-        <RuleOperationListItem
-          key={rule.name}
-          name={rule.name}
-          namespace={namespace.name}
-          group={groupName}
-          rulesSource={groupIdentifier.rulesSource}
-          application={application}
-          operation="deleting"
-          showLocation={false}
-        />
-      ))}
+      {promOnlyRules.map((rule, index) => {
+        return (
+          <RuleOperationListItem
+            key={`${rule.name}-${index}`}
+            name={rule.name}
+            namespace={namespace.name}
+            group={groupName}
+            rulesSource={groupIdentifier.rulesSource}
+            application={application}
+            operation="deleting"
+            showLocation={false}
+          />
+        );
+      })}
       {hasMore && (
         <li aria-selected="false" role="treeitem" className={styles.loadMoreWrapper}>
           <LoadMoreButton onClick={loadMore} />

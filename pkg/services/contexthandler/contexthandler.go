@@ -3,6 +3,7 @@ package contexthandler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -103,6 +104,7 @@ func (h *ContextHandler) setRequestContext(ctx context.Context) context.Context 
 	ctx, span := tracing.Start(ctx, "ContextHandler.setRequestContext")
 	defer span.End()
 
+	//nolint:staticcheck // not yet migrated to OpenFeature
 	reqContext := &contextmodel.ReqContext{
 		Context: web.FromContext(ctx),
 		SignedInUser: &user.SignedInUser{
@@ -128,10 +130,16 @@ func (h *ContextHandler) setRequestContext(ctx context.Context) context.Context 
 		reqContext.Logger = reqContext.Logger.New("traceID", traceID)
 	}
 
+	var userId int64
 	id, err := h.authenticator.Authenticate(ctx, &authn.Request{HTTPRequest: reqContext.Req})
 	if err != nil {
 		// Hack: set all errors on LookupTokenErr, so we can check it in auth middlewares
 		reqContext.LookupTokenErr = err
+
+		var tokenRotationErr authn.TokenNeedsRotationError
+		if errors.As(err, &tokenRotationErr) {
+			userId = tokenRotationErr.UserID
+		}
 	} else {
 		reqContext.SignedInUser = id.SignedInUser()
 		reqContext.UserToken = id.SessionToken
@@ -139,15 +147,16 @@ func (h *ContextHandler) setRequestContext(ctx context.Context) context.Context 
 		reqContext.AllowAnonymous = reqContext.IsAnonymous
 		reqContext.IsRenderCall = id.IsAuthenticatedBy(login.RenderModule)
 		ctx = identity.WithRequester(ctx, id)
+		userId = reqContext.UserID
 	}
 
 	h.excludeSensitiveHeadersFromRequest(reqContext.Req)
 
-	reqContext.Logger = reqContext.Logger.New("userId", reqContext.UserID, "orgId", reqContext.OrgID, "uname", reqContext.Login)
+	reqContext.Logger = reqContext.Logger.New("userId", userId, "orgId", reqContext.OrgID, "uname", reqContext.Login)
 	span.AddEvent("user", trace.WithAttributes(
 		attribute.String("uname", reqContext.Login),
 		attribute.Int64("orgId", reqContext.OrgID),
-		attribute.Int64("userId", reqContext.UserID),
+		attribute.Int64("userId", userId),
 	))
 
 	if h.cfg.IDResponseHeaderEnabled && reqContext.SignedInUser != nil {
@@ -158,6 +167,8 @@ func (h *ContextHandler) setRequestContext(ctx context.Context) context.Context 
 	ns := "default"
 	if id != nil {
 		ns = id.Namespace
+	} else if h.cfg.StackID != "" {
+		ns = "stacks-" + h.cfg.StackID
 	}
 	evalCtx := openfeature.NewEvaluationContext(ns, map[string]any{
 		"namespace": ns,
@@ -206,6 +217,33 @@ type AuthHTTPHeaderList struct {
 	Items []string
 }
 
+func GetAuthHTTPHeaders(jwtAuth *setting.AuthJWTSettings, authProxy *setting.AuthProxySettings) []string {
+	var items []string
+
+	// used by basic auth, api keys and potentially jwt auth
+	items = append(items, "Authorization")
+
+	// remove X-Grafana-Device-Id as it is only used for auth in authn clients.
+	items = append(items, "X-Grafana-Device-Id")
+
+	// if jwt is enabled we add it to the list. We can ignore in case it is set to Authorization
+	if jwtAuth.Enabled && jwtAuth.HeaderName != "" && jwtAuth.HeaderName != "Authorization" {
+		items = append(items, jwtAuth.HeaderName)
+	}
+
+	// if auth proxy is enabled add the main proxy header and all configured headers
+	if authProxy.Enabled {
+		items = append(items, authProxy.HeaderName)
+		for _, header := range authProxy.Headers {
+			if header != "" {
+				items = append(items, header)
+			}
+		}
+	}
+
+	return items
+}
+
 // WithAuthHTTPHeaders returns a new context in which all possible configured auth header will be included
 // and later retrievable by AuthHTTPHeaderListFromContext.
 func WithAuthHTTPHeaders(ctx context.Context, cfg *setting.Cfg) context.Context {
@@ -216,26 +254,7 @@ func WithAuthHTTPHeaders(ctx context.Context, cfg *setting.Cfg) context.Context 
 		}
 	}
 
-	// used by basic auth, api keys and potentially jwt auth
-	list.Items = append(list.Items, "Authorization")
-
-	// remove X-Grafana-Device-Id as it is only used for auth in authn clients.
-	list.Items = append(list.Items, "X-Grafana-Device-Id")
-
-	// if jwt is enabled we add it to the list. We can ignore in case it is set to Authorization
-	if cfg.JWTAuth.Enabled && cfg.JWTAuth.HeaderName != "" && cfg.JWTAuth.HeaderName != "Authorization" {
-		list.Items = append(list.Items, cfg.JWTAuth.HeaderName)
-	}
-
-	// if auth proxy is enabled add the main proxy header and all configured headers
-	if cfg.AuthProxy.Enabled {
-		list.Items = append(list.Items, cfg.AuthProxy.HeaderName)
-		for _, header := range cfg.AuthProxy.Headers {
-			if header != "" {
-				list.Items = append(list.Items, header)
-			}
-		}
-	}
+	list.Items = append(list.Items, GetAuthHTTPHeaders(&cfg.JWTAuth, &cfg.AuthProxy)...)
 
 	return context.WithValue(ctx, authHTTPHeaderListKey, list)
 }

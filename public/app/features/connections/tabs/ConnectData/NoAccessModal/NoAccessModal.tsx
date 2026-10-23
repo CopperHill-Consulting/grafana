@@ -1,10 +1,10 @@
 import { css } from '@emotion/css';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { Trans } from '@grafana/i18n';
 import { useStyles2, Modal, Icon, Button, TextLink } from '@grafana/ui';
 
-import { type CardGridItem } from '../CardGrid';
+import { type CardGridItem } from '../CardGrid/CardGrid';
 
 const getStyles = (theme: GrafanaTheme2) => ({
   modal: css({
@@ -65,6 +65,7 @@ export function NoAccessModal({ item, isOpen, onDismiss }: NoAccessModalProps) {
       className={styles.modal}
       contentClassName={styles.modalContent}
       title={<NoAccessModalHeader item={item} />}
+      ariaLabel={item.name}
       isOpen={isOpen}
       onDismiss={onDismiss}
     >
@@ -107,7 +108,7 @@ export function NoAccessModal({ item, isOpen, onDismiss }: NoAccessModalProps) {
   );
 }
 
-export function NoAccessModalHeader({ item }: { item: CardGridItem }) {
+function NoAccessModalHeader({ item }: { item: CardGridItem }) {
   const styles = useStyles2(getStyles);
   return (
     <div>

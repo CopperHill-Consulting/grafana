@@ -1,23 +1,22 @@
-import { FormEvent } from 'react';
-import { lastValueFrom } from 'rxjs';
+import { type FormEvent } from 'react';
 
+import { type CustomVariableModel } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
-import { CustomVariable, SceneVariable } from '@grafana/scenes';
-import { TextArea } from '@grafana/ui';
-import { OptionsPaneItemDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
-
-import { VariableLegend } from '../components/VariableLegend';
-import { VariableTextAreaField } from '../components/VariableTextAreaField';
+import { FieldSet, FieldValidationMessage, Icon, RadioButtonGroup, Stack, TextLink, Tooltip } from '@grafana/ui';
 
 import { SelectionOptionsForm } from './SelectionOptionsForm';
+import { VariableLegend } from './VariableLegend';
+import { VariableTextAreaField } from './VariableTextAreaField';
 
 interface CustomVariableFormProps {
   query: string;
+  valuesFormat?: CustomVariableModel['valuesFormat'];
   multi: boolean;
   allValue?: string | null;
   includeAll: boolean;
   allowCustomValue?: boolean;
+  queryValidationError?: Error;
   onQueryChange: (event: FormEvent<HTMLTextAreaElement>) => void;
   onMultiChange: (event: FormEvent<HTMLInputElement>) => void;
   onIncludeAllChange: (event: FormEvent<HTMLInputElement>) => void;
@@ -25,87 +24,118 @@ interface CustomVariableFormProps {
   onQueryBlur?: (event: FormEvent<HTMLTextAreaElement>) => void;
   onAllValueBlur?: (event: FormEvent<HTMLInputElement>) => void;
   onAllowCustomValueChange?: (event: FormEvent<HTMLInputElement>) => void;
+  onValuesFormatChange?: (format: CustomVariableModel['valuesFormat']) => void;
 }
 
 export function CustomVariableForm({
   query,
+  valuesFormat,
   multi,
   allValue,
   includeAll,
   allowCustomValue,
+  queryValidationError,
   onQueryChange,
   onMultiChange,
   onIncludeAllChange,
   onAllValueChange,
   onAllowCustomValueChange,
+  onValuesFormatChange,
 }: CustomVariableFormProps) {
   return (
     <>
-      <VariableLegend>
-        <Trans i18nKey="dashboard-scene.custom-variable-form.custom-options">Custom options</Trans>
-      </VariableLegend>
+      <FieldSet>
+        <VariableLegend>
+          <Trans i18nKey="dashboard-scene.custom-variable-form.custom-options">Custom options</Trans>
+        </VariableLegend>
 
-      <VariableTextAreaField
-        name={t('dashboard-scene.custom-variable-form.name-values-separated-comma', 'Values separated by comma')}
-        defaultValue={query}
-        // eslint-disable-next-line @grafana/i18n/no-untranslated-strings
-        placeholder="1, 10, mykey : myvalue, myvalue, escaped\,value"
-        onBlur={onQueryChange}
-        required
-        width={52}
-        testId={selectors.pages.Dashboard.Settings.Variables.Edit.CustomVariable.customValueInput}
-      />
-      <VariableLegend>
-        <Trans i18nKey="dashboard-scene.custom-variable-form.selection-options">Selection options</Trans>
-      </VariableLegend>
-      <SelectionOptionsForm
-        multi={multi}
-        includeAll={includeAll}
-        allValue={allValue}
-        allowCustomValue={allowCustomValue}
-        onMultiChange={onMultiChange}
-        onIncludeAllChange={onIncludeAllChange}
-        onAllValueChange={onAllValueChange}
-        onAllowCustomValueChange={onAllowCustomValueChange}
-      />
+        <ValuesFormatSelector valuesFormat={valuesFormat} onValuesFormatChange={onValuesFormatChange} />
+
+        <VariableTextAreaField
+          // we don't use a controlled component so we make sure the textarea content is cleared when changing format by providing a key
+          key={valuesFormat}
+          name=""
+          placeholder={
+            valuesFormat === 'json'
+              ? // eslint-disable-next-line @grafana/i18n/no-untranslated-strings
+                '[{ "text":"text1", "value":"val1", "propA":"a1", "propB":"b1" },\n{ "text":"text2", "value":"val2", "propA":"a2", "propB":"b2" }]'
+              : // eslint-disable-next-line @grafana/i18n/no-untranslated-strings
+                '1, 10, mykey : myvalue, myvalue, escaped\,value'
+          }
+          defaultValue={query}
+          onBlur={onQueryChange}
+          required
+          width={52}
+          testId={selectors.pages.Dashboard.Settings.Variables.Edit.CustomVariable.customValueInput}
+        />
+        {queryValidationError && <FieldValidationMessage>{queryValidationError.message}</FieldValidationMessage>}
+      </FieldSet>
+
+      <FieldSet>
+        <VariableLegend>
+          <Trans i18nKey="dashboard-scene.custom-variable-form.selection-options">Selection options</Trans>
+        </VariableLegend>
+        <SelectionOptionsForm
+          multi={multi}
+          includeAll={includeAll}
+          allValue={allValue}
+          allowCustomValue={allowCustomValue}
+          disableAllowCustomValue={valuesFormat === 'json'}
+          disableCustomAllValue={valuesFormat === 'json'}
+          onMultiChange={onMultiChange}
+          onIncludeAllChange={onIncludeAllChange}
+          onAllValueChange={onAllValueChange}
+          onAllowCustomValueChange={onAllowCustomValueChange}
+        />
+      </FieldSet>
     </>
   );
 }
 
-export function getCustomVariableOptions(variable: SceneVariable): OptionsPaneItemDescriptor[] {
-  if (!(variable instanceof CustomVariable)) {
-    return [];
-  }
-
-  return [
-    new OptionsPaneItemDescriptor({
-      title: t('dashboard.edit-pane.variable.custom-options.values', 'Values separated by comma'),
-      id: 'custom-variable-values',
-      render: (descriptor) => <ValuesTextField id={descriptor.props.id} variable={variable} />,
-    }),
-  ];
+interface ValuesFormatSelectorProps {
+  valuesFormat?: CustomVariableModel['valuesFormat'];
+  onValuesFormatChange?: (format: CustomVariableModel['valuesFormat']) => void;
 }
 
-function ValuesTextField({ variable, id }: { variable: CustomVariable; id?: string }) {
-  const { query } = variable.useState();
-
-  const onBlur = async (event: FormEvent<HTMLTextAreaElement>) => {
-    variable.setState({ query: event.currentTarget.value });
-    await lastValueFrom(variable.validateAndUpdate!());
-  };
-
+export function ValuesFormatSelector({ valuesFormat, onValuesFormatChange }: ValuesFormatSelectorProps) {
   return (
-    <TextArea
-      id={id}
-      rows={2}
-      defaultValue={query}
-      onBlur={onBlur}
-      placeholder={t(
-        'dashboard.edit-pane.variable.custom-options.values-placeholder',
-        '1, 10, mykey : myvalue, myvalue, escaped\,value'
+    <Stack direction="row" gap={1}>
+      <RadioButtonGroup
+        value={valuesFormat}
+        onChange={onValuesFormatChange}
+        options={[
+          {
+            value: 'csv',
+            label: t('dashboard-scene.custom-variable-form.name-csv-values', 'CSV'),
+          },
+          {
+            value: 'json',
+            label: t('dashboard-scene.custom-variable-form.name-json-values', 'JSON'),
+          },
+        ]}
+      />
+      {valuesFormat === 'json' && (
+        <Tooltip
+          content={
+            <Trans i18nKey="dashboard-scene.custom-variable-form.json-values-tooltip">
+              Provide a JSON representing an array of objects, where each object can have any number of properties.
+              <br />
+              Check{' '}
+              <TextLink
+                href="https://grafana.com/docs/grafana/latest/visualizations/dashboards/variables/add-template-variables/#add-a-custom-variable"
+                external
+              >
+                our docs
+              </TextLink>{' '}
+              for more information.
+            </Trans>
+          }
+          placement="top"
+          interactive
+        >
+          <Icon name="info-circle" />
+        </Tooltip>
       )}
-      required
-      data-testid={selectors.pages.Dashboard.Settings.Variables.Edit.CustomVariable.customValueInput}
-    />
+    </Stack>
   );
 }

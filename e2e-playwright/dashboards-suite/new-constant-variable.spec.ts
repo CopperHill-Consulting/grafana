@@ -5,7 +5,12 @@ const DASHBOARD_NAME = 'Test variable output';
 
 test.use({
   featureToggles: {
-    kubernetesDashboards: process.env.KUBERNETES_DASHBOARDS === 'true',
+    dashboardNewLayouts: true,
+  },
+  openFeature: {
+    flags: {
+      'grafana.dashboardSettingsRedesign': false,
+    },
   },
 });
 

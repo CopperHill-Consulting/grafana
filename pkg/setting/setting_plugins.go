@@ -7,6 +7,7 @@ import (
 
 	"gopkg.in/ini.v1"
 
+	"github.com/grafana/grafana/pkg/plugins/config"
 	"github.com/grafana/grafana/pkg/util"
 )
 
@@ -15,11 +16,8 @@ const (
 	PluginUpdateStrategyMinor  = "minor"
 )
 
-// PluginSettings maps plugin id to map of key/value settings.
-type PluginSettings map[string]map[string]string
-
-func extractPluginSettings(sections []*ini.Section) PluginSettings {
-	psMap := PluginSettings{}
+func extractPluginSettings(sections []*ini.Section) config.PluginSettings {
+	psMap := config.PluginSettings{}
 	for _, section := range sections {
 		sectionName := section.Name()
 		if !strings.HasPrefix(sectionName, "plugin.") {
@@ -36,10 +34,24 @@ func extractPluginSettings(sections []*ini.Section) PluginSettings {
 var (
 	defaultPreinstallPlugins = map[string]InstallPlugin{
 		// Default preinstalled plugins
-		"grafana-lokiexplore-app":      {ID: "grafana-lokiexplore-app"},
-		"grafana-pyroscope-app":        {ID: "grafana-pyroscope-app"},
-		"grafana-exploretraces-app":    {ID: "grafana-exploretraces-app"},
-		"grafana-metricsdrilldown-app": {ID: "grafana-metricsdrilldown-app"},
+		"grafana-lokiexplore-app":       {ID: "grafana-lokiexplore-app"},
+		"grafana-pyroscope-app":         {ID: "grafana-pyroscope-app"},
+		"grafana-exploretraces-app":     {ID: "grafana-exploretraces-app"},
+		"grafana-metricsdrilldown-app":  {ID: "grafana-metricsdrilldown-app"},
+		"elasticsearch":                 {ID: "elasticsearch"},
+		"prometheus":                    {ID: "prometheus"},
+		"tempo":                         {ID: "tempo"},
+		"zipkin":                        {ID: "zipkin"},
+		"opentsdb":                      {ID: "opentsdb"},
+		"stackdriver":                   {ID: "stackdriver"},
+		"mssql":                         {ID: "mssql"},
+		"jaeger":                        {ID: "jaeger"},
+		"loki":                          {ID: "loki"},
+		"mysql":                         {ID: "mysql"},
+		"influxdb":                      {ID: "influxdb"},
+		"grafana-advisor-app":           {ID: "grafana-advisor-app"},
+		"grafana-postgresql-datasource": {ID: "grafana-postgresql-datasource"},
+		"grafana-pyroscope-datasource":  {ID: "grafana-pyroscope-datasource"},
 	}
 )
 
@@ -102,7 +114,7 @@ func (cfg *Cfg) processPreinstallPlugins(rawInstallPlugins []string, preinstallP
 		if len(parts) > 1 {
 			version = parts[1]
 			if len(parts) > 2 {
-				url = parts[2]
+				url = strings.Join(parts[2:], "@")
 			}
 		}
 
@@ -150,8 +162,11 @@ func (cfg *Cfg) readPluginSettings(iniFile *ini.File) error {
 		for _, plugin := range defaultPreinstallPlugins {
 			preinstallPluginsAsync[plugin.ID] = plugin
 		}
-		if cfg.IsFeatureToggleEnabled("grafanaAdvisor") { // Use literal string to avoid circular dependency
-			preinstallPluginsAsync["grafana-advisor-app"] = InstallPlugin{"grafana-advisor-app", "", ""}
+		if cfg.IsFeatureToggleEnabled("interactiveLearning") { // Use literal string to avoid circular dependency
+			preinstallPluginsAsync["grafana-pathfinder-app"] = InstallPlugin{"grafana-pathfinder-app", "", ""}
+		}
+		if cfg.IsEnterprise {
+			preinstallPluginsAsync["grafana-assistant-app"] = InstallPlugin{"grafana-assistant-app", "", ""}
 		}
 		cfg.processPreinstallPlugins(rawInstallPluginsAsync, preinstallPluginsAsync)
 
@@ -182,6 +197,8 @@ func (cfg *Cfg) readPluginSettings(iniFile *ini.File) error {
 			}
 			cfg.PreinstallPluginsAsync = nil
 		}
+
+		cfg.PreinstallAutoUpdate = pluginsSection.Key("preinstall_auto_update").MustBool(true)
 	}
 
 	cfg.PluginCatalogURL = pluginsSection.Key("plugin_catalog_url").MustString("https://grafana.com/grafana/plugins/")

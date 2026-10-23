@@ -14,8 +14,8 @@ const (
 	SQLDisplayFieldName = "__display_name__"
 
 	// These are not types in the SDK or dataplane contract yet.
-	numericFullLongType    = "numeric_full_long"
-	timeseriesFullLongType = "time_series_full_long"
+	numericFullLongType    = "numeric-full-long"
+	timeseriesFullLongType = "timeseries-full-long"
 )
 
 func ConvertToFullLong(frames data.Frames) (data.Frames, error) {
@@ -302,7 +302,7 @@ func convertTimeSeriesWideToFullLong(frames data.Frames) (data.Frames, error) {
 			display = &s
 			hasDisplayCol = true
 		}
-		for i := 0; i < timeLen; i++ {
+		for i := range timeLen {
 			t := timeField.At(i).(time.Time)
 			v, err := f.FloatAt(i)
 			if err != nil {

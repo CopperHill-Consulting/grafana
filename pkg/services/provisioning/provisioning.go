@@ -6,9 +6,17 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
+
+	"github.com/grafana/dskit/backoff"
+	"github.com/grafana/dskit/services"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/infra/serverlock"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/registry"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
@@ -16,12 +24,15 @@ import (
 	dashboardservice "github.com/grafana/grafana/pkg/services/dashboards"
 	datasourceservice "github.com/grafana/grafana/pkg/services/datasources"
 	"github.com/grafana/grafana/pkg/services/encryption"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/folder"
 	alertingauthz "github.com/grafana/grafana/pkg/services/ngalert/accesscontrol"
 	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/ngalert/notifier"
 	"github.com/grafana/grafana/pkg/services/ngalert/notifier/legacy_storage"
+	"github.com/grafana/grafana/pkg/services/ngalert/notifier/routes"
 	"github.com/grafana/grafana/pkg/services/ngalert/provisioning"
+	"github.com/grafana/grafana/pkg/services/ngalert/provisioning/validation"
 	alertstore "github.com/grafana/grafana/pkg/services/ngalert/store"
 	"github.com/grafana/grafana/pkg/services/notifications"
 	"github.com/grafana/grafana/pkg/services/org"
@@ -33,14 +44,27 @@ import (
 	"github.com/grafana/grafana/pkg/services/provisioning/datasources"
 	"github.com/grafana/grafana/pkg/services/provisioning/plugins"
 	"github.com/grafana/grafana/pkg/services/quota"
-	"github.com/grafana/grafana/pkg/services/searchV2"
 	"github.com/grafana/grafana/pkg/services/secrets"
+	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/legacysql/dualwrite"
 )
 
+const ServiceName = "provisioning"
+
+// Dashboard provisioning can transiently fail at startup when the folder API is
+// not yet available (e.g. an aggregated folder.grafana.app that is still coming
+// up). Retry a bounded number of times before falling back to the allow-list, so
+// a brief folder outage does not silently leave dashboards unprovisioned until
+// the next restart.
+const (
+	defaultDashboardProvisionRetries      = 5
+	defaultDashboardProvisionRetryBackoff = 15 * time.Second
+)
+
 func ProvideService(
 	ac accesscontrol.AccessControl,
+	ruleMutationValidator provisioning.RuleMutationValidator,
 	cfg *setting.Cfg,
 	sqlStore db.DB,
 	pluginStore pluginstore.Store,
@@ -53,16 +77,19 @@ func ProvideService(
 	dashboardService dashboardservice.DashboardService,
 	folderService folder.Service,
 	pluginSettings pluginsettings.Service,
-	searchService searchV2.SearchService,
 	quotaService quota.Service,
-	secrectService secrets.Service,
+	secrectService secrets.Service, //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
 	orgService org.Service,
+	userService user.Service,
 	resourcePermissions accesscontrol.ReceiverPermissionsService,
 	tracer tracing.Tracer,
 	dual dualwrite.Service,
 	promTypeMigrationProvider promtypemigration.PromTypeMigrationProvider,
+	serverLockService *serverlock.ServerLockService,
+	routesPermissions accesscontrol.RoutePermissionsService,
 ) (*ProvisioningServiceImpl, error) {
 	s := &ProvisioningServiceImpl{
+		ruleMutationValidator:        ruleMutationValidator,
 		Cfg:                          cfg,
 		SQLStore:                     sqlStore,
 		ac:                           ac,
@@ -79,17 +106,24 @@ func ProvideService(
 		datasourceService:            datasourceService,
 		correlationsService:          correlationsService,
 		pluginsSettings:              pluginSettings,
-		searchService:                searchService,
 		quotaService:                 quotaService,
 		secretService:                secrectService,
 		log:                          log.New("provisioning"),
 		orgService:                   orgService,
+		userService:                  userService,
 		folderService:                folderService,
 		resourcePermissions:          resourcePermissions,
 		tracer:                       tracer,
 		migratePrometheusType:        promTypeMigrationProvider.Run,
 		dual:                         dual,
+		serverLock:                   serverLockService,
+		routesPermissions:            routesPermissions,
+
+		dashboardProvisionRetries:      defaultDashboardProvisionRetries,
+		dashboardProvisionRetryBackoff: defaultDashboardProvisionRetryBackoff,
 	}
+
+	s.NamedService = services.NewBasicService(s.starting, s.running, nil).WithName(ServiceName)
 
 	if err := s.setDashboardProvisioner(); err != nil {
 		return nil, err
@@ -98,9 +132,126 @@ func ProvideService(
 	return s, nil
 }
 
+func (ps *ProvisioningServiceImpl) starting(ctx context.Context) error {
+	if err := ps.ProvisionDatasources(ctx); err != nil {
+		ps.log.Error("Failed to provision data sources", "error", err)
+		return err
+	}
+
+	if err := ps.ProvisionPlugins(ctx); err != nil {
+		ps.log.Error("Failed to provision plugins", "error", err)
+		return err
+	}
+
+	if err := ps.ProvisionAlerting(ctx); err != nil {
+		ps.log.Error("Failed to provision alerting", "error", err)
+		return err
+	}
+
+	// Migrating prom types relies on data source provisioning to already be completed
+	// If we can make services depend on other services completing first,
+	// then we should remove this from provisioning
+	if err := ps.migratePrometheusType(ctx); err != nil {
+		ps.log.Error("Failed to migrate Prometheus type", "error", err)
+		return err
+	}
+
+	if err := ps.provisionDashboardsWithRetry(ctx); err != nil {
+		ps.log.Error("Failed to provision dashboard", "error", err)
+		// Consider the allow list of errors for which running the provisioning service should not
+		// fail. For now this includes only dashboards.ErrGetOrCreateFolder.
+		if !errors.Is(err, dashboards.ErrGetOrCreateFolder) {
+			return err
+		}
+	}
+	return nil
+}
+
+// isRetriableFolderError reports whether a dashboard provisioning failure is a
+// transient folder-API condition worth retrying (e.g. the aggregated folder API
+// not yet available at startup), as opposed to a permanent configuration error
+// (invalid folder UID, path deeper than the max nested depth) that waiting cannot fix.
+func isRetriableFolderError(err error) bool {
+	if !errors.Is(err, dashboards.ErrGetOrCreateFolder) {
+		return false
+	}
+	if apierrors.IsServiceUnavailable(err) || apierrors.IsServerTimeout(err) ||
+		apierrors.IsTimeout(err) || apierrors.IsTooManyRequests(err) {
+		return true
+	}
+	// Folder lookups over unified storage surface raw gRPC status errors from the
+	// search client that the Kubernetes apierrors predicates above do not match.
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
+// provisionDashboardsWithRetry retries dashboard provisioning while it fails
+// because the folder API is transiently unavailable. Any other error (including
+// permanent folder configuration errors) returns immediately. The final error is
+// returned to the caller, which allow-lists ErrGetOrCreateFolder so a folder
+// outage does not block startup.
+func (ps *ProvisioningServiceImpl) provisionDashboardsWithRetry(ctx context.Context) error {
+	bo := backoff.New(ctx, backoff.Config{
+		// Min==Max keeps the historical fixed backoff between attempts.
+		MinBackoff: ps.dashboardProvisionRetryBackoff,
+		MaxBackoff: ps.dashboardProvisionRetryBackoff,
+		MaxRetries: ps.dashboardProvisionRetries,
+	})
+	var err error
+	for {
+		err = ps.ProvisionDashboards(ctx)
+		if err == nil || !isRetriableFolderError(err) {
+			return err
+		}
+		if !bo.Ongoing() {
+			// Ongoing() is also false when the context is cancelled; surface the
+			// cancellation rather than the allow-listed folder error in that case.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return err
+		}
+		ps.log.Warn("Failed to provision dashboards, folder API unavailable; retrying",
+			"attempt", bo.NumRetries()+1, "maxRetries", ps.dashboardProvisionRetries, "error", err)
+		bo.Wait()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// Return the cancellation, not the folder error, so an aborted startup
+			// is not allow-listed and reported as success by the caller.
+			return ctxErr
+		}
+	}
+}
+
+func (ps *ProvisioningServiceImpl) running(ctx context.Context) error {
+	for {
+		// Wait for unlock. This is tied to new dashboardProvisioner to be instantiated before we start polling.
+		ps.mutex.Lock()
+		// Using background here because otherwise if root context was canceled the select later on would
+		// non-deterministically take one of the route possibly going into one polling loop before exiting.
+		pollingContext, cancelFun := context.WithCancel(context.Background())
+		ps.pollingCtxCancel = cancelFun
+		ps.dashboardProvisioner.PollChanges(pollingContext)
+		ps.mutex.Unlock()
+
+		select {
+		case <-pollingContext.Done():
+			// Polling was canceled.
+			continue
+		case <-ctx.Done():
+			// Root server context was cancelled so cancel polling and leave.
+			ps.cancelPolling()
+			return nil
+		}
+	}
+}
+
 func (ps *ProvisioningServiceImpl) setDashboardProvisioner() error {
 	dashboardPath := filepath.Join(ps.Cfg.ProvisioningPath, "dashboards")
-	dashProvisioner, err := ps.newDashboardProvisioner(context.Background(), dashboardPath, ps.dashboardProvisioningService, ps.orgService, ps.dashboardService, ps.folderService, ps.dual)
+	dashProvisioner, err := ps.newDashboardProvisioner(context.Background(), dashboardPath, ps.dashboardProvisioningService, ps.Cfg, ps.orgService, ps.dashboardService, ps.folderService, ps.serverLock)
 	if err != nil {
 		return fmt.Errorf("%v: %w", "Failed to create provisioner", err)
 	}
@@ -125,17 +276,21 @@ func newProvisioningServiceImpl(
 	provisionDatasources func(context.Context, string, datasources.BaseDataSourceService, datasources.CorrelationsStore, org.Service) error,
 	provisionPlugins func(context.Context, string, pluginstore.Store, pluginsettings.Service, org.Service) error,
 	migratePrometheusType func(context.Context) error,
-	searchService searchV2.SearchService,
 ) (*ProvisioningServiceImpl, error) {
 	s := &ProvisioningServiceImpl{
+		ruleMutationValidator:   provisioning.NoopRuleMutationValidator{},
 		log:                     log.New("provisioning"),
 		newDashboardProvisioner: newDashboardProvisioner,
 		provisionDatasources:    provisionDatasources,
 		provisionPlugins:        provisionPlugins,
 		Cfg:                     setting.NewCfg(),
-		searchService:           searchService,
 		migratePrometheusType:   migratePrometheusType,
+
+		dashboardProvisionRetries:      defaultDashboardProvisionRetries,
+		dashboardProvisionRetryBackoff: defaultDashboardProvisionRetryBackoff,
 	}
+
+	s.NamedService = services.NewBasicService(s.starting, s.running, nil).WithName(ServiceName)
 
 	if err := s.setDashboardProvisioner(); err != nil {
 		return nil, err
@@ -145,10 +300,13 @@ func newProvisioningServiceImpl(
 }
 
 type ProvisioningServiceImpl struct {
+	services.NamedService
 	Cfg                          *setting.Cfg
 	SQLStore                     db.DB
 	orgService                   org.Service
+	userService                  user.Service
 	ac                           accesscontrol.AccessControl
+	ruleMutationValidator        provisioning.RuleMutationValidator
 	pluginStore                  pluginstore.Store
 	alertingStore                *alertstore.DBstore
 	EncryptionService            encryption.Internal
@@ -166,15 +324,18 @@ type ProvisioningServiceImpl struct {
 	datasourceService            datasourceservice.DataSourceService
 	correlationsService          correlations.Service
 	pluginsSettings              pluginsettings.Service
-	searchService                searchV2.SearchService
 	quotaService                 quota.Service
-	secretService                secrets.Service
+	secretService                secrets.Service //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
 	folderService                folder.Service
 	resourcePermissions          accesscontrol.ReceiverPermissionsService
+	routesPermissions            accesscontrol.RoutePermissionsService
 	tracer                       tracing.Tracer
 	dual                         dualwrite.Service
-	onceInitProvisioners         sync.Once
+	serverLock                   *serverlock.ServerLockService
 	migratePrometheusType        func(context.Context) error
+
+	dashboardProvisionRetries      int
+	dashboardProvisionRetryBackoff time.Duration
 }
 
 func (ps *ProvisioningServiceImpl) RunInitProvisioners(ctx context.Context) error {
@@ -185,78 +346,11 @@ func (ps *ProvisioningServiceImpl) RunInitProvisioners(ctx context.Context) erro
 }
 
 func (ps *ProvisioningServiceImpl) Run(ctx context.Context) error {
-	var err error
-
-	// Run Datasources, Plugins and Alerting Provisioning only once.
-	// It can't be initialized at RunInitProvisioners because it
-	// depends on the /apis endpoints to be already running and listeningq
-	ps.onceInitProvisioners.Do(func() {
-		err = ps.ProvisionDatasources(ctx)
-		if err != nil {
-			ps.log.Error("Failed to provision data sources", "error", err)
-			return
-		}
-
-		err = ps.ProvisionPlugins(ctx)
-		if err != nil {
-			ps.log.Error("Failed to provision plugins", "error", err)
-			return
-		}
-
-		err = ps.ProvisionAlerting(ctx)
-		if err != nil {
-			ps.log.Error("Failed to provision alerting", "error", err)
-			return
-		}
-
-		// Migrating prom types relies on data source provisioning to already be completed
-		// If we can make services depend on other services completing first,
-		// then we should remove this from provisioning
-		err = ps.migratePrometheusType(ctx)
-		if err != nil {
-			ps.log.Error("Failed to migrate Prometheus type", "error", err)
-			return
-		}
-	})
-
-	if err != nil {
-		// error already logged
+	if err := ps.StartAsync(ctx); err != nil {
 		return err
 	}
-
-	err = ps.ProvisionDashboards(ctx)
-	if err != nil {
-		ps.log.Error("Failed to provision dashboard", "error", err)
-		// Consider the allow list of errors for which running the provisioning service should not
-		// fail. For now this includes only dashboards.ErrGetOrCreateFolder.
-		if !errors.Is(err, dashboards.ErrGetOrCreateFolder) {
-			return err
-		}
-	}
-	if ps.dashboardProvisioner.HasDashboardSources() {
-		ps.searchService.TriggerReIndex()
-	}
-
-	for {
-		// Wait for unlock. This is tied to new dashboardProvisioner to be instantiated before we start polling.
-		ps.mutex.Lock()
-		// Using background here because otherwise if root context was canceled the select later on would
-		// non-deterministically take one of the route possibly going into one polling loop before exiting.
-		pollingContext, cancelFun := context.WithCancel(context.Background())
-		ps.pollingCtxCancel = cancelFun
-		ps.dashboardProvisioner.PollChanges(pollingContext)
-		ps.mutex.Unlock()
-
-		select {
-		case <-pollingContext.Done():
-			// Polling was canceled.
-			continue
-		case <-ctx.Done():
-			// Root server context was cancelled so cancel polling and leave.
-			ps.cancelPolling()
-			return ctx.Err()
-		}
-	}
+	stopCtx := context.Background()
+	return ps.AwaitTerminated(stopCtx)
 }
 
 func (ps *ProvisioningServiceImpl) ProvisionDatasources(ctx context.Context) error {
@@ -319,25 +413,48 @@ func (ps *ProvisioningServiceImpl) ProvisionAlerting(ctx context.Context) error 
 		ps.log,
 		notifier.NewCachedNotificationSettingsValidationService(ps.alertingStore),
 		alertingauthz.NewRuleService(ps.ac),
+		ps.ruleMutationValidator,
 	)
-	configStore := legacy_storage.NewAlertmanagerConfigStore(ps.alertingStore, notifier.NewExtraConfigsCrypto(ps.secretService))
-	receiverSvc := notifier.NewReceiverService(
-		alertingauthz.NewReceiverAccess[*ngmodels.Receiver](ps.ac, true),
+	var features featuremgmt.FeatureToggles
+	if ps.alertingStore != nil {
+		features = ps.alertingStore.FeatureToggles
+	}
+	configStore := legacy_storage.NewAlertmanagerConfigStore(ps.alertingStore, notifier.NewExtraConfigsCrypto(ps.secretService), features)
+	routeService := routes.NewService(
 		configStore,
 		ps.alertingStore,
 		ps.alertingStore,
+		ps.Cfg.UnifiedAlerting,
+		features,
+		ps.log,
+		validation.ValidateProvenanceRelaxed,
+		ps.tracer,
+		alertingauthz.NewRouteAccess[*legacy_storage.ManagedRoute](ps.ac, ps.routesPermissions, true),
+	)
+	receiverAuthz := alertingauthz.NewReceiverAccess[*ngmodels.Receiver](ps.ac, true)
+	emailValidator := notifier.NewEmailValidator(ps.orgService, ps.Cfg.UnifiedAlerting.LimitEmailToOrgMembers)
+	receiverSvc := notifier.NewReceiverService(
+		receiverAuthz,
+		configStore,
+		ps.alertingStore,
+		ps.alertingStore,
+		routeService,
 		ps.secretService,
 		ps.SQLStore,
 		ps.log,
 		ps.resourcePermissions,
 		ps.tracer,
+		validation.ValidateProvenanceRelaxed,
+		false,
+		ps.Cfg.UnifiedAlerting.AllowedIntegrations,
+		emailValidator,
 	)
-	contactPointService := provisioning.NewContactPointService(configStore, ps.secretService,
-		ps.alertingStore, ps.SQLStore, receiverSvc, ps.log, ps.alertingStore, ps.resourcePermissions)
+	contactPointService := provisioning.NewContactPointService(receiverAuthz, configStore, ps.secretService,
+		ps.alertingStore, ps.SQLStore, receiverSvc, ps.log, ps.alertingStore, ps.resourcePermissions, ps.Cfg.UnifiedAlerting.AllowedIntegrations, emailValidator)
 	notificationPolicyService := provisioning.NewNotificationPolicyService(configStore,
-		ps.alertingStore, ps.SQLStore, ps.Cfg.UnifiedAlerting, ps.log)
-	mutetimingsService := provisioning.NewMuteTimingService(configStore, ps.alertingStore, ps.alertingStore, ps.log, ps.alertingStore)
-	templateService := provisioning.NewTemplateService(configStore, ps.alertingStore, ps.alertingStore, ps.log)
+		ps.alertingStore, ps.SQLStore, routeService, ps.Cfg.UnifiedAlerting, ps.log, validation.ValidateProvenanceRelaxed)
+	mutetimingsService := provisioning.NewMuteTimingService(configStore, ps.alertingStore, ps.alertingStore, ps.log, ps.alertingStore, routeService, validation.ValidateProvenanceRelaxed)
+	templateService := provisioning.NewTemplateService(configStore, ps.alertingStore, ps.alertingStore, ps.log, validation.ValidateProvenanceRelaxed)
 	cfg := prov_alerting.ProvisionerConfig{
 		Path:                       alertingPath,
 		RuleService:                *ruleService,

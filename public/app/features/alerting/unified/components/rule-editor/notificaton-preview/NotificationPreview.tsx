@@ -2,14 +2,23 @@ import { css } from '@emotion/css';
 import { Fragment, Suspense, lazy } from 'react';
 import { useEffectOnce } from 'react-use';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
-import { Button, LoadingPlaceholder, Stack, Text, useStyles2 } from '@grafana/ui';
+import { Alert, Button, LoadingPlaceholder, Stack, Text, Tooltip, useStyles2 } from '@grafana/ui';
 import { alertRuleApi } from 'app/features/alerting/unified/api/alertRuleApi';
-import { AlertQuery, Labels } from 'app/types/unified-alerting-dto';
+import { type AlertQuery, type Labels } from 'app/types/unified-alerting-dto';
 
-import { Folder, KBObjectArray } from '../../../types/rule-form';
-import { useGetAlertManagerDataSourcesByPermissionAndConfig } from '../../../utils/datasource';
+import { isGranted } from '../../../hooks/abilities/abilityUtils';
+import { useNotificationPolicyAbility } from '../../../hooks/abilities/alertmanager/useNotificationPolicyAbility';
+import { NotificationPolicyAction } from '../../../hooks/abilities/types';
+import { AlertmanagerProvider } from '../../../state/AlertmanagerContext';
+import { type Folder, type KBObjectArray } from '../../../types/rule-form';
+import {
+  GRAFANA_RULES_SOURCE_NAME,
+  useGetAlertManagerDataSourcesByPermissionAndConfig,
+} from '../../../utils/datasource';
+import ConditionalWrap from '../../ConditionalWrap';
+import { NAMED_ROOT_LABEL_NAME } from '../../notification-policies/useNotificationPolicyRoute';
 
 const NotificationPreviewByAlertManager = lazy(() => import('./NotificationPreviewByAlertManager'));
 const NotificationPreviewForGrafanaManaged = lazy(() => import('./NotificationPreviewGrafanaManaged'));
@@ -21,9 +30,16 @@ interface NotificationPreviewProps {
   folder?: Folder;
   alertName?: string;
   alertUid?: string;
+  policyName?: string;
 }
 
 const { preview } = alertRuleApi.endpoints;
+
+// strips labels that are routing infrastructure and should never be shown to users
+function stripInternalLabels(labels: Labels): Labels {
+  const { [NAMED_ROOT_LABEL_NAME]: _, ...rest } = labels;
+  return rest;
+}
 
 // TODO the scroll position keeps resetting when we preview
 // this is to be expected because the list of routes dissapears as we start the request but is very annoying
@@ -34,24 +50,22 @@ export const NotificationPreview = ({
   folder,
   alertName,
   alertUid,
+  policyName,
 }: NotificationPreviewProps) => {
   const styles = useStyles2(getStyles);
-  const disabled = !condition || !folder;
+
+  const previewRoutingDisabled = !condition || !folder;
 
   const [trigger, { data = [], isLoading, isUninitialized: previewUninitialized }] = preview.useMutation();
 
   // potential instances are the instances that are going to be routed to the notification policies
   // convert data to list of labels: are the representation of the potential instances
-  const potentialInstances = data.reduce<Labels[]>((acc = [], instance) => {
-    if (instance.labels) {
-      acc.push(instance.labels);
-    }
-
-    return acc;
-  }, []);
+  const potentialInstances = data.flatMap((instance) =>
+    instance.labels ? [stripInternalLabels(instance.labels)] : []
+  );
 
   const onPreview = () => {
-    if (!folder || !condition) {
+    if (previewRoutingDisabled) {
       return;
     }
 
@@ -73,6 +87,19 @@ export const NotificationPreview = ({
   //  Get alert managers's data source information
   const alertManagerDataSources = useGetAlertManagerDataSourcesByPermissionAndConfig('notification');
   const singleAlertManagerConfigured = alertManagerDataSources.length === 1;
+
+  const getTooltipContent = () => {
+    if (!condition) {
+      return (
+        <Trans i18nKey="alerting.notification-preview.no-condition-tooltip">
+          Select a query condition to preview routing
+        </Trans>
+      );
+    }
+    return (
+      <Trans i18nKey="alerting.notification-preview.select-folder-tooltip">Select a folder to preview routing</Trans>
+    );
+  };
 
   return (
     <Stack direction="column">
@@ -102,9 +129,14 @@ export const NotificationPreview = ({
             </Text>
           )}
         </Stack>
-        <Button icon="sync" variant="secondary" type="button" onClick={onPreview} disabled={disabled}>
-          <Trans i18nKey="alerting.notification-preview.preview-routing">Preview routing</Trans>
-        </Button>
+        <ConditionalWrap
+          shouldWrap={previewRoutingDisabled}
+          wrap={(button) => <Tooltip content={getTooltipContent()}>{button}</Tooltip>}
+        >
+          <Button icon="sync" variant="secondary" type="button" onClick={onPreview} disabled={previewRoutingDisabled}>
+            <Trans i18nKey="alerting.notification-preview.preview-routing">Preview routing</Trans>
+          </Button>
+        </ConditionalWrap>
       </Stack>
       {potentialInstances.length > 0 && (
         <Suspense
@@ -119,21 +151,27 @@ export const NotificationPreview = ({
                   <div className={styles.firstAlertManagerLine} />
                   <div className={styles.alertManagerName}>
                     <Trans i18nKey="alerting.notification-preview.alertmanager">Alertmanager:</Trans>
-                    <img src={alertManagerSource.imgUrl} alt="" className={styles.img} />
+                    <img src={alertManagerSource.imgUrl || undefined} alt="" className={styles.img} />
                     {alertManagerSource.name}
                   </div>
                   <div className={styles.secondAlertManagerLine} />
                 </Stack>
               )}
               {alertManagerSource.name === 'grafana' ? (
-                <NotificationPreviewForGrafanaManaged
-                  alertManagerSource={alertManagerSource}
-                  instances={potentialInstances}
-                />
+                <AlertmanagerProvider accessType="notification" alertmanagerSourceName={GRAFANA_RULES_SOURCE_NAME}>
+                  <NotificationPreviewGrafanaPermissionCheck>
+                    <NotificationPreviewForGrafanaManaged
+                      alertManagerSource={alertManagerSource}
+                      instances={potentialInstances}
+                      policyName={policyName}
+                    />
+                  </NotificationPreviewGrafanaPermissionCheck>
+                </AlertmanagerProvider>
               ) : (
                 <NotificationPreviewByAlertManager
                   alertManagerSource={alertManagerSource}
                   instances={potentialInstances}
+                  policyName={policyName}
                 />
               )}
             </Fragment>
@@ -143,6 +181,27 @@ export const NotificationPreview = ({
     </Stack>
   );
 };
+
+/**
+ * Permission check for Grafana notification preview.
+ * Requires an AlertmanagerProvider ancestor (always provided by the call site above).
+ * Uses the standard ability system to check ViewNotificationPolicyTree permission.
+ */
+function NotificationPreviewGrafanaPermissionCheck({ children }: React.PropsWithChildren) {
+  const viewPoliciesAbility = useNotificationPolicyAbility({ action: NotificationPolicyAction.ViewTree });
+
+  if (isGranted(viewPoliciesAbility)) {
+    return <>{children}</>;
+  }
+
+  return (
+    <Alert severity="warning" title={t('alerting.notification-preview.permission-warning', 'Preview not available')}>
+      <Trans i18nKey="alerting.notification-preview.permission-warning-message">
+        You don&apos;t have permission to view notification policies. Preview is not available.
+      </Trans>
+    </Alert>
+  );
+}
 
 const getStyles = (theme: GrafanaTheme2) => ({
   firstAlertManagerLine: css({

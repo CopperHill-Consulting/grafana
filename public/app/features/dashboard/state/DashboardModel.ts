@@ -2,32 +2,30 @@ import { cloneDeep, defaults as _defaults, filter, indexOf, isEqual, map, maxBy,
 import { Subscription } from 'rxjs';
 
 import {
-  AnnotationQuery,
-  AppEvent,
-  DashboardCursorSync,
-  dateTime,
+  type AnnotationQuery,
+  type AppEvent,
+  type DashboardCursorSync,
   dateTimeFormat,
   dateTimeFormatTimeAgo,
-  DateTimeInput,
-  EventBusExtended,
+  type DateTimeInput,
+  type EventBusExtended,
   EventBusSrv,
-  PanelModel as IPanelModel,
-  TimeRange,
-  TimeZone,
-  TypedVariableModel,
-  UrlQueryValue,
+  type TimeRange,
+  type TimeZone,
+  type TypedVariableModel,
+  type UrlQueryValue,
 } from '@grafana/data';
-import { PromQuery } from '@grafana/prometheus';
-import { RefreshEvent, TimeRangeUpdatedEvent, config } from '@grafana/runtime';
-import { Dashboard, DashboardLink, VariableModel } from '@grafana/schema';
+import { type PromQuery } from '@grafana/prometheus';
+import { RefreshEvent, TimeRangeUpdatedEvent } from '@grafana/runtime';
+import { type Dashboard, type DashboardLink, type VariableModel } from '@grafana/schema';
 import { DEFAULT_ANNOTATION_COLOR } from '@grafana/ui';
 import { GRID_CELL_HEIGHT, GRID_CELL_VMARGIN, GRID_COLUMN_COUNT, REPEAT_DIR_VERTICAL } from 'app/core/constants';
 import { contextSrv } from 'app/core/services/context_srv';
 import { sortedDeepCloneWithoutNulls } from 'app/core/utils/object';
 import { variableAdapters } from 'app/features/variables/adapters';
 import { onTimeRangeUpdated } from 'app/features/variables/state/actions';
-import { GetVariables, getVariablesByKey } from 'app/features/variables/state/selectors';
-import { DashboardMeta } from 'app/types/dashboard';
+import { type GetVariables, getVariablesByKey } from 'app/features/variables/state/selectors';
+import { type DashboardMeta } from 'app/types/dashboard';
 import {
   DashboardMetaChangedEvent,
   DashboardPanelsChangedEvent,
@@ -35,21 +33,20 @@ import {
   templateVariableValueUpdated,
 } from 'app/types/events';
 
-import { appEvents } from '../../../core/core';
+import { appEvents } from '../../../core/app_events';
 import { dispatch } from '../../../store/store';
 import {
   VariablesChanged,
-  VariablesChangedEvent,
+  type VariablesChangedEvent,
   VariablesChangedInUrl,
   VariablesTimeRangeProcessDone,
 } from '../../variables/types';
 import { isAllVariable } from '../../variables/utils';
 import { getTimeSrv } from '../services/TimeSrv';
-import { mergePanels, PanelMergeInfo } from '../utils/panelMerge';
 
 import { DashboardMigrator } from './DashboardMigrator';
 import { PanelModel } from './PanelModel';
-import { TimeModel } from './TimeModel';
+import { type TimeModel } from './TimeModel';
 import { deleteScopeVars, isOnTheSameGridRow } from './utils';
 
 export interface CloneOptions {
@@ -58,8 +55,6 @@ export interface CloneOptions {
   message?: string;
 }
 
-export type DashboardLinkType = 'link' | 'dashboards';
-
 /** @experimental */
 export interface ScopeMeta {
   trait: string;
@@ -67,9 +62,7 @@ export interface ScopeMeta {
 }
 
 export class DashboardModel implements TimeModel {
-  /** @deprecated use UID */
-  id: any;
-  // TODO: use propert type and fix all the places where uid is set to null
+  // TODO: use proper type and fix all the places where uid is set to null
   uid: any;
   title: string;
   description: any;
@@ -81,6 +74,7 @@ export class DashboardModel implements TimeModel {
   graphTooltip: DashboardCursorSync;
   time: any;
   liveNow?: boolean;
+  preload?: boolean;
   private originalTime: any;
   timepicker: any;
   templating: { list: any[] };
@@ -95,7 +89,6 @@ export class DashboardModel implements TimeModel {
   gnetId: any;
   panels: PanelModel[];
   panelInEdit?: PanelModel;
-  panelInView?: PanelModel;
   fiscalYearStartMonth?: number;
   scopeMeta?: ScopeMeta;
   private panelsAffectedByVariableChange: number[] | null;
@@ -122,7 +115,6 @@ export class DashboardModel implements TimeModel {
     originalTemplating: true,
     originalLibraryPanels: true,
     panelInEdit: true,
-    panelInView: true,
     getVariablesFromState: true,
     formatDate: true,
     appEventsSubscription: true,
@@ -144,7 +136,6 @@ export class DashboardModel implements TimeModel {
   ) {
     this.getVariablesFromState = options?.getVariablesFromState ?? getVariablesByKey;
     this.events = new EventBusSrv();
-    this.id = data.id || null;
     // UID is not there for newly created dashboards
     this.uid = data.uid || meta?.uid || null;
     this.revision = data.revision ?? undefined;
@@ -154,6 +145,7 @@ export class DashboardModel implements TimeModel {
     this.timezone = data.timezone ?? '';
     this.weekStart = data.weekStart ?? '';
     this.editable = data.editable !== false;
+    this.preload = data.preload;
     this.graphTooltip = data.graphTooltip || 0;
     this.time = data.time ?? { from: 'now-6h', to: 'now' };
     this.timepicker = data.timepicker ?? {};
@@ -180,7 +172,6 @@ export class DashboardModel implements TimeModel {
 
     this.initMeta(meta);
     this.updateSchema(data, options?.targetSchemaVersion);
-
     this.addBuiltInAnnotationQuery();
     this.sortPanelsByGridPos();
     this.panelsAffectedByVariableChange = null;
@@ -216,8 +207,6 @@ export class DashboardModel implements TimeModel {
     meta = meta || {};
 
     meta.canShare = meta.canShare !== false;
-    // CHC: canExport needed for screenshot service
-    meta.canExport = meta.canExport !== false;
     meta.canSave = meta.canSave !== false;
     meta.canStar = meta.canStar !== false;
     meta.canEdit = meta.canEdit !== false;
@@ -284,28 +273,6 @@ export class DashboardModel implements TimeModel {
     return cloneSafe;
   }
 
-  /**
-   * This will load a new dashboard, but keep existing panels unchanged
-   *
-   * This function can be used to implement:
-   * 1. potentially faster loading dashboard loading
-   * 2. dynamic dashboard behavior
-   * 3. "live" dashboard editing
-   *
-   * @internal and experimental
-   */
-  // TODO: remove this as it's not being used anymore
-  // Also remove public/app/features/dashboard/utils/panelMerge.ts
-  updatePanels(panels: IPanelModel[]): PanelMergeInfo {
-    const info = mergePanels(this.panels, panels ?? []);
-    if (info.changed) {
-      this.panels = info.panels ?? [];
-      this.sortPanelsByGridPos();
-      this.events.publish(new DashboardPanelsChangedEvent());
-    }
-    return info;
-  }
-
   private getPanelSaveModels() {
     return this.panels
       .filter((panel) => this.isSnapshotTruthy() || !(panel.repeatPanelId || panel.repeatedByRow))
@@ -359,7 +326,10 @@ export class DashboardModel implements TimeModel {
     const currentVariables = this.getVariablesFromState(this.uid);
 
     const saveModels = currentVariables.map((variable) => {
-      const variableSaveModel = variableAdapters.get(variable.type).getSaveModel(variable, options.saveVariables);
+      // Group by variables has no adapter. Use the model as-is. This is safe to do as in scenes from which dashboard can be serialised,
+      // the variable model is provided through getVariablesCompatibility.
+      const adapter = variableAdapters.getIfExists(variable.type);
+      const variableSaveModel: any = adapter ? adapter.getSaveModel(variable, options.saveVariables) : variable;
 
       if (!options.saveVariables) {
         const original = originalVariables.find(
@@ -389,7 +359,7 @@ export class DashboardModel implements TimeModel {
     this.events.publish(new TimeRangeUpdatedEvent(timeRange));
     dispatch(onTimeRangeUpdated(this.uid, timeRange));
 
-    if (this.panelInEdit || this.panelInView) {
+    if (this.panelInEdit) {
       this.timeRangeUpdatedDuringEditOrView = true;
     }
   }
@@ -428,16 +398,8 @@ export class DashboardModel implements TimeModel {
     }
   }
 
-  panelInitialized(panel: PanelModel) {
-    const lastResult = panel.getQueryRunner().getLastResult();
-
-    if (!this.otherPanelInFullscreen(panel) && !lastResult) {
-      panel.refresh();
-    }
-  }
-
   otherPanelInFullscreen(panel: PanelModel) {
-    return (this.panelInEdit || this.panelInView) && !(panel.isViewing || panel.isEditing);
+    return Boolean(this.panelInEdit && !panel.isEditing);
   }
 
   initEditPanel(sourcePanel: PanelModel): PanelModel {
@@ -453,18 +415,6 @@ export class DashboardModel implements TimeModel {
 
     getTimeSrv().resumeAutoRefresh();
 
-    this.refreshIfPanelsAffectedByVariableChangeOrTimeRangeChanged();
-  }
-
-  initViewPanel(panel: PanelModel) {
-    this.panelInView = panel;
-    this.timeRangeUpdatedDuringEditOrView = false;
-    panel.setIsViewing(true);
-  }
-
-  exitViewPanel(panel: PanelModel) {
-    this.panelInView = undefined;
-    panel.setIsViewing(false);
     this.refreshIfPanelsAffectedByVariableChangeOrTimeRangeChanged();
   }
 
@@ -526,6 +476,14 @@ export class DashboardModel implements TimeModel {
       }
     }
 
+    // Also check panels in legacy rows (pre-v16 dashboard format)
+    // This ensures unique IDs are assigned before the row upgrade migration runs
+    for (const panel of this.rawPanelIterator()) {
+      if (panel.id > max) {
+        max = panel.id;
+      }
+    }
+
     return max + 1;
   }
 
@@ -536,6 +494,26 @@ export class DashboardModel implements TimeModel {
       const rowPanels = panel.panels ?? [];
       for (const rowPanel of rowPanels) {
         yield rowPanel;
+      }
+    }
+  }
+
+  /**
+   * Iterates over panels from the original raw dashboard data, including legacy rows.
+   * This is needed to find panel IDs before row upgrade migration runs.
+   */
+  private *rawPanelIterator() {
+    // @ts-expect-error - rows is a legacy property not included in the modern Dashboard schema
+    const rows = this.originalDashboard?.rows;
+
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        const rowPanels = row?.panels;
+        if (Array.isArray(rowPanels)) {
+          for (const panel of rowPanels) {
+            yield panel;
+          }
+        }
       }
     }
   }
@@ -647,7 +625,7 @@ export class DashboardModel implements TimeModel {
   }
 
   processRepeats() {
-    if (this.isSnapshotTruthy() || !this.hasVariables() || this.panelInView) {
+    if (this.isSnapshotTruthy() || !this.hasVariables()) {
       return;
     }
 
@@ -709,11 +687,6 @@ export class DashboardModel implements TimeModel {
 
     clone.repeatPanelId = sourcePanel.id;
     clone.repeat = undefined;
-
-    if (this.panelInView?.id === clone.id) {
-      clone.setIsViewing(true);
-      this.panelInView = clone;
-    }
 
     return clone;
   }
@@ -932,14 +905,6 @@ export class DashboardModel implements TimeModel {
     }
   }
 
-  isSubMenuVisible() {
-    return (
-      this.links.length > 0 ||
-      this.getVariables().some((variable) => variable.hide !== 2) ||
-      this.annotations.list.some((annotation) => !annotation.hide)
-    );
-  }
-
   getPanelInfoById(panelId: number) {
     const panelIndex = this.panels.findIndex((p) => p.id === panelId);
     return panelIndex >= 0 ? { panel: this.panels[panelIndex], index: panelIndex } : null;
@@ -1098,18 +1063,6 @@ export class DashboardModel implements TimeModel {
     this.events.off(event, callback);
   }
 
-  cycleGraphTooltip() {
-    this.graphTooltip = (this.graphTooltip + 1) % 3;
-  }
-
-  sharedTooltipModeEnabled() {
-    return this.graphTooltip > 0;
-  }
-
-  sharedCrosshairModeOnly() {
-    return this.graphTooltip === 1;
-  }
-
   getRelativeTime(date: DateTimeInput) {
     return dateTimeFormatTimeAgo(date, {
       timeZone: this.getTimezone(),
@@ -1131,13 +1084,7 @@ export class DashboardModel implements TimeModel {
 
   hasTimeChanged() {
     const { time, originalTime } = this;
-
-    // Compare moment values vs strings values
-    return !(
-      isEqual(time, originalTime) ||
-      (isEqual(dateTime(time?.from), dateTime(originalTime?.from)) &&
-        isEqual(dateTime(time?.to), dateTime(originalTime?.to)))
-    );
+    return time.from !== originalTime.from || time.to !== originalTime.to;
   }
 
   autoFitPanels(viewHeight: number, kioskMode?: UrlQueryValue) {
@@ -1221,35 +1168,11 @@ export class DashboardModel implements TimeModel {
   }
 
   canEditAnnotations(dashboardUID?: string) {
-    let canEdit = true;
-
-    // dashboardUID is falsy when it is an organizational annotation
-    if (!dashboardUID) {
-      canEdit = !!this.meta.annotationsPermissions?.organization.canEdit;
-    } else {
-      canEdit = !!this.meta.annotationsPermissions?.dashboard.canEdit;
-    }
-
-    if (config.featureToggles.annotationPermissionUpdate) {
-      return canEdit;
-    }
-    return this.canEditDashboard() && canEdit;
+    return !!this.meta.annotationsPermissions?.dashboard.canEdit;
   }
 
   canDeleteAnnotations(dashboardUID?: string) {
-    let canDelete = true;
-
-    // dashboardUID is falsy when it is an organizational annotation
-    if (!dashboardUID) {
-      canDelete = !!this.meta.annotationsPermissions?.organization.canDelete;
-    } else {
-      canDelete = !!this.meta.annotationsPermissions?.dashboard.canDelete;
-    }
-
-    if (config.featureToggles.annotationPermissionUpdate) {
-      return canDelete;
-    }
-    return canDelete && this.canEditDashboard();
+    return !!this.meta.annotationsPermissions?.dashboard.canDelete;
   }
 
   canAddAnnotations() {
@@ -1259,12 +1182,7 @@ export class DashboardModel implements TimeModel {
       return false;
     }
 
-    // If RBAC is enabled there are additional conditions to check.
-    if (config.featureToggles.annotationPermissionUpdate) {
-      return Boolean(this.meta.annotationsPermissions?.dashboard.canAdd);
-    }
-
-    return Boolean(this.meta.annotationsPermissions?.dashboard.canAdd) && this.canEditDashboard();
+    return Boolean(this.meta.annotationsPermissions?.dashboard.canAdd);
   }
 
   canEditDashboard() {
@@ -1324,10 +1242,8 @@ export class DashboardModel implements TimeModel {
       return;
     }
 
-    if (this.panelInEdit || this.panelInView) {
-      this.panelsAffectedByVariableChange = event.payload.panelIds.filter(
-        (id) => id !== (this.panelInEdit?.id ?? this.panelInView?.id)
-      );
+    if (this.panelInEdit) {
+      this.panelsAffectedByVariableChange = event.payload.panelIds.filter((id) => id !== this.panelInEdit?.id);
     }
 
     this.startRefresh(event.payload);

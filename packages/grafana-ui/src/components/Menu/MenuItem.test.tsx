@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 
 import { selectors } from '@grafana/e2e-selectors';
 
-import { MenuItem, MenuItemProps } from './MenuItem';
+import { MenuItem, type MenuItemProps } from './MenuItem';
 
 describe('MenuItem', () => {
   let user: ReturnType<typeof userEvent.setup>;
@@ -85,9 +85,34 @@ describe('MenuItem', () => {
     expect(await screen.findByTestId(selectors.components.Menu.SubMenu.container)).toBeInTheDocument();
   });
 
-  it('renders with role="link" when URL is passed', async () => {
+  it('announces subMenu parents to screen readers via aria-haspopup and aria-expanded', async () => {
+    const childItems = [
+      <MenuItem key="subitem1" label="subitem1" icon="history" />,
+      <MenuItem key="subitem2" label="subitem2" icon="apps" />,
+    ];
+
+    render(getMenuItem({ childItems }));
+
+    const item = screen.getByLabelText(selectors.components.Menu.MenuItem('Test'));
+    expect(item).toHaveAttribute('aria-haspopup', 'menu');
+    expect(item).toHaveAttribute('aria-expanded', 'false');
+
+    await user.hover(item);
+
+    expect(item).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('does not set aria-haspopup or aria-expanded on items without a subMenu', () => {
+    render(getMenuItem({ onClick: jest.fn() }));
+
+    const item = screen.getByLabelText(selectors.components.Menu.MenuItem('Test'));
+    expect(item).not.toHaveAttribute('aria-haspopup');
+    expect(item).not.toHaveAttribute('aria-expanded');
+  });
+
+  it('renders with role="menuitem" when URL is passed (default for menu semantics)', () => {
     render(<MenuItem label="URL Item" url="/some-url" />);
-    expect(screen.getByRole('link', { name: 'URL Item' })).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', { name: 'URL Item' })).toBeInTheDocument();
   });
 
   it('renders with expected role when URL and role are passed', async () => {
@@ -99,5 +124,41 @@ describe('MenuItem', () => {
     render(<MenuItem label="main label" component={() => <p>extra content</p>} />);
     expect(screen.getByText('main label')).toBeInTheDocument();
     expect(screen.getByText('extra content')).toBeInTheDocument();
+  });
+
+  it('activates link MenuItem with Space key', async () => {
+    const onClick = jest.fn((e: React.MouseEvent) => e.preventDefault());
+    render(<MenuItem label="Link Item" url="/some-url" onClick={onClick} />);
+
+    const item = screen.getByRole('menuitem', { name: 'Link Item' });
+    await user.type(item, ' ');
+
+    expect(onClick).toHaveBeenCalled();
+  });
+
+  describe('iconColor', () => {
+    it('passes the color string directly to the icon style', () => {
+      render(getMenuItem({ iconColor: '#B877D9' }));
+      const icon = screen.getByLabelText(selectors.components.Menu.MenuItem('Test')).querySelector('svg');
+      expect(icon).toHaveStyle({ color: '#B877D9' });
+    });
+
+    it('does not apply iconColor when destructive is true', () => {
+      render(getMenuItem({ iconColor: '#B877D9', destructive: true }));
+      const icon = screen.getByLabelText(selectors.components.Menu.MenuItem('Test')).querySelector('svg');
+      expect(icon).not.toHaveStyle({ color: '#B877D9' });
+    });
+
+    it('does not apply iconColor when disabled is true', () => {
+      render(getMenuItem({ iconColor: '#B877D9', disabled: true }));
+      const icon = screen.getByLabelText(selectors.components.Menu.MenuItem('Test')).querySelector('svg');
+      expect(icon).not.toHaveStyle({ color: '#B877D9' });
+    });
+
+    it('does not apply inline color style when iconColor is not set', () => {
+      render(getMenuItem());
+      const icon = screen.getByLabelText(selectors.components.Menu.MenuItem('Test')).querySelector('svg');
+      expect(icon).not.toHaveAttribute('style');
+    });
   });
 });

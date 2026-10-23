@@ -3,6 +3,10 @@ package grpcplugin
 import (
 	"context"
 	"errors"
+	"os/exec"
+
+	"github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/go-plugin/runner"
 
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
@@ -48,35 +52,30 @@ type ProtoClientOpts struct {
 	ExecutablePath  string
 	ExecutableArgs  []string
 	Env             []string
-	ContainerMode   ContainerModeOpts
+	RunnerFunc      func(l hclog.Logger, cmd *exec.Cmd, tmpDir string) (runner.Runner, error)
 	SkipHostEnvVars bool
 	Logger          log.Logger
 	Tracer          trace.Tracer
 }
 
-type ContainerModeOpts struct {
-	Enabled bool
-	Image   string
-}
-
 func NewProtoClient(opts ProtoClientOpts) (ProtoClient, error) {
-	p := newGrpcPlugin(
+	p, err := newGrpcPlugin(
 		PluginDescriptor{
 			pluginID:         opts.PluginJSON.ID,
 			managed:          true,
 			executablePath:   opts.ExecutablePath,
 			executableArgs:   opts.ExecutableArgs,
 			versionedPlugins: pluginSet,
-			containerMode: containerModeOpts{
-				enabled: opts.ContainerMode.Enabled,
-				image:   opts.ContainerMode.Image,
-			},
-			skipHostEnvVars: opts.SkipHostEnvVars,
+			runnerFunc:       opts.RunnerFunc,
+			skipHostEnvVars:  opts.SkipHostEnvVars,
 		},
 		opts.Logger,
 		opts.Tracer,
 		func() []string { return opts.Env },
 	)
+	if err != nil {
+		return nil, err
+	}
 
 	return &protoClient{plugin: p, pluginJSON: opts.PluginJSON}, nil
 }
@@ -114,6 +113,14 @@ func (r *protoClient) QueryData(ctx context.Context, in *pluginv2.QueryDataReque
 		return nil, errClientNotAvailable
 	}
 	return c.DataClient.QueryData(ctx, in, opts...)
+}
+
+func (r *protoClient) QueryChunkedData(ctx context.Context, in *pluginv2.QueryChunkedDataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[pluginv2.QueryChunkedDataResponse], error) {
+	c, exists := r.client(ctx)
+	if !exists {
+		return nil, errClientNotAvailable
+	}
+	return c.DataClient.QueryChunkedData(ctx, in, opts...)
 }
 
 func (r *protoClient) CallResource(ctx context.Context, in *pluginv2.CallResourceRequest, opts ...grpc.CallOption) (pluginv2.Resource_CallResourceClient, error) {

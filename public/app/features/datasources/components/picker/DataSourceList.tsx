@@ -1,20 +1,25 @@
 import { css, cx } from '@emotion/css';
-import { useRef } from 'react';
+import { useMemo } from 'react';
 import * as React from 'react';
-import { Observable } from 'rxjs';
+import { type Observable } from 'rxjs';
 
-import { DataSourceInstanceSettings, DataSourceJsonData, DataSourceRef, GrafanaTheme2 } from '@grafana/data';
+import {
+  type DataSourceInstanceSettings,
+  type DataSourceJsonData,
+  type DataSourceRef,
+  type GrafanaTheme2,
+} from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
-import { Trans } from '@grafana/i18n';
-import { getTemplateSrv, reportInteraction, useFavoriteDatasources } from '@grafana/runtime';
-import { useStyles2, useTheme2 } from '@grafana/ui';
+import { Trans, t } from '@grafana/i18n';
+import { type FavoriteDatasources, getTemplateSrv } from '@grafana/runtime';
+import { useStyles2 } from '@grafana/ui';
+import { SearchStatus } from '@grafana/ui/internal';
 
-import { useDatasources, useKeyboardNavigatableList, useRecentlyUsedDataSources } from '../../hooks';
+import { useDatasources, useRecentlyUsedDataSources } from '../../hooks';
 
 import { AddNewDataSourceButton } from './AddNewDataSourceButton';
-import { DataSourceCard } from './DataSourceCard';
-import { INTERACTION_EVENT_NAME, INTERACTION_ITEM } from './DataSourcePicker';
-import { getDataSourceCompareFn, isDataSourceMatch } from './utils';
+import { VirtualizedList } from './VirtualizedList';
+import { getDataSourceCompareFn } from './utils';
 
 /**
  * Component props description for the {@link DataSourceList}
@@ -45,20 +50,70 @@ export interface DataSourceListProps {
   onClickEmptyStateCTA?: () => void;
   enableKeyboardNavigation?: boolean;
   dataSources?: Array<DataSourceInstanceSettings<DataSourceJsonData>>;
+  favoriteDataSources: FavoriteDatasources;
+  /** Ref to the scroll container element, used by the virtualizer */
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  /** DOM id of the listbox, used to build option ids for aria-activedescendant */
+  listboxId?: string;
+  /** Reports the DOM id of the keyboard-highlighted option, for aria-activedescendant on the input */
+  onActiveItemChange?: (id: string | undefined) => void;
 }
 
 export function DataSourceList(props: DataSourceListProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const styles = useStyles2(getStyles);
 
-  const [navigatableProps, selectedItemCssSelector] = useKeyboardNavigatableList({
-    keyboardEvents: props.keyboardEvents,
-    containerRef: containerRef,
-  });
+  const {
+    className,
+    current,
+    onChange,
+    enableKeyboardNavigation,
+    onClickEmptyStateCTA,
+    favoriteDataSources,
+    listboxId,
+    onActiveItemChange,
+    scrollRef,
+  } = props;
 
-  const theme = useTheme2();
-  const styles = getStyles(theme, selectedItemCssSelector);
+  const [recentlyUsedDataSources, pushRecentlyUsedDataSource] = useRecentlyUsedDataSources();
+  const sortedDataSources = useSortedDataSources(props, current, recentlyUsedDataSources, favoriteDataSources);
 
-  const { className, current, onChange, enableKeyboardNavigation, onClickEmptyStateCTA } = props;
+  const searchStatusMessage =
+    sortedDataSources.length === 0
+      ? t('data-source-picker.list.no-data-source-message', 'No data sources found')
+      : t('data-source-picker.list.results-found', '', {
+          count: sortedDataSources.length,
+          defaultValue_one: '{{count}} data source found',
+          defaultValue_other: '{{count}} data sources found',
+        });
+
+  return (
+    <div className={cx(className, styles.container)} data-testid={selectors.components.DataSourcePicker.dataSourceList}>
+      <SearchStatus message={searchStatusMessage} />
+      {sortedDataSources.length === 0 && <EmptyState className={styles.emptyState} onClickCTA={onClickEmptyStateCTA} />}
+      {sortedDataSources.length > 0 && (
+        <VirtualizedList
+          sortedDataSources={sortedDataSources}
+          enableKeyboardNavigation={enableKeyboardNavigation}
+          keyboardEvents={props.keyboardEvents}
+          current={current}
+          favoriteDataSources={favoriteDataSources}
+          onChange={onChange}
+          pushRecentlyUsedDataSource={pushRecentlyUsedDataSource}
+          scrollRef={scrollRef}
+          listboxId={listboxId}
+          onActiveItemChange={onActiveItemChange}
+        />
+      )}
+    </div>
+  );
+}
+
+function useSortedDataSources(
+  props: DataSourceListProps,
+  current: DataSourceRef | DataSourceInstanceSettings | string | null | undefined,
+  recentlyUsedDataSources: string[],
+  favoriteDataSources: FavoriteDatasources
+) {
   const dataSources = useDatasources(
     {
       alerting: props.alerting,
@@ -75,58 +130,19 @@ export function DataSourceList(props: DataSourceListProps) {
     props.dataSources
   );
 
-  const [recentlyUsedDataSources, pushRecentlyUsedDataSource] = useRecentlyUsedDataSources();
-  const favoriteDataSources = useFavoriteDatasources();
-
   const filteredDataSources = props.filter ? dataSources.filter(props.filter) : dataSources;
 
-  return (
-    <div
-      ref={containerRef}
-      className={cx(className, styles.container)}
-      data-testid={selectors.components.DataSourcePicker.dataSourceList}
-    >
-      {filteredDataSources.length === 0 && (
-        <EmptyState className={styles.emptyState} onClickCTA={onClickEmptyStateCTA} />
-      )}
-      {filteredDataSources
-        .sort(
-          getDataSourceCompareFn(
-            current,
-            recentlyUsedDataSources,
-            getDataSourceVariableIDs(),
-            favoriteDataSources.enabled ? favoriteDataSources.initialFavoriteDataSources : undefined
-          )
+  return useMemo(
+    () =>
+      [...filteredDataSources].sort(
+        getDataSourceCompareFn(
+          current,
+          recentlyUsedDataSources,
+          getDataSourceVariableIDs(),
+          favoriteDataSources.enabled ? favoriteDataSources.initialFavoriteDataSources : undefined
         )
-        .map((ds) => (
-          <DataSourceCard
-            data-testid="data-source-card"
-            key={ds.uid}
-            ds={ds}
-            onClick={() => {
-              pushRecentlyUsedDataSource(ds);
-              onChange(ds);
-            }}
-            selected={isDataSourceMatch(ds, current)}
-            isFavorite={favoriteDataSources.enabled ? favoriteDataSources.isFavoriteDatasource(ds.uid) : undefined}
-            onToggleFavorite={
-              favoriteDataSources.enabled
-                ? () => {
-                    reportInteraction(INTERACTION_EVENT_NAME, {
-                      item: INTERACTION_ITEM.TOGGLE_FAVORITE,
-                      ds_type: ds.type,
-                      is_favorite: !favoriteDataSources.isFavoriteDatasource(ds.uid),
-                    });
-                    favoriteDataSources.isFavoriteDatasource(ds.uid)
-                      ? favoriteDataSources.removeFavoriteDatasource(ds)
-                      : favoriteDataSources.addFavoriteDatasource(ds);
-                  }
-                : undefined
-            }
-            {...(enableKeyboardNavigation ? navigatableProps : {})}
-          />
-        ))}
-    </div>
+      ),
+    [filteredDataSources, current, recentlyUsedDataSources, favoriteDataSources]
   );
 }
 
@@ -165,14 +181,14 @@ function getDataSourceVariableIDs() {
     .map((v) => `\${${v.id}}`);
 }
 
-function getStyles(theme: GrafanaTheme2, selectedItemCssSelector: string) {
+function getStyles(theme: GrafanaTheme2) {
   return {
     container: css({
       display: 'flex',
       flexDirection: 'column',
       padding: theme.spacing(0.5),
-      [`${selectedItemCssSelector}`]: {
-        backgroundColor: theme.colors.background.secondary,
+      '[data-selecteditem="true"]': {
+        backgroundColor: theme.colors.action.focus,
       },
     }),
     emptyState: css({

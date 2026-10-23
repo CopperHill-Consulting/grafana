@@ -124,7 +124,7 @@ func (dbCfg *DatabaseConfig) readConfig(cfg *setting.Cfg) error {
 	dbCfg.MigrationLockAttemptTimeout = sec.Key("locking_attempt_timeout_sec").MustInt()
 
 	dbCfg.QueryRetries = sec.Key("query_retries").MustInt()
-	dbCfg.TransactionRetries = sec.Key("transaction_retries").MustInt(5)
+	dbCfg.TransactionRetries = sec.Key("transaction_retries").MustInt(10)
 
 	dbCfg.LogQueries = sec.Key("log_queries").MustBool(false)
 	dbCfg.DeleteAutoGenIDs = sec.Key("delete_auto_gen_ids").MustBool(false)
@@ -146,7 +146,7 @@ func (dbCfg *DatabaseConfig) buildConnectionString(cfg *setting.Cfg, features fe
 			protocol = "unix"
 		}
 
-		cnnstr = fmt.Sprintf("%s:%s@%s(%s)/%s?collation=utf8mb4_unicode_ci&allowNativePasswords=true&clientFoundRows=true",
+		cnnstr = fmt.Sprintf("%s:%s@%s(%s)/%s?collation=utf8mb4_unicode_ci&allowNativePasswords=true&clientFoundRows=true&parseTime=true",
 			dbCfg.User, dbCfg.Pwd, protocol, dbCfg.Host, dbCfg.Name)
 
 		if dbCfg.SslMode == "true" || dbCfg.SslMode == "skip-verify" {
@@ -166,10 +166,7 @@ func (dbCfg *DatabaseConfig) buildConnectionString(cfg *setting.Cfg, features fe
 			cnnstr += fmt.Sprintf("&transaction_isolation=%s", val)
 		}
 
-		if features != nil && features.IsEnabledGlobally(featuremgmt.FlagMysqlAnsiQuotes) {
-			cnnstr += "&sql_mode='ANSI_QUOTES'"
-		}
-
+		cnnstr += "&sql_mode=ANSI_QUOTES"
 		cnnstr += buildExtraConnectionString('&', dbCfg.UrlQueryParams)
 	case migrator.Postgres:
 		addr, err := util.SplitHostPortDefault(dbCfg.Host, "127.0.0.1", "5432")
@@ -205,8 +202,12 @@ func (dbCfg *DatabaseConfig) buildConnectionString(cfg *setting.Cfg, features fe
 
 		cnnstr = fmt.Sprintf("file:%s?cache=%s&mode=rwc", dbCfg.Path, dbCfg.CacheMode)
 
+		// SQLite keeps the journal mode in the database file, so a database that was once
+		// opened with WAL stays in WAL until we ask for something else.
 		if dbCfg.WALEnabled {
 			cnnstr += "&_journal_mode=WAL"
+		} else {
+			cnnstr += "&_journal_mode=DELETE"
 		}
 
 		cnnstr += buildExtraConnectionString('&', dbCfg.UrlQueryParams)

@@ -1,12 +1,89 @@
-import { RepositorySpec } from 'app/api/clients/provisioning/v0alpha1';
+import { type CommitOptions, type InlineSecureValue, type RepositorySpec } from 'app/api/clients/provisioning/v0alpha1';
 
-import { RepositoryFormData } from '../types';
+import { type RepositoryFormData } from '../types';
 
-const getWorkflows = (data: RepositoryFormData): RepositorySpec['workflows'] => {
+import { isGitHubBased } from './repositoryTypes';
+
+// Template field names across the git-convention option groups.
+type TemplateFieldKey = 'singleResourceMessageTemplate' | 'nameTemplate' | 'titleTemplate';
+
+// The git-convention option groups (commit, branch, pull request — and signing
+// next) all share the same shape: a single template string field whose name
+// varies per group, plus an enforce toggle.
+type TemplateOptions<TemplateKey extends TemplateFieldKey> = Partial<Record<TemplateKey, string>> & {
+  enforceTemplate?: boolean;
+};
+
+// Commit options extend the shared template shape with signing fields.
+const buildCommitOptions = (data: RepositoryFormData): CommitOptions | undefined => {
+  const base = buildTemplateOptions(
+    'singleResourceMessageTemplate',
+    data.commit?.singleResourceMessageTemplate,
+    data.commit?.enforceTemplate
+  );
+  const signingMethod = data.signingMethod;
+  const authorName = signingMethod ? undefined : data.commit?.authorName?.trim();
+  const authorEmail = signingMethod ? undefined : data.commit?.authorEmail?.trim();
+  const signerName = signingMethod ? data.commit?.signerName?.trim() : undefined;
+  const signerEmail = signingMethod ? data.commit?.signerEmail?.trim() : undefined;
+  const signerIsAuthor = Boolean(signingMethod) && Boolean(data.commit?.signerIsAuthor);
+
+  if (!base && !authorName && !authorEmail && !signerName && !signerEmail && !signingMethod) {
+    return undefined;
+  }
+
+  const commit: CommitOptions = { ...base };
+  if (authorName) {
+    commit.authorName = authorName;
+  }
+  if (authorEmail) {
+    commit.authorEmail = authorEmail;
+  }
+  if (signerName) {
+    commit.signerName = signerName;
+  }
+  if (signerEmail) {
+    commit.signerEmail = signerEmail;
+  }
+  if (signingMethod) {
+    commit.signingMethod = signingMethod;
+  }
+  if (signerIsAuthor) {
+    commit.signerIsAuthor = true;
+  }
+  if (data.smimeCertificate) {
+    commit.smimeCertificate = data.smimeCertificate;
+  }
+  return commit;
+};
+
+// Build a spec-level options group from its form values, trimming the template
+// and omitting empty fields so we don't persist blank templates. Returns
+// undefined when nothing is configured. Keeps all the groups in sync.
+const buildTemplateOptions = <TemplateKey extends TemplateFieldKey>(
+  templateKey: TemplateKey,
+  template?: string,
+  enforceTemplate?: boolean
+): TemplateOptions<TemplateKey> | undefined => {
+  const trimmedTemplate = template?.trim();
+
+  if (!trimmedTemplate && !enforceTemplate) {
+    return undefined;
+  }
+
+  const templatePart: Partial<Record<TemplateKey, string>> = {};
+  if (trimmedTemplate) {
+    templatePart[templateKey] = trimmedTemplate;
+  }
+
+  return { ...templatePart, ...(enforceTemplate ? { enforceTemplate } : {}) };
+};
+
+export const getWorkflows = (data: RepositoryFormData): RepositorySpec['workflows'] => {
   if (data.readOnly) {
     return [];
   }
-  const workflows: RepositorySpec['workflows'] = ['write'];
+  const workflows: RepositorySpec['workflows'] = data.enablePushToConfiguredBranch ? ['write'] : [];
 
   if (!data.prWorkflow) {
     return workflows;
@@ -15,7 +92,7 @@ const getWorkflows = (data: RepositoryFormData): RepositorySpec['workflows'] => 
   return [...workflows, 'branch'];
 };
 
-export const dataToSpec = (data: RepositoryFormData): RepositorySpec => {
+export const dataToSpec = (data: RepositoryFormData, connectionName?: string): RepositorySpec => {
   const spec: RepositorySpec = {
     type: data.type,
     sync: data.sync,
@@ -23,9 +100,44 @@ export const dataToSpec = (data: RepositoryFormData): RepositorySpec => {
     workflows: getWorkflows(data),
   };
 
+  const commit = buildCommitOptions(data);
+  if (commit) {
+    spec.commit = commit;
+  }
+
+  const branch = buildTemplateOptions(
+    'nameTemplate',
+    data.branchOptions?.nameTemplate,
+    data.branchOptions?.enforceTemplate
+  );
+  if (branch) {
+    spec.branch = branch;
+  }
+
+  const pullRequest = buildTemplateOptions(
+    'titleTemplate',
+    data.pullRequest?.titleTemplate,
+    data.pullRequest?.enforceTemplate
+  );
+  // GitHub keeps generateDashboardPreviews on its own config until existing repositories are
+  // backfilled; every other provider stores it on pullRequest options (matches the backend).
+  const generatePreviewsOnPullRequest = data.type !== 'github' && Boolean(data.generateDashboardPreviews);
+  if (pullRequest || generatePreviewsOnPullRequest) {
+    spec.pullRequest = {
+      ...pullRequest,
+      ...(generatePreviewsOnPullRequest ? { generateDashboardPreviews: data.generateDashboardPreviews } : {}),
+    };
+  }
+
+  if (data.webhook?.disabled) {
+    spec.webhook = { disabled: true };
+  } else if (data.webhook?.baseUrl) {
+    spec.webhook = { baseUrl: data.webhook.baseUrl };
+  }
+
   const baseConfig = {
     url: data.url || '',
-    branch: data.branch,
+    branch: data.branch || '',
     path: data.path,
   };
 
@@ -36,14 +148,23 @@ export const dataToSpec = (data: RepositoryFormData): RepositorySpec => {
         generateDashboardPreviews: data.generateDashboardPreviews,
       };
       break;
+    case 'githubEnterprise':
+      spec.githubEnterprise = {
+        ...baseConfig,
+      };
+      break;
     case 'gitlab':
       spec.gitlab = baseConfig;
       break;
     case 'bitbucket':
-      spec.bitbucket = baseConfig;
+      spec.bitbucket = {
+        ...baseConfig,
+        tokenUser: data.tokenUser,
+        email: data.email?.trim() || undefined,
+      };
       break;
     case 'git':
-      spec.git = baseConfig;
+      spec.git = { ...baseConfig, tokenUser: data.tokenUser };
       break;
     case 'local':
       spec.local = {
@@ -53,39 +174,82 @@ export const dataToSpec = (data: RepositoryFormData): RepositorySpec => {
       break;
   }
 
+  // Add connection reference at spec level when using GitHub App (github and
+  // githubEnterprise). The connection name is only available for the app flow;
+  // prefer data.connectionName over the parameter for consistency.
+  if (isGitHubBased(data.type)) {
+    const finalConnectionName = data.connectionName || connectionName;
+    if (finalConnectionName) {
+      spec.connection = { name: finalConnectionName };
+    }
+  }
+
   // We need to deep clone the data, so it doesn't become immutable
   return structuredClone(spec);
 };
 
+/**
+ * Derive the `secure.commitSigningKey` entry from the form's signing state.
+ * Returns `{ create }` when signing is enabled and a new key was entered,
+ * `{ remove: true }` when signing is disabled but a key was previously stored,
+ * and `undefined` when there is nothing to change. Both submit paths
+ * (config edit and wizard create) share this so the set/keep/remove decision
+ * lives in one place.
+ */
+export const deriveSigningKeySecret = (
+  data: RepositoryFormData,
+  existingKeyConfigured: boolean
+): InlineSecureValue | undefined => {
+  if (data.signingMethod) {
+    return data.commitSigningKey ? { create: data.commitSigningKey } : undefined;
+  }
+  return existingKeyConfigured ? { remove: true } : undefined;
+};
+
 export const specToData = (spec: RepositorySpec): RepositoryFormData => {
-  const remoteConfig = spec.github || spec.gitlab || spec.bitbucket || spec.git;
+  const remoteConfig = spec.github || spec.githubEnterprise || spec.gitlab || spec.bitbucket || spec.git;
+  // tokenUser is only available for bitbucket and pure git
+  const tokenUser = spec.bitbucket?.tokenUser ?? spec.git?.tokenUser;
 
   return structuredClone({
     ...spec,
     ...remoteConfig,
     ...spec.local,
     branch: remoteConfig?.branch || '',
+    branchOptions: spec.branch,
     url: remoteConfig?.url || '',
-    generateDashboardPreviews: spec.github?.generateDashboardPreviews || false,
+    tokenUser: tokenUser || '',
+    generateDashboardPreviews: spec.github
+      ? (spec.github?.generateDashboardPreviews ?? false)
+      : (spec.pullRequest?.generateDashboardPreviews ?? false),
     readOnly: !spec.workflows.length,
     prWorkflow: spec.workflows.includes('branch'),
+    enablePushToConfiguredBranch: spec.workflows.includes('write'),
+    connectionName: spec.connection?.name,
+    signingMethod: spec.commit?.signingMethod ?? '',
+    smimeCertificate: spec.commit?.smimeCertificate ?? '',
+    commitSigningKey: '',
+    commit: {
+      ...spec.commit,
+      authorName: spec.commit?.authorName ?? '',
+      authorEmail: spec.commit?.authorEmail ?? '',
+      signerName: spec.commit?.signerName ?? '',
+      signerEmail: spec.commit?.signerEmail ?? '',
+      signerIsAuthor: spec.commit?.signerIsAuthor ?? false,
+    },
   });
 };
 
 export const generateRepositoryTitle = (repository: Pick<RepositoryFormData, 'type' | 'url' | 'path'>): string => {
   switch (repository.type) {
     case 'github':
-      const name = repository.url ?? 'github';
-      return name.replace('https://github.com/', '');
+    case 'githubEnterprise':
     case 'gitlab':
-      const gitlabName = repository.url ?? 'gitlab';
-      return gitlabName.replace('https://gitlab.com/', '');
     case 'bitbucket':
-      const bitbucketName = repository.url ?? 'bitbucket';
-      return bitbucketName.replace('https://bitbucket.org/', '');
-    case 'git':
-      const gitName = repository.url ?? 'git';
-      return gitName.replace(/^https?:\/\/[^\/]+\//, '');
+    case 'git': {
+      const repoUrl = repository.url ?? repository.type;
+      return repoUrl.replace(/^https?:\/\/[^\/]+\//, '');
+    }
     case 'local':
       return repository.path ?? 'local';
     default:

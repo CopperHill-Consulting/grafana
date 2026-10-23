@@ -1,143 +1,54 @@
 package notifier
 
 import (
-	"encoding/json"
 	"testing"
 
-	alertingNotify "github.com/grafana/alerting/notify"
 	"github.com/prometheus/alertmanager/config"
-	"github.com/stretchr/testify/require"
+	"github.com/prometheus/alertmanager/timeinterval"
+	"github.com/stretchr/testify/assert"
 
-	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
+	v1 "github.com/grafana/grafana/pkg/services/ngalert/notifier/legacy_storage/v1"
 )
 
-func TestPostableGrafanaReceiverToGrafanaIntegrationConfig(t *testing.T) {
-	r := &apimodels.PostableGrafanaReceiver{
-		UID:                   "test-uid",
-		Name:                  "test-name",
-		Type:                  "slack",
-		DisableResolveMessage: false,
-		Settings:              apimodels.RawMessage(`{ "data" : "test" }`),
-		SecureSettings: map[string]string{
-			"test": "data",
-		},
+func TestModelToTimeIntervals(t *testing.T) {
+	weekdayRange := timeinterval.WeekdayRange{InclusiveRange: timeinterval.InclusiveRange{Begin: 1, End: 5}}
+
+	ti := func(name string, intervals ...timeinterval.TimeInterval) v1.TimeInterval {
+		return v1.TimeInterval{Title: name, TimeIntervals: intervals}
 	}
-	actual := PostableGrafanaReceiverToGrafanaIntegrationConfig(r)
-	require.Equal(t, alertingNotify.GrafanaIntegrationConfig{
-		UID:                   "test-uid",
-		Name:                  "test-name",
-		Type:                  "slack",
-		DisableResolveMessage: false,
-		Settings:              json.RawMessage(`{ "data" : "test" }`),
-		SecureSettings: map[string]string{
-			"test": "data",
+	want := func(name string, intervals ...timeinterval.TimeInterval) config.TimeInterval {
+		return config.TimeInterval{Name: name, TimeIntervals: intervals}
+	}
+
+	testCases := []struct {
+		name     string
+		in       []v1.TimeInterval
+		expected []config.TimeInterval
+	}{
+		{
+			name:     "empty",
+			expected: []config.TimeInterval{},
 		},
-	}, *actual)
-}
-
-func TestPostableApiReceiverToApiReceiver(t *testing.T) {
-	t.Run("returns empty when no receivers", func(t *testing.T) {
-		r := &apimodels.PostableApiReceiver{
-			Receiver: config.Receiver{
-				Name: "test-receiver",
+		{
+			name:     "multiple time intervals",
+			in:       []v1.TimeInterval{ti("ti-1"), ti("ti-2")},
+			expected: []config.TimeInterval{want("ti-1"), want("ti-2")},
+		},
+		{
+			name: "preserves TimeIntervals payload",
+			in: []v1.TimeInterval{
+				{Title: "ti-1", TimeIntervals: []timeinterval.TimeInterval{{Weekdays: []timeinterval.WeekdayRange{weekdayRange}}}},
 			},
-		}
-		actual := PostableApiReceiverToApiReceiver(r)
-		require.Empty(t, actual.Integrations)
-		require.Equal(t, r.Receiver, actual.ConfigReceiver)
-	})
-	t.Run("converts receivers", func(t *testing.T) {
-		r := &apimodels.PostableApiReceiver{
-			Receiver: config.Receiver{
-				Name: "test-receiver",
-			},
-			PostableGrafanaReceivers: apimodels.PostableGrafanaReceivers{
-				GrafanaManagedReceivers: []*apimodels.PostableGrafanaReceiver{
-					{
-						UID:                   "test-uid",
-						Name:                  "test-name",
-						Type:                  "slack",
-						DisableResolveMessage: false,
-						Settings:              apimodels.RawMessage(`{ "data" : "test" }`),
-						SecureSettings: map[string]string{
-							"test": "data",
-						},
-					},
-					{
-						UID:                   "test-uid2",
-						Name:                  "test-name2",
-						Type:                  "webhook",
-						DisableResolveMessage: false,
-						Settings:              apimodels.RawMessage(`{ "data2" : "test2" }`),
-						SecureSettings: map[string]string{
-							"test2": "data2",
-						},
-					},
-				},
-			},
-		}
-		actual := PostableApiReceiverToApiReceiver(r)
-		require.Len(t, actual.Integrations, 2)
-		require.Equal(t, r.Receiver, actual.ConfigReceiver)
-		require.Equal(t, *PostableGrafanaReceiverToGrafanaIntegrationConfig(r.GrafanaManagedReceivers[0]), *actual.Integrations[0])
-		require.Equal(t, *PostableGrafanaReceiverToGrafanaIntegrationConfig(r.GrafanaManagedReceivers[1]), *actual.Integrations[1])
-	})
-}
-
-func TestPostableApiAlertingConfigToApiReceivers(t *testing.T) {
-	t.Run("returns empty when no receivers", func(t *testing.T) {
-		r := apimodels.PostableApiAlertingConfig{
-			Config: apimodels.Config{},
-		}
-		actual := PostableApiAlertingConfigToApiReceivers(r)
-		require.Empty(t, actual)
-	})
-	c := apimodels.PostableApiAlertingConfig{
-		Config: apimodels.Config{},
-		Receivers: []*apimodels.PostableApiReceiver{
-			{
-				Receiver: config.Receiver{
-					Name: "test-receiver",
-				},
-				PostableGrafanaReceivers: apimodels.PostableGrafanaReceivers{
-					GrafanaManagedReceivers: []*apimodels.PostableGrafanaReceiver{
-						{
-							UID:                   "test-uid",
-							Name:                  "test-name",
-							Type:                  "slack",
-							DisableResolveMessage: false,
-							Settings:              apimodels.RawMessage(`{ "data" : "test" }`),
-							SecureSettings: map[string]string{
-								"test": "data",
-							},
-						},
-					},
-				},
-			},
-			{
-				Receiver: config.Receiver{
-					Name: "test-receiver2",
-				},
-				PostableGrafanaReceivers: apimodels.PostableGrafanaReceivers{
-					GrafanaManagedReceivers: []*apimodels.PostableGrafanaReceiver{
-						{
-							UID:                   "test-uid2",
-							Name:                  "test-name1",
-							Type:                  "slack",
-							DisableResolveMessage: false,
-							Settings:              apimodels.RawMessage(`{ "data" : "test" }`),
-							SecureSettings: map[string]string{
-								"test": "data",
-							},
-						},
-					},
-				},
+			expected: []config.TimeInterval{
+				{Name: "ti-1", TimeIntervals: []timeinterval.TimeInterval{{Weekdays: []timeinterval.WeekdayRange{weekdayRange}}}},
 			},
 		},
 	}
-	actual := PostableApiAlertingConfigToApiReceivers(c)
 
-	require.Len(t, actual, 2)
-	require.Equal(t, PostableApiReceiverToApiReceiver(c.Receivers[0]), actual[0])
-	require.Equal(t, PostableApiReceiverToApiReceiver(c.Receivers[1]), actual[1])
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := ModelToTimeIntervals(tc.in)
+			assert.Equal(t, tc.expected, result)
+		})
+	}
 }

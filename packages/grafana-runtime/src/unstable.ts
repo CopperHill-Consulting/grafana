@@ -9,5 +9,31 @@
  * and be subject to the standard policies
  */
 
-// This is a dummy export so typescript doesn't error importing an "empty module"
-export const unstable = {};
+export { clearLoggerRegistry, getLogger, initializeLoggersRegistry, setLogger } from './services/logging/registry';
+export { type LoggerSource } from './services/logging/loggers';
+export { defineFeatureEvents } from './analyticsFramework/main';
+export type { EventProperty, Event } from './analyticsFramework/types';
+export { getPluginSettings } from './services/pluginSettings/getPluginSettings';
+export { updateAppPluginSettings } from './services/pluginSettings/updateAppPluginSettings';
+export { usePluginSettings } from './services/pluginSettings/hooks';
+export {
+  type GetDataSourceInstanceListFilters,
+  getDataSourceInstanceSettings,
+  getDataSourceInstanceList,
+  getDefaultDataSourceInstance,
+  hasDataSourceInstance,
+  reloadDataSourceInstanceSettings,
+} from './services/dataSource/settings';
+export { getDataSourceInstance, registerRuntimeDataSourceInstance } from './services/dataSource/dataSource';
+export {
+  useDataSourceInstanceSettings,
+  useDataSourceInstance,
+  useDataSourceInstanceList,
+  useDefaultDataSourceInstance,
+  useHasDataSourceInstance,
+  type UseDataSourceInstanceSettingsResult,
+  type UseDataSourceInstanceResult,
+  type UseDataSourceInstanceListResult,
+  type UseDefaultDataSourceInstanceResult,
+  type UseHasDataSourceInstanceResult,
+} from './services/dataSource/hooks';

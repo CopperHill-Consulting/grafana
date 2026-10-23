@@ -6,7 +6,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 
 	provisioning "github.com/grafana/grafana/apps/provisioning/pkg/apis/provisioning/v0alpha1"
 )
@@ -18,11 +17,6 @@ import (
 type Repository interface {
 	// Config returns the saved Kubernetes object.
 	Config() *provisioning.Repository
-
-	// Validate ensures the resource _looks_ correct.
-	// It should be called before trying to upsert a resource into the Kubernetes API server.
-	// This is not an indication that the connection information works, just that they are reasonably configured (see also Test).
-	Validate() field.ErrorList
 
 	// Test checks if the connection information actually works.
 	Test(ctx context.Context) (*provisioning.TestResults, error)
@@ -43,12 +37,63 @@ var ErrRefNotFound error = &apierrors.StatusError{ErrStatus: metav1.Status{
 	Message: "ref not found",
 }}
 
+// CompareRefNotFoundError identifies which CompareFiles operand could not be resolved.
+type CompareRefNotFoundError struct {
+	Ref string
+	Err error
+}
+
+func (e *CompareRefNotFoundError) Error() string {
+	return e.Err.Error()
+}
+
+func (e *CompareRefNotFoundError) Unwrap() error {
+	return e.Err
+}
+
 var ErrFileAlreadyExists error = &apierrors.StatusError{ErrStatus: metav1.Status{
 	Status:  metav1.StatusFailure,
 	Code:    http.StatusConflict,
 	Reason:  metav1.StatusReasonAlreadyExists,
 	Message: "file already exists",
 }}
+
+// ErrUnauthorized indicates that authentication credentials are invalid or missing.
+var ErrUnauthorized error = &apierrors.StatusError{ErrStatus: metav1.Status{
+	Status:  metav1.StatusFailure,
+	Code:    http.StatusUnauthorized,
+	Reason:  metav1.StatusReasonUnauthorized,
+	Message: "authentication failed",
+}}
+
+// ErrPermissionDenied indicates that the authenticated user lacks required permissions.
+var ErrPermissionDenied error = &apierrors.StatusError{ErrStatus: metav1.Status{
+	Status:  metav1.StatusFailure,
+	Code:    http.StatusForbidden,
+	Reason:  metav1.StatusReasonForbidden,
+	Message: "permission denied",
+}}
+
+// ErrServerUnavailable indicates that the remote server is unavailable or returned a 5xx error.
+var ErrServerUnavailable error = &apierrors.StatusError{ErrStatus: metav1.Status{
+	Status:  metav1.StatusFailure,
+	Code:    http.StatusServiceUnavailable,
+	Reason:  metav1.StatusReasonServiceUnavailable,
+	Message: "server unavailable",
+}}
+
+// ErrTooManyItems indicates that pagination limits were exceeded.
+var ErrTooManyItems error = &apierrors.StatusError{ErrStatus: metav1.Status{
+	Status:  metav1.StatusFailure,
+	Code:    http.StatusBadRequest,
+	Reason:  metav1.StatusReasonBadRequest,
+	Message: "maximum number of items exceeded",
+}}
+
+var ErrRepositoryMismatch = apierrors.NewBadRequest("repository mismatch")
+
+// ErrInvalidRef indicates that a provided git ref (branch or commit SHA) failed validation.
+var ErrInvalidRef = apierrors.NewBadRequest("invalid ref")
 
 type FileInfo struct {
 	// Path to the file on disk.
@@ -125,6 +170,16 @@ type ReaderWriter interface {
 	Writer
 }
 
+// SizeLimitedReader is an optional interface implemented by concrete repository
+// types that support per-read file size enforcement. WithMaxFileSize stores the
+// limit atomically so the next Read rejects payloads exceeding maxBytes.
+// Because it mutates in place, the caller keeps the same concrete type and all
+// optional interface assertions (Versioned, StageableRepository, …) stay valid.
+type SizeLimitedReader interface {
+	Reader
+	WithMaxFileSize(maxBytes int64)
+}
+
 //go:generate mockery --name RepositoryWithURLs --structname MockRepositoryWithURLs --inpackage --filename repository_with_urls_mock.go --with-expecter
 type RepositoryWithURLs interface {
 	Repository
@@ -134,13 +189,26 @@ type RepositoryWithURLs interface {
 	RefURLs(ctx context.Context, ref string) (*provisioning.RepositoryURLs, error)
 }
 
-// Hooks called after the repository has been created, updated or deleted
-type Hooks interface {
+// WebhookRepository is implemented by repositories that can receive and handle
+// incoming webhook requests from their git provider.
+//
+//go:generate mockery --name WebhookRepository --structname MockWebhookRepository --inpackage --filename webhook_repository_mock.go --with-expecter
+type WebhookRepository interface {
 	Repository
 
-	OnCreate(ctx context.Context) ([]map[string]interface{}, error)
-	OnUpdate(ctx context.Context) ([]map[string]interface{}, error)
-	OnDelete(ctx context.Context) error
+	// Slug is the repository the webhook is configured for; the dispatcher uses
+	// it to reject events for anything else.
+	Slug() string
+
+	// VerifyRequest authenticates the inbound request and returns its verified form.
+	VerifyRequest(req *http.Request) (*VerifiedWebhookRequest, error)
+
+	// ProcessRequest normalizes an already-verified request into an event.
+	ProcessRequest(ctx context.Context, req *VerifiedWebhookRequest) (WebhookEvent, error)
+
+	WebhookClient() WebhookClient
+	WebhookURL() string
+	SubscribedEvents() []string
 }
 
 type FileAction string
@@ -174,4 +242,23 @@ type Versioned interface {
 	LatestRef(ctx context.Context) (string, error)
 	ListRefs(ctx context.Context) ([]provisioning.RefItem, error)
 	CompareFiles(ctx context.Context, base, ref string) ([]VersionedFileChange, error)
+}
+
+// BranchHandler is a repository that supports making actions on branches.
+type BranchHandler interface {
+	GetDefaultBranch(ctx context.Context) (string, error)
+	GetCurrentBranch() string
+	SetBranch(branch string)
+}
+
+// PullRequestRepo is implemented by repositories that can be evaluated and
+// commented on as part of a pull request preview job.
+//
+//go:generate mockery --name PullRequestRepo --structname MockPullRequestRepo --inpackage --filename pull_request_repo_mock.go --with-expecter
+type PullRequestRepo interface {
+	Config() *provisioning.Repository
+	Read(ctx context.Context, path, ref string) (*FileInfo, error)
+	MergeBase(ctx context.Context, headRef string) (string, error)
+	CompareFiles(ctx context.Context, base, ref string) ([]VersionedFileChange, error)
+	CommentPullRequest(ctx context.Context, prNumber int, comment string) error
 }

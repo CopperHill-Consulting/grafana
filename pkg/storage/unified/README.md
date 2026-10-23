@@ -25,10 +25,6 @@ target = all
 ; https is required for kubectl
 protocol = https
 
-[feature_toggles]
-; store playlists in k8s
-kubernetesPlaylists = true
-
 [grafana-apiserver]
 ; use unified storage for k8s apiserver
 storage_type = unified
@@ -77,12 +73,6 @@ storage_type = unified
 ### Setting up a kubeconfig 
 
 With this configuration, you can run everything in-process. Run the Grafana backend with:
-
-```sh
-bra run
-```
-
-or
 
 ```sh
 make run
@@ -202,40 +192,69 @@ then run:
 kubectl --kubeconfig=./grafana.kubeconfig create -f folder-generate.yaml
 ```
 
-### Run as a GRPC service
+### Run as a separate GRPC service
 
-#### Start GRPC storage-server
+It is recommended to use a separate config file for the storage-server. Create a file `conf/storage-server.ini` with the following content:
 
-Make sure you have the gRPC address in the `[grafana-apiserver]` section of your config file:
 ```ini
+app_mode = development
+
+target = storage-server
+
+[database]
+type = mysql
+host = 127.0.0.1:3306
+name = unified-storage
+user = root
+password = rootpass
+skip_migrations = true
+ensure_default_org_and_user = false
+
+[grpc_server]
+network = "tcp"
+address = "127.0.0.1:10000"
+
 [grafana-apiserver]
-; your gRPC server address
-address = localhost:10000
-```
+storage_type = unified
 
-You also need the `[grpc_server_authentication]` section to authenticate incoming requests:
-```ini
 [grpc_server_authentication]
-; http url to Grafana's signing keys to validate incoming id tokens
-signing_keys_url = http://localhost:3000/api/signing-keys/keys
+signing_keys_url = http://localhost:3011/api/signing-keys/keys
 mode = "on-prem"
+; for local dev only
+unsafe = true
+
+[feature_toggles]
+unifiedStorageHistoryPruner = true
+unifiedStorageSearchPermissionFiltering = false
+
+[unified_storage]
+enable_search = true
+https_skip_verify = true
 ```
 
-This currently only works with a separate database configuration (see previous section).
+You should also have a MySQL database running. You can create one with our docker blocks by running:
+```bash
+make devenv sources=mysql
+```
+The database credentials in the example above will work with the default mysql docker block. You'll also need to create a database named `unified-storage`.
 
 Start the storage-server with:
 ```sh
-GF_DEFAULT_TARGET=storage-server ./bin/grafana server target
+./bin/grafana server target --config conf/storage-server.ini
 ```
 
 The GRPC service will listen on port 10000
 
 #### Use GRPC server
 
-To run grafana against the storage-server, override the `storage_type` setting:
+To run grafana against the storage-server, override the `storage_type` setting and enable the App Platform gRPC client auth so grafana sends authlib tokens (paired with the storage-server's `unsafe = true` for signature bypass):
 ```sh
-GF_GRAFANA_APISERVER_STORAGE_TYPE=unified-grpc ./bin/grafana server
+GF_GRAFANA_APISERVER_STORAGE_TYPE=unified-grpc \
+GF_FEATURE_TOGGLES_ENABLE=appPlatformGrpcClientAuth \
+./bin/grafana server
 ```
+
+Leave `[grpc_client_authentication]` unset in grafana's ini. With `TokenExchangeURL` empty, the client falls back to the in-process static token exchanger and creates a service-identity token that the storage server's unsafe authenticator accepts.
 
 You can then list the previously-created playlists with:
 ```sh
@@ -252,17 +271,38 @@ go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 - make changes in `.proto` file
 - to compile all protobuf files in the repository run `make protobuf` at its top level
 
-## Setting up search
-To enable it, add the following to your `custom.ini` under the `[feature_toggles]` section:
-```ini
-[feature_toggles]
-; Used by the Grafana instance
-unifiedStorageSearchUI = true
+## Enable Quotas/Overrides
+Quotas will make unified storage impose resource limits on a namespace. By default, the limit is 1000, but it can be overridden. To enable, create an empty overrides.yaml file in the grafana root directory.
 
-; Used by unified storage
-unifiedStorageSearch = true
-; (optional) Allows you to sort dashboards by usage insights fields when using enterprise
-; unifiedStorageSearchSprinkles = true
+Then add the following to your grafana ini:
+```ini
+[unified_storage]
+overrides_path = overrides.yaml
+overrides_reload_period = 5s
+```
+
+To override the default quota for a tenant, add the following to the `overrides.yaml` file:
+```yaml
+overrides:
+  <NAMESPACE>:
+    quotas:
+      <GROUP>/<RESOURCE>:
+        limit: 10
+```
+Unless otherwise set, the `NAMESPACE` when running locally is `default`.
+
+To access quotas, use the following API endpoint:
+```
+GET /apis/quotas.grafana.app/v0alpha1/namespaces/<NAMESPACE>/usage?group=<GROUP>&resource=<RESOURCE>
+```
+
+
+## Setting up search
+To enable it, add the following to your `custom.ini` under the `[feature_toggles]` and `[unified_storage]` sections:
+```ini
+[unified_storage]
+; Used by unified storage server
+enable_search = true
 ```
 
 The dashboard search page has been set up to search unified storage. Additionally, all legacy search calls (e.g. `/api/search`) will go to
@@ -369,12 +409,9 @@ storage_type = unified
 signing_keys_url = http://localhost:3011/api/signing-keys/keys
 mode = "on-prem"
 
-[feature_toggles]
-unifiedStorage = true
-unifiedStorageSearch = true
-
 [unified_storage]
 enable_sharding = true
+enable_search = true
 instance_id = node-0
 memberlist_bind_addr = "127.0.0.2"
 memberlist_advertise_addr = "127.0.0.2"
@@ -415,9 +452,6 @@ search_server_address = 127.0.0.1:10000
 protocol = http
 http_port = 3011
 http_addr = "127.0.0.2"
-
-[feature_toggles]
-unifiedStorageSearchUI = true
 
 [unified_storage.dashboards.dashboard.grafana.app]
 dualWriterMode = 3
@@ -747,8 +781,10 @@ flowchart TD
 
 #### Setting Dual Writer Mode
 ```ini
-[unified_storage.{resource}.{kind}.{group}]
-dualWriterMode = {0-5}
+; [unified_storage.{resource}.{group}]
+[unified_storage.dashboards.dashboard.grafana.app]
+; modes {0-5}
+dualWriterMode = 0
 ```
 
 #### Background Sync Configuration
@@ -873,10 +909,13 @@ Unified Search requires several feature flags to be enabled depending on the des
 
 | Feature Flag | Purpose | Stage | Required For |
 |--------------|---------|-------|--------------|
-| `unifiedStorageSearch` | Core search functionality | Experimental | Search API servers, indexing |
-| `unifiedStorageSearchUI` | Frontend search interface | Experimental | Grafana UI search |
-| `unifiedStorageSearchSprinkles` | Usage insights integration | Experimental | Dashboard usage sorting (Enterprise) |
 | `unifiedStorageSearchDualReaderEnabled` | Shadow traffic to unified search | Experimental | Shadow traffic during migration |
+
+#### Unified Search Specific Configuration
+
+| Configuration   | Purpose | Stage | Required For |
+|-----------------|---------|-------|--------------|
+| `enable_search` | Core search functionality | Experimental | Search API servers, indexing |
 
 #### Basic Configuration
 ```ini
@@ -884,17 +923,12 @@ Unified Search requires several feature flags to be enabled depending on the des
 ; Prerequisites for unified storage (required)
 grafanaAPIServerWithExperimentalAPIs = true
 
-; Core search functionality (required)
-unifiedStorageSearch = true
-
-; Enable search UI (required for frontend)
-unifiedStorageSearchUI = true
-
 ; Enable shadow traffic during migration (optional)
 unifiedStorageSearchDualReaderEnabled = true
 
-; Enable usage insights sorting (Enterprise only)
-unifiedStorageSearchSprinkles = true
+[unified_storage]
+; Enable core search functionality (required)
+enable_search = true
 ```
 
 ### Request Flow Diagrams
@@ -1079,7 +1113,7 @@ Unified Search serves multiple types of consumers within the Grafana ecosystem:
 - **Source**: Grafana UI search interface
 - **Purpose**: Interactive dashboard and folder discovery
 - **Characteristics**: Real-time, user-facing, latency-sensitive
-- **Endpoint**: `/api/v1/search` (legacy search UI) or `/apis/dashboard.grafana.app/v0alpha1/namespaces/{namespace}/search` (when `unifiedStorageSearchUI` is enabled)
+- **Endpoint**: `/apis/dashboard.grafana.app/v0alpha1/namespaces/{namespace}/search`
 
 #### 2. Internal Service Searches
 
@@ -1120,7 +1154,7 @@ Unified Search supports multiple types of search operations:
 
 ##### Resource Search
 - **Purpose**: Find resources (dashboards, folders, etc.) by content
-- **Endpoint**: `/api/v1/search` (legacy) or `/apis/dashboard.grafana.app/v0alpha1/namespaces/{namespace}/search` (when `unifiedStorageSearchUI` is enabled)
+- **Endpoint**: `/apis/dashboard.grafana.app/v0alpha1/namespaces/{namespace}/search`
 - **Additional endpoint**: `/apis/dashboard.grafana.app/v0alpha1/namespaces/{namespace}/search/sortable` for retrieving sortable fields
 - **Features**: Full-text search, filtering, sorting
 
@@ -1281,4 +1315,127 @@ Key metrics for monitoring Unified Search:
 - `unified_search_shadow_requests_total`: Shadow traffic request counts
 - `unified_search_ring_members`: Number of active search server instances
 
+## Data migrations
 
+Unified storage includes an automated migration system that transfers resources from legacy SQL tables to unified storage. Migrations run automatically during Grafana startup when enabled.
+
+### Supported resources
+
+- Folders
+- Dashboards
+- Library panels
+- Playlists
+
+### Validation
+
+Built-in validators ensure data integrity after migration:
+
+- **CountValidator**: Verifies resource counts match between legacy and unified storage
+- **FolderTreeValidator**: Validates folder parent-child relationships are preserved
+
+### Documentation
+
+For detailed information about migration architecture, validators, and troubleshooting, refer to [migrations/README.md](./migrations/README.md).
+
+# Local NATS watch-event publishing setup
+
+Reproduces the `nats/publish-watch-events` PR end to end: a Grafana **storage
+server** publishes resource watch notifications to an **external NATS** bus, and
+a separate Grafana **main server** generates those events by writing resources
+over unified-storage gRPC.
+
+```
+  ┌──────────────┐  resource writes   ┌────────────────────┐  WatchNotification  ┌────────────┐
+  │ grafana main │ ─── (unified-grpc) ─▶│ grafana storage    │ ─── (NATS pub) ────▶│ nats-server │
+  │  :3000       │      :10000         │ server (publisher) │     :4222           │  (external) │
+  └──────────────┘                     └────────────────────┘                     └────────────┘
+                                                                                         ▲
+                                                                          nats sub ">"  ─┘  (observe)
+```
+
+Only the storage server talks to NATS. Publishing fires from
+`kvStorageBackend.WriteEvent -> publishWatchNotification`, which requires the
+SQL-KV backend (`enable_sqlkv_backend = true`) and the NATS publisher that the
+module server wires for `target = storage-server`.
+
+## Run (4 terminals / background jobs)
+
+```bash
+# 0) build once
+make build-go            # -> ./bin/grafana (copy of ./bin/<os>/<arch>/grafana)
+BIN=./bin/grafana
+
+# 1) external NATS
+nats-server -DV
+
+# 2) observe every subject
+nats sub ">"
+
+# 3) storage server (publisher)
+$BIN server target --homepath . --config .files/storage-server.ini
+
+# 4) main grafana (generator, admin/admin on :3000)
+$BIN server --homepath . --config .files/grafana-main.ini
+```
+
+## Generate an event
+
+Any resource write that goes through unified storage works. A playlist is a
+clean unified-storage resource:
+
+```bash
+curl -s -u admin:admin -X POST \
+  http://localhost:3000/apis/playlist.grafana.app/v0alpha1/namespaces/default/playlists \
+  -H 'Content-Type: application/json' \
+  -d '{"apiVersion":"playlist.grafana.app/v0alpha1","kind":"Playlist",
+       "metadata":{"generateName":"p"},
+       "spec":{"title":"demo","interval":"5m","items":[]}}'
+```
+
+The `nats sub` window then shows a message on subject
+`us.watch.v1.playlist.grafana.app.default.playlists` (format:
+`us.watch.v1.{group}.{namespace}.{resource}`).
+The payload is a protobuf `WatchNotification` (binary), so it renders as raw
+bytes — a message appearing on that subject with a non-empty body confirms the
+publish path.
+
+## Notes
+
+- Separate SQLite DBs and data dirs per process avoid lock contention.
+
+### gRPC auth between the two Grafana processes
+
+The main process talks to the storage server over gRPC and must authenticate:
+
+1. `app_mode=development` on both processes (`cfg.Env == Dev`).
+2. Main: `[feature_toggles] enable = appPlatformGrpcClientAuth`. Without it the
+   unified-grpc client uses the legacy interceptor and the storage server
+   rejects the call with `Unauthenticated: missing required token`. With it, in
+   dev mode the client uses an in-process token exchanger and presents a
+   self-signed dev token.
+3. Storage server: `[grpc_server_authentication] unsafe = true`. The main
+   process signs its token with an in-process key this separate process does not
+   share, so a verifying authenticator rejects it with `unrecognized signing
+   key`. `unsafe` (dev-only) skips signature verification and accepts it.
+
+### Why the KV backend
+
+Publishing fires from `kvStorageBackend.WriteEvent`, which is only reached when
+`[unified_storage] enable_sqlkv_backend = true`. The default `sql/backend` path
+does not publish. The NATS publisher itself is only wired by the module server
+(`target = storage-server`), not by a normal `target=all` process.
+
+### Decoding a payload
+
+Payloads are protobuf `WatchNotification` (see
+`pkg/storage/unified/proto/resourcewatch.proto`). Field 1 `type` is the enum
+`UNKNOWN=0, ADDED=1, MODIFIED=2, DELETED=3`. A quick raw capture + hexdump:
+
+```bash
+nats sub "us.watch.v1.playlist.grafana.app.>" --raw --count 1 > /tmp/n.bin & \
+  curl -s -u admin:admin -X POST \
+  http://localhost:3000/apis/playlist.grafana.app/v0alpha1/namespaces/default/playlists \
+  -H 'Content-Type: application/json' \
+  -d '{"apiVersion":"playlist.grafana.app/v0alpha1","kind":"Playlist","metadata":{"generateName":"d-"},"spec":{"title":"x","interval":"1m","items":[]}}' >/dev/null
+xxd /tmp/n.bin   # 08 01 -> type=ADDED, then group/resource/namespace/name/rv
+```

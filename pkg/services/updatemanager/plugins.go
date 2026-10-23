@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend/httpclient"
+	"github.com/open-feature/go-sdk/openfeature"
 	"go.opentelemetry.io/otel/codes"
 
 	"github.com/grafana/grafana/pkg/infra/httpclient/httpclientprovider"
@@ -33,19 +34,21 @@ type availableUpdate struct {
 type PluginsService struct {
 	availableUpdates map[string]availableUpdate
 
-	enabled         bool
-	grafanaVersion  string
-	pluginStore     pluginstore.Store
-	httpClient      httpClient
-	mutex           sync.RWMutex
-	log             log.Logger
-	tracer          tracing.Tracer
-	updateCheckURL  *url.URL
-	pluginInstaller plugins.Installer
-	updateChecker   *pluginchecker.Service
-	updateStrategy  string
+	enabled          bool
+	grafanaVersion   string
+	pluginStore      pluginstore.Store
+	httpClient       httpClient
+	mutex            sync.RWMutex
+	log              log.Logger
+	tracer           tracing.Tracer
+	updateCheckURL   *url.URL
+	updateCheckToken string
+	pluginInstaller  plugins.Installer
+	updateChecker    *pluginchecker.Service
+	updateStrategy   string
 
 	features featuremgmt.FeatureToggles
+	cfg      *setting.Cfg
 }
 
 func ProvidePluginsService(cfg *setting.Cfg,
@@ -84,10 +87,12 @@ func ProvidePluginsService(cfg *setting.Cfg,
 		pluginStore:      pluginStore,
 		availableUpdates: make(map[string]availableUpdate),
 		updateCheckURL:   parsedUpdateCheckURL,
+		updateCheckToken: cfg.GrafanaComProxyAPIToken,
 		pluginInstaller:  pluginInstaller,
 		features:         features,
 		updateChecker:    updateChecker,
 		updateStrategy:   cfg.PluginUpdateStrategy,
+		cfg:              cfg,
 	}, nil
 }
 
@@ -96,10 +101,7 @@ func (s *PluginsService) IsDisabled() bool {
 }
 
 func (s *PluginsService) Run(ctx context.Context) error {
-	s.instrumentedCheckForUpdates(ctx)
-	if s.features.IsEnabledGlobally(featuremgmt.FlagPluginsAutoUpdate) {
-		s.updateAll(ctx)
-	}
+	s.checkAndUpdate(ctx)
 
 	ticker := time.NewTicker(time.Minute * 10)
 	run := true
@@ -107,10 +109,7 @@ func (s *PluginsService) Run(ctx context.Context) error {
 	for run {
 		select {
 		case <-ticker.C:
-			s.instrumentedCheckForUpdates(ctx)
-			if s.features.IsEnabledGlobally(featuremgmt.FlagPluginsAutoUpdate) {
-				s.updateAll(ctx)
-			}
+			s.checkAndUpdate(ctx)
 		case <-ctx.Done():
 			run = false
 		}
@@ -136,6 +135,14 @@ func (s *PluginsService) HasUpdate(ctx context.Context, pluginID string) (string
 	}
 
 	return "", false
+}
+
+// checkAndUpdate checks for updates and applies them if auto-update is enabled.
+func (s *PluginsService) checkAndUpdate(ctx context.Context) {
+	s.instrumentedCheckForUpdates(ctx)
+	if s.checkFlagPluginsAutoUpdate(ctx) {
+		s.updateAll(ctx)
+	}
 }
 
 func (s *PluginsService) instrumentedCheckForUpdates(ctx context.Context) {
@@ -166,6 +173,12 @@ func (s *PluginsService) checkForUpdates(ctx context.Context) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL.String(), nil)
 	if err != nil {
 		return err
+	}
+	// authenticate when a grafana.com token is configured (e.g. in Grafana Cloud)
+	// so the response reflects the plugin scopes visible to this instance instead
+	// of the anonymous catalog
+	if s.updateCheckToken != "" {
+		req.Header.Set("Authorization", "Bearer "+s.updateCheckToken)
 	}
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
@@ -215,6 +228,17 @@ func (s *PluginsService) checkForUpdates(ctx context.Context) error {
 	return nil
 }
 
+func (s *PluginsService) checkFlagPluginsAutoUpdate(ctx context.Context) bool {
+	flag, err := openfeature.NewDefaultClient().BooleanValueDetails(ctx, featuremgmt.FlagPluginsAutoUpdate, false, openfeature.TransactionContext(ctx))
+	if err != nil {
+		s.log.Error("flag evaluation error", "flag", featuremgmt.FlagPluginsAutoUpdate, "error", err)
+	} else {
+		s.log.Info("flag evaluation succeeded", "flag", flag, "details", flag)
+	}
+
+	return flag.Value
+}
+
 func (s *PluginsService) canUpdate(ctx context.Context, plugin pluginstore.Plugin, gcomVersion string) bool {
 	if !s.updateChecker.IsUpdatable(ctx, plugin) {
 		return false
@@ -224,7 +248,7 @@ func (s *PluginsService) canUpdate(ctx context.Context, plugin pluginstore.Plugi
 		return false
 	}
 
-	if s.features.IsEnabledGlobally(featuremgmt.FlagPluginsAutoUpdate) {
+	if s.checkFlagPluginsAutoUpdate(ctx) {
 		return s.updateChecker.CanUpdate(plugin.ID, plugin.Info.Version, gcomVersion, s.updateStrategy == setting.PluginUpdateStrategyMinor)
 	}
 

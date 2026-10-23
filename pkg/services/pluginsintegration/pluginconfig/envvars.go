@@ -13,23 +13,31 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend/proxy"
 
 	"github.com/grafana/grafana/pkg/infra/log"
+	"github.com/grafana/grafana/pkg/login/social"
 	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/plugins/envvars"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/marketplacelicensing"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginsso"
 )
 
 var _ envvars.Provider = (*EnvVarsProvider)(nil)
 
 type EnvVarsProvider struct {
-	cfg     *PluginInstanceCfg
-	license plugins.Licensing
-	logger  log.Logger
+	cfg                  *PluginInstanceCfg
+	license              plugins.Licensing
+	marketplaceLicensing marketplacelicensing.Licensing
+	logger               log.Logger
+	ssoSettings          pluginsso.SettingsProvider
 }
 
-func NewEnvVarsProvider(cfg *PluginInstanceCfg, license plugins.Licensing) *EnvVarsProvider {
+func NewEnvVarsProvider(cfg *PluginInstanceCfg, license plugins.Licensing, ssoSettings pluginsso.SettingsProvider, marketplace marketplacelicensing.Licensing) *EnvVarsProvider {
 	return &EnvVarsProvider{
-		cfg:     cfg,
-		license: license,
-		logger:  log.New("plugins.envvars"),
+		cfg:                  cfg,
+		license:              license,
+		logger:               log.New("plugins.envvars"),
+		marketplaceLicensing: marketplace,
+		ssoSettings:          ssoSettings,
 	}
 }
 
@@ -61,9 +69,16 @@ func (p *EnvVarsProvider) PluginEnvVars(ctx context.Context, plugin *plugins.Plu
 	}
 
 	hostEnv = append(hostEnv, p.featureToggleEnableVars(ctx)...)
+
+	marketplaceEnvVars := p.marketplaceLicenseEnvVars(ctx, plugin.PluginID())
+	p.logger.Debug("Providing marketplace env vars", "pluginId", plugin.PluginID(), "envVars", envVarNames(marketplaceEnvVars))
+	hostEnv = append(hostEnv, marketplaceEnvVars...)
+
 	hostEnv = append(hostEnv, p.awsEnvVars(plugin.PluginID())...)
 	hostEnv = append(hostEnv, p.secureSocksProxyEnvVars()...)
-	hostEnv = append(hostEnv, azsettings.WriteToEnvStr(p.cfg.Azure)...)
+	azureSettings := p.getAzureSettings()
+	hostEnv = append(hostEnv, azsettings.WriteToEnvStr(azureSettings)...)
+	hostEnv = append(hostEnv, p.azureHostEnvVars(azureSettings, plugin.PluginID())...)
 	hostEnv = append(hostEnv, p.tracingEnvVars(plugin)...)
 	hostEnv = append(hostEnv, p.pluginSettingsEnvVars(plugin.PluginID())...)
 
@@ -75,6 +90,42 @@ func (p *EnvVarsProvider) PluginEnvVars(ctx context.Context, plugin *plugins.Plu
 	}
 
 	return hostEnv
+}
+
+func (p *EnvVarsProvider) marketplaceLicenseEnvVars(ctx context.Context, pluginID string) []string {
+	// Marketplace plugins require feature toggle and a valid Enterprise license
+	if p.cfg.Features == nil || !p.cfg.Features.GetEnabled(ctx)[featuremgmt.FlagPluginsMarketplaceLicensing] {
+		return nil
+	}
+	if p.license == nil || !p.license.HasValidLicense() {
+		return nil
+	}
+
+	// Try to get the license token, falling-back to the JWT path on disk if token is not available.
+	token, err := p.marketplaceLicensing.LicenseToken(ctx, pluginID)
+	if err != nil {
+		p.logger.Warn("Failed to get marketplace license token, falling-back to disk license", "pluginId", pluginID, "error", err)
+		token = ""
+	}
+	var licensePath string
+	var hasPath bool
+	if p.cfg.MarketplaceLicenseDirectory != "" {
+		licensePath, hasPath = marketplacelicensing.LicensePath(p.cfg.MarketplaceLicenseDirectory, pluginID)
+	}
+	if token == "" && !hasPath {
+		return nil
+	}
+
+	// Pass the most relevant marketplace license information to the plugin.
+	// The SDK gives higher priority to the license token over the license path.
+	variables := []string{p.envVar("GF_MARKETPLACE_APP_URL", p.marketplaceLicensing.AppURL())}
+	if token != "" {
+		variables = append(variables, p.envVar("GF_MARKETPLACE_LICENSE_TEXT", token))
+	}
+	if hasPath {
+		variables = append(variables, p.envVar("GF_MARKETPLACE_LICENSE_PATH", licensePath))
+	}
+	return variables
 }
 
 func (p *EnvVarsProvider) featureToggleEnableVars(ctx context.Context) []string {
@@ -105,6 +156,9 @@ func (p *EnvVarsProvider) awsEnvVars(pluginID string) []string {
 	if !p.cfg.AWSAssumeRoleEnabled {
 		variables = append(variables, p.envVar(awsds.AssumeRoleEnabledEnvVarKeyName, "false"))
 	}
+	if p.cfg.AWSPerDatasourceHTTPProxyEnabled {
+		variables = append(variables, p.envVar(awsds.PerDatasourceHTTPProxyEnabledEnvVarKeyName, "true"))
+	}
 	if len(p.cfg.AWSAllowedAuthProviders) > 0 {
 		variables = append(variables, p.envVar(awsds.AllowedAuthProvidersEnvVarKeyName, strings.Join(p.cfg.AWSAllowedAuthProviders, ",")))
 	}
@@ -118,6 +172,81 @@ func (p *EnvVarsProvider) awsEnvVars(pluginID string) []string {
 		variables = append(variables, p.envVar(awsds.ListMetricsPageLimitKeyName, p.cfg.AWSListMetricsPageLimit))
 	}
 
+	// Forward AWS SDK credential chain env vars from the host so that plugins can use
+	// EKS IRSA, ECS task roles, and other environment-based credential providers.
+	for _, envVarName := range awsHostEnvVarNames {
+		if v, ok := os.LookupEnv(envVarName); ok {
+			variables = append(variables, p.envVar(envVarName, v))
+		}
+	}
+
+	return variables
+}
+
+// awsHostEnvVarNames are the host environment variables forwarded to AWS plugins.
+// These are needed for the AWS SDK default credential chain to resolve credentials
+// in container environments (EKS with IRSA, ECS Fargate).
+var awsHostEnvVarNames = []string{
+	// EKS IRSA
+	"AWS_ROLE_ARN",
+	"AWS_WEB_IDENTITY_TOKEN_FILE",
+	// ECS (Fargate / EC2)
+	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+	"AWS_CONTAINER_CREDENTIALS_FULL_URI",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+	// Region
+	"AWS_REGION",
+	"AWS_DEFAULT_REGION",
+}
+
+// azureManagedIdentityHostEnvVarNames are host vars injected by Azure
+// platforms (App Service, Container Apps, Service Fabric, Arc, Cloud Shell)
+// that the azidentity SDK reads to locate the local managed identity
+// token endpoint. Without them the SDK falls back to IMDS, which is not
+// reachable on platforms like Azure Container Apps.
+var azureManagedIdentityHostEnvVarNames = []string{
+	"IDENTITY_ENDPOINT",
+	"IDENTITY_HEADER",
+	"IDENTITY_SERVER_THUMBPRINT",
+	"IMDS_ENDPOINT",
+	"MSI_ENDPOINT",
+	"MSI_SECRET",
+}
+
+// azureWorkloadIdentityHostEnvVarNames are host vars injected by the AKS
+// azure-workload-identity mutating webhook into pods that use Azure AD
+// Workload Identity federation.
+var azureWorkloadIdentityHostEnvVarNames = []string{
+	"AZURE_TENANT_ID",
+	"AZURE_CLIENT_ID",
+	"AZURE_FEDERATED_TOKEN_FILE",
+	"AZURE_AUTHORITY_HOST",
+}
+
+func (p *EnvVarsProvider) azureHostEnvVars(azureSettings *azsettings.AzureSettings, pluginID string) []string {
+	if azureSettings == nil {
+		return nil
+	}
+	if !slices.Contains(azureSettings.ForwardSettingsPlugins, pluginID) {
+		return nil
+	}
+
+	var variables []string
+	if azureSettings.ManagedIdentityEnabled {
+		for _, envVarName := range azureManagedIdentityHostEnvVarNames {
+			if v, ok := os.LookupEnv(envVarName); ok {
+				variables = append(variables, p.envVar(envVarName, v))
+			}
+		}
+	}
+	if azureSettings.WorkloadIdentityEnabled {
+		for _, envVarName := range azureWorkloadIdentityHostEnvVarNames {
+			if v, ok := os.LookupEnv(envVarName); ok {
+				variables = append(variables, p.envVar(envVarName, v))
+			}
+		}
+	}
 	return variables
 }
 
@@ -183,9 +312,34 @@ func (p *EnvVarsProvider) pluginSettingsEnvVars(pluginID string) []string {
 	return env
 }
 
+// envVar returns a string in the format "key=value" for an environment variable.
 func (p *EnvVarsProvider) envVar(key, value string) string {
 	if strings.Contains(value, "\x00") {
 		p.logger.Error("Variable with key '%s' contains NUL", key)
 	}
 	return fmt.Sprintf("%s=%s", key, value)
+}
+
+// envVarNames returns the names of the environment variables from a list of "key=value" strings.
+func envVarNames(envVars []string) []string {
+	names := make([]string, 0, len(envVars))
+	for _, envVar := range envVars {
+		parts := strings.SplitN(envVar, "=", 2)
+		if len(parts) > 0 {
+			names = append(names, parts[0])
+		}
+	}
+	return names
+}
+
+func (p *EnvVarsProvider) getAzureSettings() *azsettings.AzureSettings {
+	azureSettings := p.cfg.Azure
+	if azureSettings == nil {
+		azureSettings = &azsettings.AzureSettings{}
+	}
+	azureAdSettings, err := p.ssoSettings.GetForProvider(context.Background(), social.AzureADProviderName)
+	if err != nil {
+		p.logger.Error("Failed to get SSO settings", "error", err)
+	}
+	return mergeAzureSettings(azureSettings, azureAdSettings)
 }

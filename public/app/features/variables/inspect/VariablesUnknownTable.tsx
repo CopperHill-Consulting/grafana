@@ -1,22 +1,20 @@
 import { css } from '@emotion/css';
-import { ReactElement, useEffect, useState } from 'react';
+import { type ReactElement, useEffect, useState } from 'react';
 import { useAsync } from 'react-use';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type BaseVariableModel, type GrafanaTheme2 } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
 import { reportInteraction } from '@grafana/runtime';
-import { CollapsableSection, Icon, Spinner, Stack, Tooltip, useStyles2 } from '@grafana/ui';
+import { CollapsableSection, Icon, Spinner, Stack, Text, Tooltip, useStyles2 } from '@grafana/ui';
 
-import { DashboardModel } from '../../dashboard/state/DashboardModel';
-import { VariableModel } from '../types';
+import { type DashboardModel } from '../../dashboard/state/DashboardModel';
 
 import { VariablesUnknownButton } from './VariablesUnknownButton';
-import { getUnknownsNetwork, UsagesToNetwork } from './utils';
-
-export const SLOW_VARIABLES_EXPANSION_THRESHOLD = 1000;
+import { type UsagesToNetwork } from './types';
+import { getUnknownsNetwork } from './utils';
 
 export interface VariablesUnknownTableProps {
-  variables: VariableModel[];
+  variables: BaseVariableModel[];
   dashboard: DashboardModel | null;
 }
 
@@ -29,13 +27,7 @@ export function VariablesUnknownTable({ variables, dashboard }: VariablesUnknown
   const { loading } = useAsync(async () => {
     if (open && changed > 0) {
       // make sure we only fetch when opened and variables or dashboard have changed
-      const start = Date.now();
       const unknownsNetwork = await getUnknownsNetwork(variables, dashboard);
-      const stop = Date.now();
-      const elapsed = stop - start;
-      if (elapsed >= SLOW_VARIABLES_EXPANSION_THRESHOLD) {
-        reportInteraction('Slow unknown variables expansion', { elapsed });
-      }
       setChanged(0);
       setUsages(unknownsNetwork);
       return unknownsNetwork;
@@ -80,7 +72,7 @@ function CollapseLabel(): ReactElement {
   const style = useStyles2(getStyles);
 
   return (
-    <h5>
+    <Text variant="h5">
       <Trans i18nKey="variables.variables-unknown-table.collapse-label">Renamed or missing variables</Trans>
       <Tooltip
         content={t(
@@ -90,7 +82,7 @@ function CollapseLabel(): ReactElement {
       >
         <Icon name="info-circle" className={style.infoIcon} />
       </Tooltip>
-    </h5>
+    </Text>
   );
 }
 

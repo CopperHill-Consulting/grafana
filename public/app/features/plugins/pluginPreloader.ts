@@ -1,21 +1,8 @@
-import type {
-  PluginExtensionAddedLinkConfig,
-  PluginExtensionExposedComponentConfig,
-  PluginExtensionAddedComponentConfig,
-} from '@grafana/data';
-import type { AppPluginConfig } from '@grafana/runtime';
+import type { AppPluginConfig } from '@grafana/data';
+import { getPluginSettings } from '@grafana/runtime/unstable';
 import { contextSrv } from 'app/core/services/context_srv';
-import { getPluginSettings } from 'app/features/plugins/pluginSettings';
 
-import { importAppPlugin } from './pluginLoader';
-
-export type PluginPreloadResult = {
-  pluginId: string;
-  error?: unknown;
-  exposedComponentConfigs: PluginExtensionExposedComponentConfig[];
-  addedComponentConfigs?: PluginExtensionAddedComponentConfig[];
-  addedLinkConfigs?: PluginExtensionAddedLinkConfig[];
-};
+import { pluginImporter } from './importer/pluginImporter';
 
 const preloadPromises = new Map<string, Promise<void>>();
 
@@ -36,13 +23,16 @@ export async function preloadPlugins(apps: AppPluginConfig[] = []) {
 }
 
 async function preload(config: AppPluginConfig): Promise<void> {
-  try {
-    const meta = await getPluginSettings(config.id, {
-      showErrorAlert: contextSrv.user.orgRole !== '',
-    });
+  const showErrorAlert = contextSrv.user.orgRole !== '';
 
-    await importAppPlugin(meta);
+  try {
+    const meta = await getPluginSettings(config.id, showErrorAlert);
+    await pluginImporter.importApp(meta);
   } catch (error) {
+    if (!showErrorAlert) {
+      return;
+    }
+
     console.error(`[Plugins] Failed to preload plugin: ${config.path} (version: ${config.version})`, error);
   }
 }

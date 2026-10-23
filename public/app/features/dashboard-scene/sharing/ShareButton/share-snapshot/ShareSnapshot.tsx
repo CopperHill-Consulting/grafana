@@ -3,15 +3,16 @@ import useAsyncFn from 'react-use/lib/useAsyncFn';
 
 import { selectors as e2eSelectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
-import { SceneComponentProps } from '@grafana/scenes';
+import { config } from '@grafana/runtime';
+import { type SceneComponentProps } from '@grafana/scenes';
 import { Alert, Button, ClipboardButton, Spinner, Stack, TextLink } from '@grafana/ui';
 import { contextSrv } from 'app/core/services/context_srv';
 import { AccessControlAction } from 'app/types/accessControl';
 
-import { SnapshotSharingOptions } from '../../../../dashboard/services/SnapshotSrv';
+import { type SnapshotSharingOptions } from '../../../../dashboard/services/SnapshotSrv';
 import { ShareDrawerConfirmAction } from '../../ShareDrawer/ShareDrawerConfirmAction';
 import { ShareSnapshotTab } from '../../ShareSnapshotTab';
-import { ShareView } from '../../types';
+import { type ShareView } from '../../types';
 
 import { UpsertSnapshot } from './UpsertSnapshot';
 
@@ -56,7 +57,7 @@ function ShareSnapshotRenderer({ model }: SceneComponentProps<ShareSnapshot>) {
   };
 
   const onDeleteSnapshotClick = async () => {
-    await deleteSnapshot(snapshotResult.value?.deleteUrl!);
+    await deleteSnapshot(snapshotResult.value?.key!);
     reset();
   };
 
@@ -109,7 +110,7 @@ function ShareSnapshotRenderer({ model }: SceneComponentProps<ShareSnapshot>) {
                 />
               )
             )}
-            <TextLink icon="external-link-alt" href="/dashboard/snapshots" external>
+            <TextLink icon="external-link-alt" href={`${config.appSubUrl || ''}/dashboard/snapshots`} external>
               {t('snapshot.share.view-all-button', 'View all snapshots')}
             </TextLink>
           </Stack>

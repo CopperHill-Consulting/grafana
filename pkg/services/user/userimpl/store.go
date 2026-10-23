@@ -266,17 +266,13 @@ func (ss *sqlStore) Update(ctx context.Context, cmd *user.UpdateUserCommand) err
 			q = q.UseBool("is_admin")
 			usr.IsAdmin = v
 		})
-		setOptional(cmd.HelpFlags1, func(v user.HelpFlags1) {
-			q = q.MustCols("help_flags1")
-			usr.HelpFlags1 = *cmd.HelpFlags1
-		})
 		setOptional(cmd.IsProvisioned, func(v bool) {
 			q = q.UseBool("is_provisioned")
 			usr.IsProvisioned = v
 		})
 
 		if _, err := q.Update(&usr); err != nil {
-			return err
+			return handleSQLError(ss.dialect, err)
 		}
 
 		if cmd.IsGrafanaAdmin != nil && !*cmd.IsGrafanaAdmin {
@@ -541,7 +537,7 @@ func (ss *sqlStore) Search(ctx context.Context, query *user.SearchUsersQuery) (*
 			sess.Limit(query.Limit, offset)
 		}
 
-		sess.Cols("u.id", "u.uid", "u.email", "u.name", "u.login", "u.is_admin", "u.is_disabled", "u.last_seen_at", "user_auth.auth_module", "u.is_provisioned")
+		sess.Cols("u.id", "u.uid", "u.email", "u.name", "u.login", "u.is_admin", "u.is_disabled", "u.last_seen_at", "user_auth.auth_module", "u.is_provisioned", "u.created")
 
 		if len(query.SortOpts) > 0 {
 			for i := range query.SortOpts {

@@ -1,6 +1,6 @@
 import { css } from '@emotion/react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 
 export function getDashboardGridStyles(theme: GrafanaTheme2) {
   return css({
@@ -45,8 +45,9 @@ export function getDashboardGridStyles(theme: GrafanaTheme2) {
     },
 
     '.react-grid-item.react-grid-placeholder': {
-      boxShadow: `0 0 4px ${theme.colors.primary.border} !important`,
-      background: `${theme.colors.primary.transparent} !important`,
+      boxShadow: `0 0 4px ${theme.colors.accent.main} !important`,
+      borderRadius: theme.shape.radius.lg,
+      background: `${theme.colors.accent.transparent} !important`,
       zIndex: '-1 !important',
       opacity: 'unset !important',
     },
@@ -64,6 +65,7 @@ export function getDashboardGridStyles(theme: GrafanaTheme2) {
 
     // Disable animation on initial rendering and enable it when component has been mounted.
     '.react-grid-item.cssTransforms': {
+      // eslint-disable-next-line @grafana/no-unreduced-motion
       transitionProperty: 'none !important',
     },
 
@@ -76,13 +78,13 @@ export function getDashboardGridStyles(theme: GrafanaTheme2) {
     },
 
     '.dashboard-selected-element': {
-      outline: `1px dashed ${theme.colors.primary.border}`,
+      outline: `1px dashed ${theme.colors.accent.main}`,
       outlineOffset: '0px',
       borderRadius: theme.shape.radius.default,
     },
 
     '.dashboard-selectable-element': {
-      '&:hover': {
+      '&:not(.dashboard-selected-element):hover': {
         outline: `1px dashed ${theme.colors.border.strong}`,
         outlineOffset: '0px',
         borderRadius: theme.shape.radius.default,
@@ -90,14 +92,21 @@ export function getDashboardGridStyles(theme: GrafanaTheme2) {
       },
     },
 
-    '.dashboard-canvas-add-button': {
-      display: 'flex',
-      opacity: 0.5,
-      transition: theme.transitions.create('opacity'),
-      filter: `grayscale(100%)`,
-      '&:hover,:focus-within': {
+    '.dashboard-canvas-controls': {
+      opacity: 0,
+
+      '@media (hover: none) and (pointer: coarse)': {
+        '&': {
+          opacity: 1,
+        },
+      },
+
+      [theme.transitions.handleMotion('no-preference', 'reduce')]: {
+        transition: theme.transitions.create('opacity'),
+      },
+
+      '&:hover, :focus-within': {
         opacity: 1,
-        filter: 'unset',
       },
     },
 
@@ -110,7 +119,7 @@ export function getDashboardGridStyles(theme: GrafanaTheme2) {
       // Setting same options for hovered and not hovered to overwrite any conflicting styles
       // There was a race condition with selectable elements styles
       '&:is(:hover),&:not(:hover)': {
-        outline: `2px solid ${theme.colors.primary.border}`,
+        outline: `2px solid ${theme.colors.accent.main}`,
         outlineOffset: '0px',
         borderRadius: theme.shape.radius.default,
       },

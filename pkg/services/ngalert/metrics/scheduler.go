@@ -130,7 +130,7 @@ func NewSchedulerMetrics(r prometheus.Registerer) *Scheduler {
 				Name:      "rule_group_rules",
 				Help:      "The number of alert rules that are scheduled, by type and state.",
 			},
-			[]string{"org", "type", "state", "rule_group"},
+			[]string{"org", "type", "state", "rule_group", "folder_uid"},
 		),
 		Groups: promauto.With(r).NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -180,9 +180,9 @@ func NewSchedulerMetrics(r prometheus.Registerer) *Scheduler {
 				Namespace: Namespace,
 				Subsystem: Subsystem,
 				Name:      "schedule_rule_evaluations_missed_total",
-				Help:      "The total number of rule evaluations missed due to a slow rule evaluation.",
+				Help:      "The total number of rule evaluations missed, labelled by reason (e.g. a slow rule evaluation, or the state cache not yet being warmed).",
 			},
-			[]string{"org", "name"},
+			[]string{"org", "name", "reason"},
 		),
 		SimplifiedEditorRules: promauto.With(r).NewGaugeVec(
 			prometheus.GaugeOpts{
@@ -203,4 +203,21 @@ func NewSchedulerMetrics(r prometheus.Registerer) *Scheduler {
 			[]string{"org", "state"},
 		),
 	}
+}
+
+func (s *Scheduler) ResetRuleMetrics() {
+	s.GroupRules.Reset()
+	s.SimpleNotificationRules.Reset()
+	s.Groups.Reset()
+	s.SimplifiedEditorRules.Reset()
+	s.PrometheusImportedRules.Reset()
+	s.SchedulableAlertRules.Set(0)
+	s.SchedulableAlertRulesHash.Set(0)
+}
+
+func (s *Scheduler) ResetOnStop() {
+	s.BehindSeconds.Set(0)
+	s.Ticker.LastTickTime.Set(0)
+	s.Ticker.NextTickTime.Set(0)
+	s.ResetRuleMetrics()
 }

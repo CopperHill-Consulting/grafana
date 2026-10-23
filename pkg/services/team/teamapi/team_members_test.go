@@ -46,8 +46,11 @@ func SetupAPITestServer(t *testing.T, teamService team.Service, opts ...func(a *
 		&licensing.OSSLicensingService{},
 		cfg,
 		preftest.NewPreferenceServiceFake(),
+		nil, // preferenceK8sHandler not needed for these tests
 		dashboards.NewFakeDashboardService(t),
 		featuremgmt.WithFeatures(),
+		nil, // resource client not needed by default; deletion tests inject a folder searcher
+		nil, // teamBindingClient not needed for these tests
 	)
 	for _, o := range opts {
 		o(a)
@@ -169,13 +172,15 @@ func TestUpdateTeamMembersAPIEndpoint(t *testing.T) {
 	})
 }
 
-func TestUpdateTeamMembersFromProvisionedTeam(t *testing.T) {
+func TestUpdateTeamMembersFromProvisionedTeamWhenGroupSyncIsEnabled(t *testing.T) {
 	server := SetupAPITestServer(t, &teamtest.FakeService{
 		ExpectedIsMember: true,
 		ExpectedTeamDTO:  &team.TeamDTO{ID: 1, UID: "a00001", IsProvisioned: true},
+	}, func(tapi *TeamAPI) {
+		tapi.cfg.Raw.Section("auth.scim").Key("group_sync_enabled").SetValue("true")
 	})
 
-	t.Run("should not be able to update team member from a provisioned team", func(t *testing.T) {
+	t.Run("should not be able to update team member from a provisioned team if team sync is enabled", func(t *testing.T) {
 		req := webtest.RequestWithSignedInUser(
 			server.NewRequest(http.MethodPut, "/api/teams/1/members/1", strings.NewReader("{\"permission\": 1}")),
 			authedUserWithPermissions(1, 1, []accesscontrol.Permission{{Action: accesscontrol.ActionTeamsPermissionsWrite, Scope: "teams:id:1"}}),
@@ -186,7 +191,7 @@ func TestUpdateTeamMembersFromProvisionedTeam(t *testing.T) {
 		require.NoError(t, res.Body.Close())
 	})
 
-	t.Run("should not be able to update team member from a provisioned team by team UID", func(t *testing.T) {
+	t.Run("should not be able to update team member from a provisioned team by team UID if team sync is enabled", func(t *testing.T) {
 		req := webtest.RequestWithSignedInUser(
 			server.NewRequest(http.MethodPut, "/api/teams/a00001/members/1", strings.NewReader("{\"permission\": 1}")),
 			authedUserWithPermissions(1, 1, []accesscontrol.Permission{{Action: accesscontrol.ActionTeamsPermissionsWrite, Scope: "teams:id:1"}}),
@@ -194,6 +199,27 @@ func TestUpdateTeamMembersFromProvisionedTeam(t *testing.T) {
 		res, err := server.SendJSON(req)
 		require.NoError(t, err)
 		assert.Equal(t, http.StatusBadRequest, res.StatusCode)
+		require.NoError(t, res.Body.Close())
+	})
+}
+
+func TestUpdateTeamMembersFromProvisionedTeamWhenGroupSyncIsDisabled(t *testing.T) {
+	t.Run("should be able to delete team member from a provisioned team when SCIM group sync is disabled", func(t *testing.T) {
+		server := SetupAPITestServer(t, nil, func(hs *TeamAPI) {
+			hs.teamService = &teamtest.FakeService{
+				ExpectedIsMember: true,
+				ExpectedTeamDTO:  &team.TeamDTO{ID: 1, UID: "a00001", IsProvisioned: true},
+			}
+			hs.teamPermissionsService = &actest.FakePermissionsService{}
+		})
+
+		req := webtest.RequestWithSignedInUser(
+			server.NewRequest(http.MethodDelete, "/api/teams/1/members/1", nil),
+			authedUserWithPermissions(1, 1, []accesscontrol.Permission{{Action: accesscontrol.ActionTeamsPermissionsWrite, Scope: "teams:id:1"}}),
+		)
+		res, err := server.SendJSON(req)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, res.StatusCode)
 		require.NoError(t, res.Body.Close())
 	})
 }
@@ -236,6 +262,8 @@ func TestDeleteTeamMembersFromProvisionedTeam(t *testing.T) {
 			ExpectedTeamDTO:  &team.TeamDTO{ID: 1, UID: "a00001", IsProvisioned: true},
 		}
 		hs.teamPermissionsService = &actest.FakePermissionsService{}
+	}, func(hs *TeamAPI) {
+		hs.cfg.Raw.Section("auth.scim").Key("group_sync_enabled").SetValue("true")
 	})
 
 	t.Run("should not be able to delete team member from a provisioned team", func(t *testing.T) {
@@ -326,6 +354,49 @@ func Test_getTeamMembershipUpdates(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		// The cases below document the legacy bulk endpoint's external-member
+		// behavior so the K8s redirect can match it. getTeamMembershipUpdates
+		// never inspects member.External — it diffs purely by email — so:
+		//   - external member omitted from the request → emitted as a removal
+		//   - external member listed with a different permission → emitted as
+		//     a permission update (the store-layer Update is column-scoped, so
+		//     External=true survives in the row)
+		//   - external member listed with the same permission → no-op
+		{
+			description: "external member omitted from request is queued for removal",
+			input: team.SetTeamMembershipsCommand{
+				Members: []string{"user1"},
+			},
+			currentMembers: []*team.TeamMemberDTO{
+				{Email: "user1", UserID: 1, Permission: team.PermissionTypeMember},
+				{Email: "user2", UserID: 2, Permission: team.PermissionTypeMember, External: true},
+			},
+			expectedUpdates: []accesscontrol.SetResourcePermissionCommand{
+				{UserID: 2, Permission: ""},
+			},
+		},
+		{
+			description: "external member listed with a different permission is queued for update",
+			input: team.SetTeamMembershipsCommand{
+				Admins: []string{"user2"},
+			},
+			currentMembers: []*team.TeamMemberDTO{
+				{Email: "user2", UserID: 2, Permission: team.PermissionTypeMember, External: true},
+			},
+			expectedUpdates: []accesscontrol.SetResourcePermissionCommand{
+				{UserID: 2, Permission: team.PermissionTypeAdmin.String()},
+			},
+		},
+		{
+			description: "external member listed with the same permission is a no-op",
+			input: team.SetTeamMembershipsCommand{
+				Members: []string{"user2"},
+			},
+			currentMembers: []*team.TeamMemberDTO{
+				{Email: "user2", UserID: 2, Permission: team.PermissionTypeMember, External: true},
+			},
+			expectedUpdates: []accesscontrol.SetResourcePermissionCommand{},
+		},
 	}
 
 	for _, tc := range testCases {
@@ -355,8 +426,11 @@ func Test_getTeamMembershipUpdates(t *testing.T) {
 				&licensing.OSSLicensingService{},
 				cfg,
 				preftest.NewPreferenceServiceFake(),
+				nil, // preferenceK8sHandler not needed for these tests
 				dashboards.NewFakeDashboardService(t),
 				featuremgmt.WithFeatures(),
+				nil, // resource client not needed for this test
+				nil, // teamBindingClient not needed for these tests
 			)
 
 			user := &user.SignedInUser{UserID: 1, OrgID: 1, OrgRole: org.RoleAdmin, Permissions: map[int64]map[string][]string{1: {accesscontrol.ActionOrgUsersRead: {"users:id:*"}}}}

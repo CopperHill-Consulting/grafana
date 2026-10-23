@@ -3,6 +3,19 @@
 package v0alpha1
 
 // +k8s:openapi-gen=true
+type CorrelationCorrelationType string
+
+const (
+	CorrelationCorrelationTypeQuery    CorrelationCorrelationType = "query"
+	CorrelationCorrelationTypeExternal CorrelationCorrelationType = "external"
+)
+
+// OpenAPIModelName returns the OpenAPI model name for CorrelationCorrelationType.
+func (CorrelationCorrelationType) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationCorrelationType"
+}
+
+// +k8s:openapi-gen=true
 type CorrelationDataSourceRef struct {
 	// same as pluginId
 	Group string `json:"group"`
@@ -13,6 +26,11 @@ type CorrelationDataSourceRef struct {
 // NewCorrelationDataSourceRef creates a new CorrelationDataSourceRef object.
 func NewCorrelationDataSourceRef() *CorrelationDataSourceRef {
 	return &CorrelationDataSourceRef{}
+}
+
+// OpenAPIModelName returns the OpenAPI model name for CorrelationDataSourceRef.
+func (CorrelationDataSourceRef) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationDataSourceRef"
 }
 
 // there was a deprecated field here called type, we will need to move that for conversion and provisioning
@@ -28,15 +46,25 @@ func NewCorrelationConfigSpec() *CorrelationConfigSpec {
 	return &CorrelationConfigSpec{}
 }
 
+// OpenAPIModelName returns the OpenAPI model name for CorrelationConfigSpec.
+func (CorrelationConfigSpec) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationConfigSpec"
+}
+
 // +k8s:openapi-gen=true
 type CorrelationTargetSpec map[string]interface{}
 
+// OpenAPIModelName returns the OpenAPI model name for CorrelationTargetSpec.
+func (CorrelationTargetSpec) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationTargetSpec"
+}
+
 // +k8s:openapi-gen=true
 type CorrelationTransformationSpec struct {
-	Type       string `json:"type"`
-	Expression string `json:"expression"`
-	Field      string `json:"field"`
-	MapValue   string `json:"mapValue"`
+	Type       CorrelationTransformationSpecType `json:"type"`
+	Expression *string                           `json:"expression,omitempty"`
+	Field      *string                           `json:"field,omitempty"`
+	MapValue   *string                           `json:"mapValue,omitempty"`
 }
 
 // NewCorrelationTransformationSpec creates a new CorrelationTransformationSpec object.
@@ -44,29 +72,44 @@ func NewCorrelationTransformationSpec() *CorrelationTransformationSpec {
 	return &CorrelationTransformationSpec{}
 }
 
-// +k8s:openapi-gen=true
-type CorrelationCorrelationType string
-
-const (
-	CorrelationCorrelationTypeQuery    CorrelationCorrelationType = "query"
-	CorrelationCorrelationTypeExternal CorrelationCorrelationType = "external"
-)
+// OpenAPIModelName returns the OpenAPI model name for CorrelationTransformationSpec.
+func (CorrelationTransformationSpec) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationTransformationSpec"
+}
 
 // +k8s:openapi-gen=true
 type CorrelationSpec struct {
-	SourceDsRef CorrelationDataSourceRef   `json:"source_ds_ref"`
-	TargetDsRef *CorrelationDataSourceRef  `json:"target_ds_ref,omitempty"`
-	Label       string                     `json:"label"`
-	Description *string                    `json:"description,omitempty"`
-	Config      CorrelationConfigSpec      `json:"config"`
-	Provisioned bool                       `json:"provisioned"`
-	Type        CorrelationCorrelationType `json:"type"`
+	Type   CorrelationCorrelationType `json:"type"`
+	Source CorrelationDataSourceRef   `json:"source"`
+	// null is for PATCH/edit when we want to clear the value
+	Target      *CorrelationDataSourceRef `json:"target,omitempty"`
+	Description *string                   `json:"description,omitempty"`
+	Label       string                    `json:"label"`
+	Config      CorrelationConfigSpec     `json:"config"`
 }
 
 // NewCorrelationSpec creates a new CorrelationSpec object.
 func NewCorrelationSpec() *CorrelationSpec {
 	return &CorrelationSpec{
-		SourceDsRef: *NewCorrelationDataSourceRef(),
-		Config:      *NewCorrelationConfigSpec(),
+		Source: *NewCorrelationDataSourceRef(),
+		Config: *NewCorrelationConfigSpec(),
 	}
+}
+
+// OpenAPIModelName returns the OpenAPI model name for CorrelationSpec.
+func (CorrelationSpec) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationSpec"
+}
+
+// +k8s:openapi-gen=true
+type CorrelationTransformationSpecType string
+
+const (
+	CorrelationTransformationSpecTypeRegex  CorrelationTransformationSpecType = "regex"
+	CorrelationTransformationSpecTypeLogfmt CorrelationTransformationSpecType = "logfmt"
+)
+
+// OpenAPIModelName returns the OpenAPI model name for CorrelationTransformationSpecType.
+func (CorrelationTransformationSpecType) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationTransformationSpecType"
 }

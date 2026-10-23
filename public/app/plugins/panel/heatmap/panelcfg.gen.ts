@@ -8,6 +8,8 @@
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
+// Generated from public/app/plugins/panel/heatmap/panelcfg.cue file.
+
 import * as ui from '@grafana/schema';
 
 /**
@@ -156,9 +158,17 @@ export interface HeatmapTooltip {
  */
 export interface HeatmapLegend {
   /**
+   * Controls where the legend is shown
+   */
+  placement?: ui.LegendPlacement;
+  /**
    * Controls if the legend is shown
    */
   show: boolean;
+  /**
+   * Controls legend width when shown on the right
+   */
+  width?: (number | string);
 }
 
 /**
@@ -183,9 +193,14 @@ export interface RowsHeatmapOptions {
    * Sets the name of the cell when not calculating from data
    */
   value?: string;
+  /**
+   * Controls the scale distribution of the y-axis buckets
+   */
+  yBucketScale?: ui.ScaleDistributionConfig;
 }
 
 export interface Options {
+  annotations?: ui.VizAnnotations;
   /**
    * Controls if the heatmap should be calculated from data
    */
@@ -275,6 +290,7 @@ export const defaultOptions: Partial<Options> = {
   },
   legend: {
     show: true,
+    placement: 'bottom',
   },
   selectionMode: HeatmapSelectionMode.X,
   showValue: ui.VisibilityMode.Auto,

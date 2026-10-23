@@ -1,4 +1,4 @@
-import { VersionedSelectorGroup } from '../types';
+import { type VersionedSelectorGroup } from '../types';
 
 import { MIN_GRAFANA_VERSION } from './constants';
 
@@ -16,6 +16,104 @@ export const versionedPages = {
     EditAlertRule: {
       url: {
         [MIN_GRAFANA_VERSION]: (alertRuleUid: string) => `alerting/${alertRuleUid}/edit`,
+      },
+    },
+    searchInput: {
+      '13.2.0': 'data-testid alerting search-input',
+      [MIN_GRAFANA_VERSION]: 'search-query-input',
+    },
+    Home: {
+      welcomeCtaLink: {
+        '13.2.0': (href: string) => `data-testid alerting welcome-cta-link ${href}`,
+      },
+    },
+    RuleList: {
+      emptyStateNewRuleLink: {
+        '13.2.0': 'data-testid rule-list empty-state-new-rule-link',
+      },
+      newAlertRuleLink: {
+        '13.2.0': 'data-testid rule-list new-alert-rule-link',
+      },
+      moreMenu: {
+        triggerButton: {
+          '13.2.0': 'data-testid rule-list more-menu-trigger-button',
+        },
+        importToGmaLink: {
+          '13.2.0': 'data-testid rule-list import-to-gma-link',
+        },
+      },
+    },
+    ContactPoints: {
+      addContactPointLink: {
+        '13.2.0': 'data-testid contact-points add-contact-point-link',
+      },
+    },
+    ContactPointForm: {
+      nameInput: {
+        '13.2.0': 'data-testid contact-point-form name-input',
+      },
+      saveButton: {
+        '13.2.0': 'data-testid contact-point-form save-button',
+      },
+      integrationTypeField: {
+        '13.2.0': (path: string) => `data-testid contact-point-form integration-type ${path}`,
+        [MIN_GRAFANA_VERSION]: (path: string) => `${path}type`,
+      },
+      settingsField: {
+        '13.2.0': (path: string) => `data-testid contact-point-form settings-field ${path}`,
+        [MIN_GRAFANA_VERSION]: (path: string) => path,
+      },
+    },
+    ImportToGMA: {
+      nextButton: {
+        '13.2.0': 'data-testid import-to-gma next-button',
+        [MIN_GRAFANA_VERSION]: 'wizard-next-button',
+      },
+      skipButton: {
+        '13.2.0': 'data-testid import-to-gma skip-button',
+        [MIN_GRAFANA_VERSION]: 'wizard-skip-button',
+      },
+      policyTreeInput: {
+        '13.2.0': 'data-testid import-to-gma policy-tree-input',
+      },
+      namespaceInput: {
+        '13.2.0': 'data-testid import-to-gma namespace-input',
+      },
+      groupInput: {
+        '13.2.0': 'data-testid import-to-gma group-input',
+      },
+      alertmanagerDataSourceField: {
+        '13.2.0': 'data-testid import-to-gma alertmanager-datasource-field',
+      },
+    },
+    Triage: {
+      groupsContainer: {
+        '13.2.0': 'data-testid triage groups-container',
+        [MIN_GRAFANA_VERSION]: 'groups-container',
+      },
+      sidebarToggleButton: {
+        '13.2.0': 'data-testid triage sidebar-toggle-button',
+      },
+      clearFiltersButton: {
+        '13.2.0': 'data-testid triage clear-filters-button',
+      },
+      stateFilterButton: {
+        '13.2.0': (state: string) => `data-testid triage state-filter ${state}`,
+      },
+      severityFilterButton: {
+        '13.2.0': (level: string) => `data-testid triage severity-filter ${level}`,
+      },
+      groupRow: {
+        '13.2.0': (key: string) => `data-testid triage group-row ${key}`,
+      },
+      openDrawerButton: {
+        '13.2.0': 'data-testid triage open-drawer-button',
+      },
+      notificationToggleButton: {
+        '13.2.0': 'data-testid triage notification-toggle-button',
+      },
+      historyFilterRadioGroup: {
+        '13.2.0': 'data-testid triage history-filter',
       },
     },
   },
@@ -37,19 +135,6 @@ export const versionedPages = {
     },
     skip: {
       '10.2.3': 'data-testid Skip change password button',
-    },
-  },
-  PasswordlessLogin: {
-    url: {
-      [MIN_GRAFANA_VERSION]: '/login/passwordless/authenticate',
-    },
-    email: {
-      '10.2.3': 'data-testid Email input field',
-      [MIN_GRAFANA_VERSION]: 'Email input field',
-    },
-    submit: {
-      '10.2.3': 'data-testid PasswordlessLogin button',
-      [MIN_GRAFANA_VERSION]: 'PasswordlessLogin button',
     },
   },
   Home: {
@@ -83,7 +168,14 @@ export const versionedPages = {
       [MIN_GRAFANA_VERSION]: '/datasources',
     },
     dataSources: {
+      '13.2.0': (dataSourceName: string) => `data-testid Data source list item ${dataSourceName}`,
       [MIN_GRAFANA_VERSION]: (dataSourceName: string) => `Data source list item ${dataSourceName}`,
+    },
+    dataSourceAddButton: {
+      '12.4.0': 'data-testid data-source-add-button',
+    },
+    advisorRunChecksButton: {
+      [MIN_GRAFANA_VERSION]: 'data-testid advisor-run-checks-button',
     },
   },
   EditDataSource: {
@@ -99,8 +191,22 @@ export const versionedPages = {
       [MIN_GRAFANA_VERSION]: '/datasources/new',
     },
     dataSourcePluginsV2: {
+      '13.1.0': (pluginName: string) => `data-testid Add new data source ${pluginName}`,
       '9.3.1': (pluginName: string) => `Add new data source ${pluginName}`,
       [MIN_GRAFANA_VERSION]: (pluginName: string) => `Data source plugin item ${pluginName}`,
+    },
+    searchInput: {
+      '13.2.0': 'data-testid Add data source search input',
+    },
+  },
+  Connections: {
+    AddNewConnection: {
+      url: {
+        '13.2.0': '/connections/add-new-connection',
+      },
+      pluginCard: {
+        '13.2.0': (name: string) => `data-testid Connections plugin card ${name}`,
+      },
     },
   },
   ConfirmModal: {
@@ -180,6 +286,46 @@ export const versionedPages = {
     url: {
       [MIN_GRAFANA_VERSION]: (uid: string) => `/d/${uid}`,
     },
+    Sidebar: {
+      optionsButton: {
+        '12.4.0': 'data-testid Dashboard Sidebar options button',
+      },
+      outlineButton: {
+        '12.4.0': 'data-testid Dashboard Sidebar outline button',
+      },
+      addButton: {
+        '12.4.0': 'data-testid Dashboard Sidebar new button',
+      },
+      codeButton: {
+        '13.2.0': 'data-testid Dashboard Sidebar code button',
+      },
+      viewPanelControls: {
+        '13.0.0': 'data-testid Dashboard Sidebar view panel controls',
+      },
+      conditionalRendering: {
+        variable: {
+          valueInput: {
+            '12.4.0': 'data-testid Dashboard Conditional Rendering Variable value input',
+          },
+          variableSelection: {
+            '12.4.0': 'data-testid Dashboard Conditional Rendering Variable variable selection',
+          },
+          operatorSelection: {
+            '13.2.0': 'data-testid Dashboard Conditional Rendering Variable operator selection',
+          },
+        },
+        timeRange: {
+          select: {
+            '12.4.0': 'data-testid Dashboard Conditional Rendering Time range select',
+          },
+        },
+      },
+      outline: {
+        searchInput: {
+          '13.1.0': 'data-testid Dashboard Outline Search input',
+        },
+      },
+    },
     DashNav: {
       nav: {
         [MIN_GRAFANA_VERSION]: 'Dashboard navigation',
@@ -255,8 +401,12 @@ export const versionedPages = {
     Controls: {
       '11.1.0': 'data-testid dashboard controls',
     },
+    ControlsButton: {
+      '12.3.0': 'data-testid dashboard controls button',
+    },
     SubMenu: {
       submenu: {
+        '13.1.0': 'data-testid Dashboard submenu',
         [MIN_GRAFANA_VERSION]: 'Dashboard submenu',
       },
       submenuItem: {
@@ -270,6 +420,7 @@ export const versionedPages = {
           `data-testid Dashboard template variables Variable Value DropDown value link text ${item}`,
       },
       submenuItemValueDropDownDropDown: {
+        '13.1.0': 'data-testid Variable options',
         [MIN_GRAFANA_VERSION]: 'Variable options',
       },
       submenuItemValueDropDownOptionTexts: {
@@ -302,9 +453,11 @@ export const versionedPages = {
           [MIN_GRAFANA_VERSION]: (item: string) => `Dashboard settings section item ${item}`,
         },
         saveDashBoard: {
+          '13.1.0': 'data-testid Dashboard settings aside actions Save button',
           [MIN_GRAFANA_VERSION]: 'Dashboard settings aside actions Save button',
         },
         saveAsDashBoard: {
+          '13.1.0': 'data-testid Dashboard settings aside actions Save As button',
           [MIN_GRAFANA_VERSION]: 'Dashboard settings aside actions Save As button',
         },
         title: {
@@ -341,6 +494,9 @@ export const versionedPages = {
           showInLabel: {
             '11.1.0': 'data-testid show-in-label',
           },
+          annotationControlsDisplay: {
+            '12.4.0': 'data-testid annotation-controls-display-label',
+          },
           previewInDashboard: {
             '10.0.0': 'data-testid annotations-preview',
           },
@@ -368,15 +524,19 @@ export const versionedPages = {
             [MIN_GRAFANA_VERSION]: 'data-testid Call to action button Add variable',
           },
           newButton: {
+            '13.1.0': 'data-testid Variable editor New variable button',
             [MIN_GRAFANA_VERSION]: 'Variable editor New variable button',
           },
           table: {
+            '13.1.0': 'data-testid Variable editor Table',
             [MIN_GRAFANA_VERSION]: 'Variable editor Table',
           },
           tableRowNameFields: {
+            '13.1.0': (variableName: string) => `data-testid Variable editor Table Name field ${variableName}`,
             [MIN_GRAFANA_VERSION]: (variableName: string) => `Variable editor Table Name field ${variableName}`,
           },
           tableRowDefinitionFields: {
+            '13.1.0': (variableName: string) => `data-testid Variable editor Table Definition field ${variableName}`,
             '10.1.0': (variableName: string) => `Variable editor Table Definition field ${variableName}`,
           },
           tableRowArrowUpButtons: {
@@ -386,9 +546,11 @@ export const versionedPages = {
             [MIN_GRAFANA_VERSION]: (variableName: string) => `Variable editor Table ArrowDown button ${variableName}`,
           },
           tableRowDuplicateButtons: {
+            '13.1.0': (variableName: string) => `data-testid Variable editor Table Duplicate button ${variableName}`,
             [MIN_GRAFANA_VERSION]: (variableName: string) => `Variable editor Table Duplicate button ${variableName}`,
           },
           tableRowRemoveButtons: {
+            '13.1.0': (variableName: string) => `data-testid Variable editor Table Remove button ${variableName}`,
             [MIN_GRAFANA_VERSION]: (variableName: string) => `Variable editor Table Remove button ${variableName}`,
           },
         },
@@ -434,6 +596,9 @@ export const versionedPages = {
             generalHideSelectV2: {
               [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Hide select',
             },
+            generalDisplaySelect: {
+              '12.4.0': 'data-testid Variable editor Display select',
+            },
             selectionOptionsAllowCustomValueSwitch: {
               [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Allow Custom Value switch',
             },
@@ -462,6 +627,9 @@ export const versionedPages = {
             },
           },
           QueryVariable: {
+            applyButton: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Query Variable editor apply button',
+            },
             closeButton: {
               [MIN_GRAFANA_VERSION]: 'data-testid Query Variable editor close button',
             },
@@ -491,6 +659,9 @@ export const versionedPages = {
             queryOptionsRegExInputV2: {
               [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Query RegEx field',
             },
+            queryOptionsRegExApplyToSelectV2: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Query RegExApplyTo select',
+            },
             queryOptionsSortSelect: {
               [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Sort select',
             },
@@ -500,23 +671,8 @@ export const versionedPages = {
             queryOptionsQueryInput: {
               '10.4.0': 'data-testid Variable editor Form Default Variable Query Editor textarea',
             },
-            queryOptionsStaticOptionsRow: {
-              [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Static Options row',
-            },
             queryOptionsStaticOptionsToggle: {
               [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Static Options toggle',
-            },
-            queryOptionsStaticOptionsLabelInput: {
-              [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Static Options Label input',
-            },
-            queryOptionsStaticOptionsValueInput: {
-              [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Static Options Value input',
-            },
-            queryOptionsStaticOptionsDeleteButton: {
-              [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Static Options Delete button',
-            },
-            queryOptionsStaticOptionsAddButton: {
-              [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Static Options Add button',
             },
             queryOptionsStaticOptionsOrderDropdown: {
               [MIN_GRAFANA_VERSION]: 'Variable editor Form Query Static Options Order dropdown',
@@ -559,6 +715,18 @@ export const versionedPages = {
             customValueInput: {
               [MIN_GRAFANA_VERSION]: 'data-testid custom-variable-input',
             },
+            optionsOpenButton: {
+              [MIN_GRAFANA_VERSION]: 'data-testid custom-variable-options-open-button',
+            },
+            closeButton: {
+              [MIN_GRAFANA_VERSION]: 'data-testid custom-variable-close-button',
+            },
+            applyButton: {
+              [MIN_GRAFANA_VERSION]: 'data-testid custom-variable-apply-button',
+            },
+            previewTable: {
+              [MIN_GRAFANA_VERSION]: 'data-testid custom-variable-preview-table',
+            },
           },
           IntervalVariable: {
             intervalsValueInput: {
@@ -584,6 +752,9 @@ export const versionedPages = {
             modeToggle: {
               '10.4.0': 'data-testid group by variable mode toggle',
             },
+            defaultValueSection: {
+              '13.0.0': 'data-testid group by variable default value',
+            },
           },
           AdHocFiltersVariable: {
             datasourceSelect: {
@@ -595,13 +766,53 @@ export const versionedPages = {
             modeToggle: {
               '11.0.0': 'data-testid ad-hoc filters variable mode toggle',
             },
+            enableGroupByToggle: {
+              '13.0.0': 'data-testid ad-hoc filters variable enable group by toggle',
+            },
+          },
+          SwitchVariable: {
+            valuePairTypeSelect: {
+              ['12.3.0']: 'data-testid switch variable value pair type select',
+            },
+            enabledValueInput: {
+              ['12.3.0']: 'data-testid switch variable enabled value input',
+            },
+            disabledValueInput: {
+              ['12.3.0']: 'data-testid switch variable disabled value input',
+            },
+          },
+          StaticOptionsEditor: {
+            addButton: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Static Options Add button',
+            },
+            labelInput: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Static Options Label input',
+            },
+            valueInput: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Static Options Value input',
+            },
+            moveButton: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Static Options Move button',
+            },
+            deleteButton: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Static Options Delete button',
+            },
+            row: {
+              [MIN_GRAFANA_VERSION]: 'data-testid Variable editor Form Static Options Row',
+            },
           },
         },
       },
     },
     Annotations: {
+      tooltip: {
+        '10.0.0': 'annotation-marker',
+      },
       marker: {
         '10.0.0': 'data-testid annotation-marker',
+      },
+      clusterTooltip: {
+        '13.0.0': 'data-testid annotation-cluster-tooltip',
       },
     },
     Rows: {
@@ -635,12 +846,15 @@ export const versionedPages = {
   },
   SaveDashboardModal: {
     save: {
+      '13.1.0': 'data-testid Dashboard settings Save Dashboard Modal Save button',
       '10.2.0': 'Dashboard settings Save Dashboard Modal Save button',
     },
     saveVariables: {
+      '13.1.0': 'data-testid Dashboard settings Save Dashboard Modal Save variables checkbox',
       '10.2.0': 'Dashboard settings Save Dashboard Modal Save variables checkbox',
     },
     saveTimerange: {
+      '13.1.0': 'data-testid Dashboard settings Save Dashboard Modal Save timerange checkbox',
       '10.2.0': 'Dashboard settings Save Dashboard Modal Save timerange checkbox',
     },
     saveRefresh: {
@@ -928,10 +1142,56 @@ export const versionedPages = {
       addFromQueryLibrary: {
         '11.5.0': 'data-testid explore add from query library button',
       },
+      addQueryRow: {
+        '13.2.0': 'data-testid explore add query row button',
+      },
+    },
+    toolbar: {
+      bar: {
+        '12.4.0': 'data-testid explore-toolbar',
+      },
+      contentOutline: {
+        '12.4.0': 'data-testid explore-toolbar-content-outline-button',
+      },
+      goQueryless: {
+        '12.4.0': 'data-testid explore-toolbar-go-queryless-button',
+      },
+      split: {
+        '12.4.0': 'data-testid explore-toolbar-split-button',
+      },
+      closeSplit: {
+        '13.2.0': 'data-testid explore-toolbar-close-split-button',
+      },
+      addTo: {
+        '12.4.0': 'data-testid explore-toolbar-add-dropdown-button',
+      },
+      addToDashboardButton: {
+        '13.2.0': 'data-testid explore-toolbar-add-to-dashboard-button',
+      },
+      share: {
+        '12.4.0': 'data-testid explore-toolbar-share-button',
+      },
+      copyLink: {
+        '12.4.0': 'data-testid explore-toolbar-copy-link-button',
+      },
+      live: {
+        '12.4.0': 'data-testid explore-toolbar-live-button',
+      },
+      refreshPicker: {
+        '12.4.0': 'data-testid explore-toolbar-refresh-picker',
+      },
+      add: {
+        '12.4.0': (key: string) => `data-testid explore-toolbar-add-button ${key}`,
+      },
     },
     QueryHistory: {
       container: {
         '11.1.0': 'data-testid QueryHistory',
+      },
+    },
+    QueryInspector: {
+      container: {
+        '13.2.0': 'data-testid explore query inspector',
       },
     },
   },
@@ -945,10 +1205,12 @@ export const versionedPages = {
       [MIN_GRAFANA_VERSION]: 'Plugins list page',
     },
     list: {
+      '13.2.0': 'data-testid Plugins list',
       [MIN_GRAFANA_VERSION]: 'Plugins list',
     },
     listItem: {
-      [MIN_GRAFANA_VERSION]: 'Plugins list item',
+      '13.2.0': (pluginId: string) => `data-testid Plugins list item ${pluginId}`,
+      [MIN_GRAFANA_VERSION]: (_pluginId: string) => 'Plugins list item',
     },
     signatureErrorNotice: {
       '10.3.0': 'data-testid Unsigned plugins notice',
@@ -970,9 +1232,11 @@ export const versionedPages = {
   },
   PlaylistForm: {
     name: {
+      '13.1.0': 'data-testid Playlist name',
       [MIN_GRAFANA_VERSION]: 'Playlist name',
     },
     interval: {
+      '13.1.0': 'data-testid Playlist interval',
       [MIN_GRAFANA_VERSION]: 'Playlist interval',
     },
     itemDelete: {
@@ -980,6 +1244,9 @@ export const versionedPages = {
     },
   },
   BrowseDashboards: {
+    searchInput: {
+      '13.2.0': 'data-testid Browse dashboards search input',
+    },
     table: {
       body: {
         '10.2.0': 'data-testid browse-dashboards-table',
@@ -1002,6 +1269,78 @@ export const versionedPages = {
         '10.2.0': 'data-testid new-folder-create-button',
       },
     },
+    actions: {
+      deleteButton: {
+        '13.2.0': 'data-testid browse dashboards delete button',
+      },
+      moveButton: {
+        '13.2.0': 'data-testid browse dashboards move button',
+      },
+    },
+  },
+  Provisioning: {
+    repositoryTypeCard: {
+      '13.2.0': (type: string) => `data-testid Provisioning repository type card ${type}`,
+    },
+    ConnectionForm: {
+      titleInput: {
+        '13.2.0': 'data-testid Provisioning connection form title input',
+      },
+      descriptionInput: {
+        '13.2.0': 'data-testid Provisioning connection form description input',
+      },
+      serverUrlInput: {
+        '13.2.0': 'data-testid Provisioning connection form server url input',
+      },
+      appIdInput: {
+        '13.2.0': 'data-testid Provisioning connection form app id input',
+      },
+      installationIdInput: {
+        '13.2.0': 'data-testid Provisioning connection form installation id input',
+      },
+      privateKeyInput: {
+        '13.2.0': 'data-testid Provisioning connection form private key input',
+      },
+      submitButton: {
+        '13.2.0': 'data-testid Provisioning connection form submit button',
+      },
+    },
+    Wizard: {
+      repositoryUrlInput: {
+        '13.2.0': 'data-testid Provisioning wizard repository url input',
+      },
+      repositoryTitleInput: {
+        '13.2.0': 'data-testid Provisioning wizard repository title input',
+      },
+      nextButton: {
+        '13.2.0': 'data-testid Provisioning wizard next button',
+      },
+      previousButton: {
+        '13.2.0': 'data-testid Provisioning wizard previous button',
+      },
+    },
+    RepositoryList: {
+      viewLink: {
+        '13.2.0': (name: string) => `data-testid Provisioning repository view link ${name}`,
+      },
+    },
+    RepositoryOverview: {
+      resourcesCard: {
+        '13.2.0': 'data-testid Provisioning repository overview resources card',
+      },
+      healthCard: {
+        '13.2.0': 'data-testid Provisioning repository overview health card',
+      },
+      webhookCard: {
+        '13.2.0': 'data-testid Provisioning repository overview webhook card',
+      },
+      pullStatusCard: {
+        '13.2.0': 'data-testid Provisioning repository overview pull status card',
+      },
+      jobsCard: {
+        '13.2.0': 'data-testid Provisioning repository overview jobs card',
+      },
+    },
   },
   SearchDashboards: {
     table: {
@@ -1016,6 +1355,19 @@ export const versionedPages = {
       url: {
         '9.3.0': '/?search=open&layout=folders',
       },
+    },
+    table: {
+      body: {
+        '13.1.0': 'data-testid search-table',
+      },
+      row: {
+        '13.1.0': (name: string) => `data-testid search row ${name}`,
+      },
+    },
+  },
+  RecentlyDeleted: {
+    url: {
+      '13.1.0': '/dashboard/recently-deleted',
     },
   },
   PublicDashboards: {

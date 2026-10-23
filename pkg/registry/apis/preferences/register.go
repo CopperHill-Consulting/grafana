@@ -1,69 +1,74 @@
 package preferences
 
 import (
-	"fmt"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/kube-openapi/pkg/common"
-	"k8s.io/kube-openapi/pkg/spec3"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
-	preferences "github.com/grafana/grafana/apps/preferences/pkg/apis/preferences/v1alpha1"
+	authlib "github.com/grafana/authlib/types"
+	"github.com/grafana/grafana-app-sdk/resource"
+	prefsv1 "github.com/grafana/grafana/apps/preferences/pkg/apis/preferences/v1"
+	prefsv1alpha1 "github.com/grafana/grafana/apps/preferences/pkg/apis/preferences/v1alpha1"
+	apimachineryutils "github.com/grafana/grafana/pkg/apimachinery/utils"
 	grafanaregistry "github.com/grafana/grafana/pkg/apiserver/registry/generic"
 	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/registry/apis/preferences/legacy"
+	"github.com/grafana/grafana/pkg/registry/apis/preferences/utils"
 	"github.com/grafana/grafana/pkg/services/apiserver/builder"
 	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
-	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	pref "github.com/grafana/grafana/pkg/services/preference"
-	"github.com/grafana/grafana/pkg/services/star"
-	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/legacysql"
 )
 
-var _ builder.APIGroupBuilder = (*APIBuilder)(nil)
+var (
+	_ builder.APIGroupBuilder    = (*APIBuilder)(nil)
+	_ builder.APIGroupValidation = (*APIBuilder)(nil)
+)
 
 type APIBuilder struct {
-	namespacer request.NamespaceMapper
-	sql        *legacy.LegacySQL
+	authorizer  authorizer.Authorizer
+	legacyPrefs grafanarest.Storage
 
-	stars      star.Service
-	prefs      pref.Service
-	users      user.Service
-	calculator *calculator // joins all preferences
+	merger *merger // joins all preferences
 }
 
 func RegisterAPIService(
 	cfg *setting.Cfg,
-	features featuremgmt.FeatureToggles,
 	db db.DB,
 	prefs pref.Service,
-	stars star.Service,
-	users user.Service,
+	accessClient authlib.AccessClient,
 	apiregistration builder.APIRegistrar,
-) *APIBuilder {
-	// Requires development settings and clearly experimental
-	if !features.IsEnabledGlobally(featuremgmt.FlagGrafanaAPIServerWithExperimentalAPIs) {
-		return nil
-	}
-
+	_ resource.ClientGenerator,
+) (*APIBuilder, error) {
 	sql := legacy.NewLegacySQL(legacysql.NewDatabaseProvider(db))
 	builder := &APIBuilder{
-		prefs:      prefs, // for writing
-		stars:      stars, // for writing
-		users:      users, // for writing
-		namespacer: request.GetNamespaceMapper(cfg),
-		sql:        sql,
-		calculator: newCalculator(cfg, sql),
+		merger: newMerger(cfg),
+		authorizer: &utils.AuthorizeFromName{
+			OKNames:      []string{"merged"},
+			AccessClient: accessClient, // can i edit a team
+			Resource: map[string][]utils.ResourceOwner{
+				"preferences": {
+					utils.NamespaceResourceOwner,
+					utils.TeamResourceOwner,
+					utils.UserResourceOwner,
+				},
+			},
+		},
+	}
+
+	namespacer := request.GetNamespaceMapper(cfg)
+	if prefs != nil {
+		builder.legacyPrefs = legacy.NewPreferencesStorage(prefs, namespacer, sql)
 	}
 	apiregistration.RegisterAPI(builder)
-	return builder
+	return builder, nil
 }
 
 // AllowedV0Alpha1Resources implements builder.APIGroupBuilder.
@@ -71,112 +76,92 @@ func (b *APIBuilder) AllowedV0Alpha1Resources() []string {
 	return nil
 }
 
-func (b *APIBuilder) GetGroupVersion() schema.GroupVersion {
-	return preferences.GroupVersion
+func (b *APIBuilder) GetGroupVersions() []schema.GroupVersion {
+	// Stable version first, then the compatibility alias.
+	// This order feeds version priority below.
+	return []schema.GroupVersion{
+		prefsv1.PreferencesResourceInfo.GroupVersion(),
+		prefsv1alpha1.PreferencesResourceInfo.GroupVersion(),
+	}
 }
 
 func (b *APIBuilder) InstallSchema(scheme *runtime.Scheme) error {
-	gv := preferences.GroupVersion
-	err := preferences.AddToScheme(scheme)
-	if err != nil {
-		return err
-	}
+	gvv1 := prefsv1.PreferencesResourceInfo.GroupVersion()
+	gvv1alpha1 := prefsv1alpha1.PreferencesResourceInfo.GroupVersion()
 
-	metav1.AddToGroupVersion(scheme, gv)
-	return scheme.SetVersionPriority(gv)
+	scheme.AddKnownTypes(gvv1,
+		&prefsv1.Preferences{},
+		&prefsv1.PreferencesList{},
+	)
+	scheme.AddKnownTypes(gvv1alpha1,
+		&prefsv1alpha1.Preferences{},
+		&prefsv1alpha1.PreferencesList{},
+	)
+
+	// Required for patch (hub version) -- avoids "no kind is registered for the type"
+	scheme.AddKnownTypes(schema.GroupVersion{
+		Group:   gvv1.Group,
+		Version: runtime.APIVersionInternal,
+	},
+		&prefsv1.Preferences{},
+		&prefsv1.PreferencesList{},
+	)
+
+	metav1.AddToGroupVersion(scheme, gvv1)
+	metav1.AddToGroupVersion(scheme, gvv1alpha1)
+	return scheme.SetVersionPriority(b.GetGroupVersions()...)
+}
+
+func (b *APIBuilder) storageForVersion(
+	apiGroupInfo *genericapiserver.APIGroupInfo,
+	opts builder.APIGroupOptions,
+	prefs apimachineryutils.ResourceInfo,
+) (*preferencesStorage, error) {
+	storage := map[string]rest.Storage{}
+
+	var store grafanarest.Storage
+	store, err := grafanaregistry.NewRegistryStore(opts.Scheme, prefs, opts.OptsGetter)
+	if err != nil {
+		return nil, err
+	}
+	if b.legacyPrefs != nil && opts.DualWriteBuilder != nil {
+		store, err = opts.DualWriteBuilder(prefs.GroupResource(), b.legacyPrefs, store)
+		if err != nil {
+			return nil, err
+		}
+	}
+	wrappedStorage := &preferencesStorage{Storage: store, gvk: prefs.GroupVersionKind()}
+	storage[prefs.StoragePath()] = wrappedStorage
+
+	apiGroupInfo.VersionedResourcesStorageMap[prefs.GroupVersion().Version] = storage
+	return wrappedStorage, nil
 }
 
 func (b *APIBuilder) UpdateAPIGroupInfo(apiGroupInfo *genericapiserver.APIGroupInfo, opts builder.APIGroupOptions) error {
-	storage := map[string]rest.Storage{}
-
-	// Configure Stars Dual writer
-	resource := preferences.StarsResourceInfo
-	var stars grafanarest.Storage
-	unified, err := grafanaregistry.NewRegistryStore(opts.Scheme, resource, opts.OptsGetter)
+	// v1 (stable, storage version) -- the merger lists from this storage
+	wrappedStorage, err := b.storageForVersion(apiGroupInfo, opts, prefsv1.PreferencesResourceInfo)
 	if err != nil {
 		return err
 	}
-	stars = unified
-	if b.stars != nil && opts.DualWriteBuilder != nil {
-		legacy := legacy.NewDashboardStarsStorage(b.stars, b.users, b.namespacer, b.sql)
-		stars, err = opts.DualWriteBuilder(resource.GroupResource(), legacy, unified)
-		if err != nil {
-			return err
-		}
-	}
-	storage[resource.StoragePath()] = stars
-	storage[resource.StoragePath("write")] = &starsREST{
-		store: stars,
+	b.merger.lister = wrappedStorage
+
+	// v1alpha1 (compatibility alias)
+	if _, err := b.storageForVersion(apiGroupInfo, opts, prefsv1alpha1.PreferencesResourceInfo); err != nil {
+		return err
 	}
 
-	// Configure Preferences
-	prefs := preferences.PreferencesResourceInfo
-	storage[prefs.StoragePath()] = legacy.NewPreferencesStorage(b.namespacer, b.sql)
-
-	apiGroupInfo.VersionedResourcesStorageMap[preferences.APIVersion] = storage
 	return nil
 }
 
+func (b *APIBuilder) GetAuthorizer() authorizer.Authorizer {
+	return b.authorizer
+}
+
 func (b *APIBuilder) GetOpenAPIDefinitions() common.GetOpenAPIDefinitions {
-	return preferences.GetOpenAPIDefinitions
+	return prefsv1.GetOpenAPIDefinitions
 }
 
 func (b *APIBuilder) GetAPIRoutes(gv schema.GroupVersion) *builder.APIRoutes {
 	defs := b.GetOpenAPIDefinitions()(func(path string) spec.Ref { return spec.Ref{} })
-	return b.calculator.GetAPIRoutes(defs)
-}
-
-func (b *APIBuilder) PostProcessOpenAPI(oas *spec3.OpenAPI) (*spec3.OpenAPI, error) {
-	oas.Info.Description = "Grafana preferences"
-
-	root := "/apis/" + b.GetGroupVersion().String() + "/"
-	writeKey := root + "namespaces/{namespace}/stars/{name}/write"
-	delete(oas.Paths.Paths, writeKey)
-
-	// Add the group/kind/id properties to the path
-	stars, ok := oas.Paths.Paths[writeKey+"/{path}"]
-	if !ok || stars == nil {
-		return nil, fmt.Errorf("unable to find write path")
-	}
-	stars.Parameters = []*spec3.Parameter{
-		stars.Parameters[0], // name
-		stars.Parameters[1], // namespace
-		{
-			ParameterProps: spec3.ParameterProps{
-				Name:        "group",
-				In:          "path",
-				Example:     "dashboard.grafana.app",
-				Description: "API group for stared item",
-				Schema:      spec.StringProperty(),
-				Required:    true,
-			},
-		}, {
-			ParameterProps: spec3.ParameterProps{
-				Name:        "kind",
-				In:          "path",
-				Example:     "Dashboard",
-				Description: "Kind for stared item",
-				Schema:      spec.StringProperty(),
-				Required:    true,
-			},
-		}, {
-			ParameterProps: spec3.ParameterProps{
-				Name:        "id",
-				In:          "path",
-				Example:     "",
-				Description: "The k8s name for the selected item",
-				Schema:      spec.StringProperty(),
-				Required:    true,
-			},
-		},
-	}
-	stars.Put.Description = "Add a starred item"
-	stars.Put.OperationId = "addStar"
-	stars.Delete.Description = "Remove a starred item"
-	stars.Delete.OperationId = "removeStar"
-
-	delete(oas.Paths.Paths, writeKey+"/{path}")
-	oas.Paths.Paths[writeKey+"/{group}/{kind}/{id}"] = stars
-
-	return oas, nil
+	return b.merger.GetAPIRoutes(defs)
 }

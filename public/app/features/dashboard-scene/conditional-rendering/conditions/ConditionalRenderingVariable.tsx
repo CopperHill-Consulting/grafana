@@ -1,28 +1,42 @@
-import { ReactElement, useEffect, useMemo, useState } from 'react';
+import { type ReactElement, useEffect, useMemo, useState } from 'react';
 
+import { parseFlags } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { t } from '@grafana/i18n';
 import {
-  SceneComponentProps,
+  MultiValueVariable,
+  type SceneComponentProps,
   sceneGraph,
   SceneObjectBase,
-  SceneObjectState,
+  type SceneObjectState,
   VariableDependencyConfig,
 } from '@grafana/scenes';
 import {
-  ConditionalRenderingVariableKind,
-  ConditionalRenderingVariableSpec,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
-import { Box, Combobox, ComboboxOption, Field, Input, Stack } from '@grafana/ui';
+  type ConditionalRenderingVariableKind,
+  type ConditionalRenderingVariableSpec,
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
+import { Box, Combobox, type ComboboxOption, Field, Input, Stack } from '@grafana/ui';
+import { ALL_VARIABLE_TEXT } from 'app/features/variables/constants';
 
-import { dashboardEditActions } from '../../edit-pane/shared';
-import { getDashboardSceneFor } from '../../utils/utils';
+import { edit } from '../../actions/utils/edit';
+import { useUserDefinedVariables } from '../../utils/variables';
 import { getLowerTranslatedObjectType } from '../object';
 
 import { ConditionalRenderingConditionWrapper } from './ConditionalRenderingConditionWrapper';
-import { ConditionalRenderingConditionsSerializerRegistryItem } from './serializers';
-import { checkGroup, getObjectType } from './utils';
+import { type ConditionalRenderingConditionsSerializerRegistryItem } from './serializers';
+import { checkGroup, getObject, getObjectType } from './utils';
 
 type VariableConditionValueOperator = '=' | '!=' | '=~' | '!~';
+
+/**
+ * Builds a RegExp from a user-entered value, honouring RE2-style inline flags
+ * such as `(?i)` that JavaScript's RegExp does not support natively (the same
+ * syntax accepted elsewhere in Grafana). Throws on genuinely invalid patterns.
+ */
+function buildValueRegExp(value: string): RegExp {
+  const { cleaned, flags } = parseFlags(value);
+  return new RegExp(cleaned, flags);
+}
 
 interface ConditionalRenderingVariableState extends SceneObjectState {
   variable: string;
@@ -40,14 +54,6 @@ export class ConditionalRenderingVariable extends SceneObjectBase<ConditionalRen
     deserialize: this.deserialize,
   };
 
-  protected _variableDependency = new VariableDependencyConfig(this, {
-    onAnyVariableChanged: (v) => {
-      if (v.state.name === this.state.variable) {
-        this._check();
-      }
-    },
-  });
-
   public constructor(state: ConditionalRenderingVariableState) {
     super(state);
 
@@ -55,6 +61,20 @@ export class ConditionalRenderingVariable extends SceneObjectBase<ConditionalRen
   }
 
   private _activationHandler() {
+    const object = getObject(this);
+
+    if (!object) {
+      return;
+    }
+
+    this._variableDependency = new VariableDependencyConfig(object, {
+      onAnyVariableChanged: (v) => {
+        if (v.state.name === this.state.variable) {
+          this._check();
+        }
+      },
+    });
+
     this.forEachChild((child) => {
       if (!child.isActive) {
         this._subs.add(child.activate());
@@ -78,23 +98,41 @@ export class ConditionalRenderingVariable extends SceneObjectBase<ConditionalRen
       return undefined;
     }
 
-    const variable = sceneGraph.getVariables(this).getByName(this.state.variable);
+    const object = getObject(this);
+
+    if (!object) {
+      return undefined;
+    }
+
+    // sceneGraph.lookupVariable walks up the scene graph parent chain,
+    // respecting section-level $variables on rows/tabs before reaching
+    // the dashboard root. This correctly handles repeated panel clones
+    // whose local $variables only contains the repeat variable and would
+    // otherwise shadow dashboard-level variables. See: GitHub issue #120327
+    const variable = sceneGraph.lookupVariable(this.state.variable, object);
 
     if (!variable) {
       return undefined;
     }
 
     const variableValue = variable.getValue() ?? '';
+    const comparisonValue = this.state.value.toString();
+
+    // Check if "All" is selected in a multi-value variable with includeAll option
+    const isAllSelected =
+      variable instanceof MultiValueVariable &&
+      variable.hasAllValue() &&
+      comparisonValue.toLowerCase() === ALL_VARIABLE_TEXT.toLowerCase();
 
     let hit: boolean;
 
     if (this.state.operator === '=' || this.state.operator === '!=') {
       hit = Array.isArray(variableValue)
-        ? variableValue.includes(this.state.value.toString())
-        : variableValue === this.state.value.toString();
+        ? variableValue.includes(comparisonValue) || isAllSelected
+        : variableValue === comparisonValue || isAllSelected;
     } else {
       try {
-        const regex = new RegExp(this.state.value);
+        const regex = buildValueRegExp(this.state.value);
         hit = Array.isArray(variableValue)
           ? variableValue.some((currentVariableValue) => regex.test(currentVariableValue.toString()))
           : regex.test(variableValue.toString());
@@ -127,7 +165,11 @@ export class ConditionalRenderingVariable extends SceneObjectBase<ConditionalRen
     }
   }
 
-  public render(): ReactElement {
+  public forceCheck() {
+    this._check();
+  }
+
+  public renderCmp(): ReactElement {
     return <this.Component model={this} key={this.state.key} />;
   }
 
@@ -197,11 +239,11 @@ function ConditionalRenderingVariableRenderer({ model }: SceneComponentProps<Con
 
   useEffect(() => setNewValue(value), [value]);
 
-  const variables = sceneGraph.getVariables(getDashboardSceneFor(model));
+  const variables = useUserDefinedVariables(model);
 
   const variableNames: ComboboxOption[] = useMemo(
-    () => variables.state.variables.map((v) => ({ value: v.state.name, label: v.state.label ?? v.state.name })),
-    [variables.state.variables]
+    () => variables.map((v) => ({ value: v.state.name, label: v.state.label || v.state.name })),
+    [variables]
   );
 
   const operatorOptions: Array<ComboboxOption<VariableConditionValueOperator>> = useMemo(
@@ -226,7 +268,7 @@ function ConditionalRenderingVariableRenderer({ model }: SceneComponentProps<Con
   const valueError = useMemo(() => {
     if (operator === '=~' || operator === '!~') {
       try {
-        new RegExp(newValue);
+        buildValueRegExp(newValue);
         return '';
       } catch (err) {
         return t('dashboard.conditional-rendering.conditions.variable.error.invalid-regex', 'Invalid regex');
@@ -248,11 +290,13 @@ function ConditionalRenderingVariableRenderer({ model }: SceneComponentProps<Con
       isObjectSupported={true}
       model={model}
       title={t('dashboard.conditional-rendering.conditions.variable.label', 'Template variable')}
+      ruleId="variable"
     >
       <Stack direction="column" gap={0.5}>
         <Stack direction="row" gap={0.5} grow={1}>
           <Box flex={1}>
             <Combobox
+              data-testid={selectors.pages.Dashboard.Sidebar.conditionalRendering.variable.variableSelection}
               placeholder={t('dashboard.conditional-rendering.conditions.variable.name', 'Name')}
               options={variableNames}
               value={variable}
@@ -260,7 +304,7 @@ function ConditionalRenderingVariableRenderer({ model }: SceneComponentProps<Con
                 const newVariable = option.value;
 
                 if (newVariable !== variable) {
-                  dashboardEditActions.edit({
+                  edit({
                     description: undoText,
                     source: model,
                     perform: () => model.changeVariable(newVariable),
@@ -274,13 +318,14 @@ function ConditionalRenderingVariableRenderer({ model }: SceneComponentProps<Con
           <Combobox
             width="auto"
             minWidth={10}
+            data-testid={selectors.pages.Dashboard.Sidebar.conditionalRendering.variable.operatorSelection}
             options={operatorOptions}
             value={operator}
             onChange={(option) => {
               const newOperator = option.value;
 
               if (newOperator !== operator) {
-                dashboardEditActions.edit({
+                edit({
                   description: undoText,
                   source: model,
                   perform: () => model.changeOperator(newOperator),
@@ -293,6 +338,7 @@ function ConditionalRenderingVariableRenderer({ model }: SceneComponentProps<Con
 
         <Field error={valueError} invalid={!!valueError} noMargin>
           <Input
+            data-testid={selectors.pages.Dashboard.Sidebar.conditionalRendering.variable.valueInput}
             placeholder={t('dashboard.conditional-rendering.conditions.variable.value', 'Value')}
             value={newValue}
             onChange={(evt) => {
@@ -302,7 +348,7 @@ function ConditionalRenderingVariableRenderer({ model }: SceneComponentProps<Con
             }}
             onBlur={() => {
               if (newValue !== value) {
-                dashboardEditActions.edit({
+                edit({
                   description: undoText,
                   source: model,
                   perform: () => model.changeValue(newValue),

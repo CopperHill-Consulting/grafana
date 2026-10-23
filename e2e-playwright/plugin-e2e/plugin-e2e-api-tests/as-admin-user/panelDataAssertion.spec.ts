@@ -5,6 +5,10 @@ import { successfulDataQuery } from '../mocks/queries';
 
 const REACT_TABLE_DASHBOARD = { uid: 'U_bZIMRMk' };
 
+test.use({
+  viewport: { width: 1440, height: 720 },
+});
+
 test.describe(
   'plugin-e2e-api-tests admin',
   {
@@ -38,7 +42,7 @@ test.describe(
           formatExpectError('Could not locate header elements in table panel')
         ).toContainText(['col1', 'col2']);
         await expect(
-          panelEditPage.panel.locator.getByRole('gridcell'),
+          panelEditPage.panel.data,
           formatExpectError('Could not locate headers in table panel')
         ).toContainText(['val1', 'val2', 'val3', 'val4']);
       });
@@ -58,7 +62,7 @@ test.describe(
           formatExpectError('Could not locate header elements in table panel')
         ).toContainText(['col1', 'col2']);
         await expect(
-          panelEditPage.panel.locator.getByRole('gridcell'),
+          panelEditPage.panel.data,
           formatExpectError('Could not locate data elements in table panel')
         ).toContainText(['val1', 'val2', 'val3', 'val4']);
       });

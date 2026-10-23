@@ -2,10 +2,12 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { textUtil } from '@grafana/data';
-import { RepoType } from 'app/features/provisioning/Wizard/types';
+import { type RepoType } from 'app/features/provisioning/Wizard/types';
 import { usePullRequestParam } from 'app/features/provisioning/hooks/usePullRequestParam';
 
-import { isValidRepoType, PreviewBannerViewPR } from './PreviewBannerViewPR';
+import { isValidRepoType } from '../../guards';
+
+import { PreviewBannerViewPR } from './PreviewBannerViewPR';
 
 jest.mock('@grafana/data', () => ({
   ...jest.requireActual('@grafana/data'),
@@ -23,19 +25,32 @@ const mockTextUtil = jest.mocked(textUtil);
 const mockUsePullRequestParam = jest.mocked(usePullRequestParam);
 
 function setup(
-  options: { prParam: string; isNewPr?: boolean; repoType?: RepoType } = { prParam: 'test-url', repoType: 'github' }
+  options: {
+    prURL?: string;
+    isNewPr?: boolean;
+    repoType?: RepoType;
+    action?: string;
+    prTitle?: string;
+    repoUrl?: string;
+  } = {
+    prURL: 'test-url',
+    repoType: 'github',
+  }
 ) {
   const componentProps = {
-    prParam: options.prParam,
+    prURL: options.prURL,
     isNewPr: options.isNewPr || false,
+    repoUrl: options.repoUrl,
   };
 
-  // Mock the hook BEFORE rendering the component
   mockUsePullRequestParam.mockReturnValue({
     prURL: undefined,
     newPrURL: undefined,
     repoURL: undefined,
     repoType: options.repoType || 'github',
+    resourcePushedTo: 'abc',
+    action: options.action,
+    prTitle: options.prTitle,
   });
 
   const renderResult = render(<PreviewBannerViewPR {...componentProps} />);
@@ -54,6 +69,22 @@ describe('PreviewBannerViewPR', () => {
     windowOpenSpy = jest.spyOn(window, 'open');
   });
 
+  it.each([
+    { name: 'repository fallback', repoUrl: 'https://git.example.com/team/repo' },
+    { name: 'folder repository fallback passed as prURL', prURL: 'https://git.example.com/team/repo' },
+  ])('labels the $name as Open repository', async (props) => {
+    setup({ ...props, repoType: 'git', isNewPr: true });
+
+    expect(screen.getByRole('button', { name: /close alert/i })).toHaveTextContent('Open repository');
+    expect(
+      screen.getByText('Open the repository and create a pull or merge request from the branch you saved to.')
+    ).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /close alert/i }));
+
+    expect(windowOpenSpy).toHaveBeenCalledWith('https://git.example.com/team/repo', '_blank');
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockTextUtil.sanitizeUrl.mockImplementation((url) => url);
@@ -69,14 +100,17 @@ describe('PreviewBannerViewPR', () => {
 
   describe('Dashboard scenarios', () => {
     it('should render correct text for new PR dashboard', () => {
-      setup({ prParam: 'test-url', isNewPr: true });
+      setup({ prURL: 'test-url', isNewPr: true });
 
       expect(screen.getByRole('status')).toBeInTheDocument();
       expect(screen.getByText('A new resource has been created in a branch in GitHub.')).toBeInTheDocument();
+      expect(
+        screen.queryByText('Open the repository and create a pull or merge request from the branch you saved to.')
+      ).not.toBeInTheDocument();
     });
 
     it('should render correct text for existing PR dashboard', () => {
-      setup({ prParam: 'test-url', isNewPr: false });
+      setup({ prURL: 'test-url', isNewPr: false });
 
       expect(screen.getByRole('status')).toBeInTheDocument();
       expect(
@@ -87,13 +121,13 @@ describe('PreviewBannerViewPR', () => {
     });
 
     it('should render correct button text for new PR dashboard', () => {
-      setup({ prParam: 'test-url', isNewPr: true });
+      setup({ prURL: 'test-url', isNewPr: true });
 
       expect(screen.getByText('Open pull request in GitHub')).toBeInTheDocument();
     });
 
     it('should render correct button text for existing PR dashboard', () => {
-      setup({ prParam: 'test-url', isNewPr: false });
+      setup({ prURL: 'test-url', isNewPr: false });
 
       expect(screen.getByText('View pull request in GitHub')).toBeInTheDocument();
     });
@@ -101,14 +135,14 @@ describe('PreviewBannerViewPR', () => {
 
   describe('Additional scenarios', () => {
     it('should render correct text for new PR resource', () => {
-      setup({ prParam: 'test-url', isNewPr: true });
+      setup({ prURL: 'test-url', isNewPr: true });
 
       expect(screen.getByRole('status')).toBeInTheDocument();
       expect(screen.getByText('A new resource has been created in a branch in GitHub.')).toBeInTheDocument();
     });
 
     it('should render correct text for existing PR resource', () => {
-      setup({ prParam: 'test-url', isNewPr: false });
+      setup({ prURL: 'test-url', isNewPr: false });
 
       expect(screen.getByRole('status')).toBeInTheDocument();
       expect(
@@ -119,13 +153,13 @@ describe('PreviewBannerViewPR', () => {
     });
 
     it('should render correct button text for new PR resource', () => {
-      setup({ prParam: 'test-url', isNewPr: true });
+      setup({ prURL: 'test-url', isNewPr: true });
 
       expect(screen.getByText('Open pull request in GitHub')).toBeInTheDocument();
     });
 
     it('should render correct button text for existing PR resource', () => {
-      setup({ prParam: 'test-url', isNewPr: false });
+      setup({ prURL: 'test-url', isNewPr: false });
 
       expect(screen.getByText('View pull request in GitHub')).toBeInTheDocument();
     });
@@ -134,7 +168,7 @@ describe('PreviewBannerViewPR', () => {
   describe('Button functionality', () => {
     it('should open URL in new tab when button is clicked', async () => {
       const testUrl = 'https://GitHub.com/test/repo/pull/123';
-      setup({ prParam: testUrl });
+      setup({ prURL: testUrl });
 
       const button = screen.getByRole('button', { name: /close alert/i });
       await userEvent.click(button);
@@ -145,7 +179,7 @@ describe('PreviewBannerViewPR', () => {
 
   describe('Different repository types', () => {
     it('should handle GitLab repository type', () => {
-      setup({ prParam: 'test-url', isNewPr: false, repoType: 'gitlab' });
+      setup({ prURL: 'test-url', isNewPr: false, repoType: 'gitlab' });
 
       expect(screen.getByRole('status')).toBeInTheDocument();
       expect(
@@ -156,7 +190,7 @@ describe('PreviewBannerViewPR', () => {
     });
 
     it('should handle Bitbucket repository type', () => {
-      setup({ prParam: 'test-url', isNewPr: false, repoType: 'bitbucket' });
+      setup({ prURL: 'test-url', isNewPr: false, repoType: 'bitbucket' });
 
       expect(screen.getByRole('status')).toBeInTheDocument();
       expect(
@@ -164,6 +198,62 @@ describe('PreviewBannerViewPR', () => {
           'This resource is loaded from the branch you just created in Bitbucket and it is only visible to you'
         )
       ).toBeInTheDocument();
+    });
+  });
+
+  describe('Delete action', () => {
+    it('should render delete-specific title for new PR', () => {
+      setup({ prURL: 'test-url', isNewPr: true, action: 'delete' });
+
+      expect(screen.getByText('A resource has been deleted in a branch in GitHub.')).toBeInTheDocument();
+    });
+
+    it('should render delete-specific body text', () => {
+      setup({ prURL: 'test-url', isNewPr: true, action: 'delete' });
+
+      expect(
+        screen.getByText(
+          'The rest of Grafana users in your organization will still see this resource until this branch is merged'
+        )
+      ).toBeInTheDocument();
+    });
+
+    it('should still render PR button for delete action', () => {
+      setup({ prURL: 'test-url', isNewPr: true, action: 'delete' });
+
+      expect(screen.getByText('Open pull request in GitHub')).toBeInTheDocument();
+    });
+  });
+
+  describe('PR title prefill', () => {
+    const githubPrURL = 'https://github.com/org/repo/compare/main...feature?quick_pull=1&labels=grafana';
+
+    it('appends an encoded title param to a GitHub PR URL when pr_title is present', async () => {
+      setup({ prURL: githubPrURL, repoType: 'github', prTitle: 'update: My Dashboard' });
+
+      await userEvent.click(screen.getByRole('button', { name: /close alert/i }));
+
+      expect(windowOpenSpy).toHaveBeenCalledWith(`${githubPrURL}&title=update%3A%20My%20Dashboard`, '_blank');
+    });
+
+    it('uses merge_request[title] for GitLab', async () => {
+      const gitlabPrURL = 'https://gitlab.com/org/repo/-/merge_requests/new?merge_request[source_branch]=feature';
+      setup({ prURL: gitlabPrURL, repoType: 'gitlab', prTitle: 'update: My Dashboard' });
+
+      await userEvent.click(screen.getByRole('button', { name: /close alert/i }));
+
+      expect(windowOpenSpy).toHaveBeenCalledWith(
+        `${gitlabPrURL}&merge_request[title]=update%3A%20My%20Dashboard`,
+        '_blank'
+      );
+    });
+
+    it('leaves the PR URL unchanged when no pr_title is present', async () => {
+      setup({ prURL: githubPrURL, repoType: 'github' });
+
+      await userEvent.click(screen.getByRole('button', { name: /close alert/i }));
+
+      expect(windowOpenSpy).toHaveBeenCalledWith(githubPrURL, '_blank');
     });
   });
 });

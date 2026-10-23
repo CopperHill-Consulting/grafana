@@ -1,12 +1,10 @@
-import { useCallback, useRef, useState, MouseEvent } from 'react';
-
-import { config } from '@grafana/runtime';
+import { useCallback, useRef, useState, type MouseEvent } from 'react';
 
 import { disablePopoverMenu, enablePopoverMenu, isPopoverMenuDisabled, targetIsElement } from '../../utils';
-import { PopoverStateType } from '../LogRows';
 
 import { useLogListContext } from './LogListContext';
-import { LogListModel } from './processing';
+import { type PopoverStateType } from './popoverMenuTypes';
+import { type LogListModel } from './processing';
 
 export const usePopoverMenu = (containerElement: HTMLDivElement | null) => {
   const [popoverState, setPopoverState] = useState<PopoverStateType>({
@@ -19,7 +17,7 @@ export const usePopoverMenu = (containerElement: HTMLDivElement | null) => {
   const { onClickFilterOutString, onClickFilterString } = useLogListContext();
 
   const popoverMenuSupported = useCallback(() => {
-    if (!config.featureToggles.logRowsPopoverMenu || isPopoverMenuDisabled()) {
+    if (isPopoverMenuDisabled()) {
       return false;
     }
     return Boolean(onClickFilterOutString || onClickFilterString);

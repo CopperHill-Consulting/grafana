@@ -2,8 +2,8 @@ import { css } from '@emotion/css';
 import { useMemo, useState } from 'react';
 import { useMedia } from 'react-use';
 
-import { GrafanaTheme2 } from '@grafana/data';
-import { selectors as e2eSelectors } from '@grafana/e2e-selectors/src';
+import { type GrafanaTheme2 } from '@grafana/data';
+import { selectors as e2eSelectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import { reportInteraction } from '@grafana/runtime';
 import {
@@ -29,7 +29,7 @@ import {
 } from 'app/features/dashboard/components/ShareModal/SharePublicDashboard/SharePublicDashboardUtils';
 import { AccessControlAction } from 'app/types/accessControl';
 
-import { PublicDashboardListResponse } from '../../types';
+import { type PublicDashboardListResponse } from '../../types';
 
 import { DeletePublicDashboardButton } from './DeletePublicDashboardButton';
 
@@ -59,7 +59,7 @@ const PublicDashboardCard = ({ pd }: { pd: PublicDashboardListResponse }) => {
 
   const translatedPauseSharingText = t('shared-dashboard-list.toggle.pause-sharing-toggle-text', 'Pause access');
   return (
-    <Card className={styles.card} href={`/d/${pd.dashboardUid}`}>
+    <Card noMargin className={styles.card} href={`/d/${pd.dashboardUid}`}>
       <Card.Heading className={styles.heading}>
         <span>{pd.title}</span>
       </Card.Heading>
@@ -173,6 +173,9 @@ const getStyles = (theme: GrafanaTheme2) => ({
   list: css({
     listStyleType: 'none',
     marginBottom: theme.spacing(2),
+    display: 'flex',
+    flexDirection: 'column',
+    gap: theme.spacing(1),
   }),
   card: css({
     [theme.breakpoints.up('sm')]: {

@@ -1,23 +1,21 @@
-import { BuildInfo, escapeRegex } from '@grafana/data';
-import { BaseTransport, defaultInternalLoggerLevel } from '@grafana/faro-core';
+import { escapeRegex } from '@grafana/data';
+import { type BaseTransport, defaultInternalLoggerLevel, type Faro } from '@grafana/faro-core';
+import { ReplayInstrumentation } from '@grafana/faro-instrumentation-replay';
 import {
   initializeFaro,
-  BrowserConfig,
-  ErrorsInstrumentation,
-  ConsoleInstrumentation,
-  WebVitalsInstrumentation,
-  SessionInstrumentation,
+  type BrowserConfig,
   FetchTransport,
-  type Instrumentation,
   getWebInstrumentations,
-  Config,
+  type Instrumentation,
 } from '@grafana/faro-web-sdk';
 import { TracingInstrumentation } from '@grafana/faro-web-tracing';
-import { EchoBackend, EchoEvent, EchoEventType } from '@grafana/runtime';
+import { type EchoBackend, type EchoEvent, EchoEventType } from '@grafana/runtime';
+import { FlagKeys, getFeatureFlagClient } from '@grafana/runtime/internal';
 
 import { EchoSrvTransport } from './EchoSrvTransport';
 import { beforeSendHandler } from './beforeSendHandler';
-import { GrafanaJavascriptAgentEchoEvent, User } from './types';
+import { setupFaroPageMeta } from './faroPageMeta';
+import { type GrafanaJavascriptAgentBackendOptions, type GrafanaJavascriptAgentEchoEvent } from './types';
 
 function isCrossOriginIframe() {
   try {
@@ -25,18 +23,6 @@ function isCrossOriginIframe() {
   } catch (e) {
     return true;
   }
-}
-
-export interface GrafanaJavascriptAgentBackendOptions extends BrowserConfig {
-  buildInfo: BuildInfo;
-  customEndpoint: string;
-  user: User;
-  allInstrumentationsEnabled: boolean;
-  errorInstrumentalizationEnabled: boolean;
-  consoleInstrumentalizationEnabled: boolean;
-  webVitalsInstrumentalizationEnabled: boolean;
-  tracingInstrumentalizationEnabled: boolean;
-  ignoreUrls: RegExp[];
 }
 
 export const TRACKING_URLS = [
@@ -49,62 +35,65 @@ export class GrafanaJavascriptAgentBackend
   implements EchoBackend<GrafanaJavascriptAgentEchoEvent, GrafanaJavascriptAgentBackendOptions>
 {
   supportedEvents = [EchoEventType.GrafanaJavascriptAgent];
-  private faroInstance;
 
   constructor(public options: GrafanaJavascriptAgentBackendOptions) {
     // configure instrumentations.
-    const instrumentations: Instrumentation[] = [];
-
-    const ignoreUrls = [
-      new RegExp(`.*${escapeRegex(options.customEndpoint)}.*`),
-      ...TRACKING_URLS,
-      ...options.ignoreUrls,
+    const instrumentations: Instrumentation[] = [
+      ...getWebInstrumentations({
+        captureConsole: options.consoleInstrumentalizationEnabled,
+        enablePerformanceInstrumentation: options.performanceInstrumentalizationEnabled,
+        enableContentSecurityPolicyInstrumentation: options.cspInstrumentalizationEnabled,
+      }),
     ];
 
-    const transports: BaseTransport[] = [new EchoSrvTransport({ ignoreUrls })];
-    const consoleInstrumentationOptions: Config['consoleInstrumentation'] =
-      options.allInstrumentationsEnabled || options.consoleInstrumentalizationEnabled
-        ? {
-            serializeErrors: true,
-          }
-        : {};
-
-    // If in cross origin iframe, default to writing to instance logging endpoint
-    if (options.customEndpoint && !isCrossOriginIframe()) {
-      transports.push(new FetchTransport({ url: options.customEndpoint, apiKey: options.apiKey }));
-    }
-
-    if (options.errorInstrumentalizationEnabled) {
-      instrumentations.push(new ErrorsInstrumentation());
-    }
-    if (options.consoleInstrumentalizationEnabled) {
-      instrumentations.push(new ConsoleInstrumentation());
-    }
-    if (options.webVitalsInstrumentalizationEnabled) {
-      instrumentations.push(new WebVitalsInstrumentation());
-    }
     if (options.tracingInstrumentalizationEnabled) {
       instrumentations.push(new TracingInstrumentation());
     }
 
-    // session instrumentation must be added!
-    instrumentations.push(new SessionInstrumentation());
+    const ignoreUrls = [...TRACKING_URLS, ...options.ignoreUrls];
+    if (options.customEndpoint) {
+      ignoreUrls.unshift(new RegExp(`.*${escapeRegex(options.customEndpoint)}.*`));
+    }
+
+    const sessionReplayEnabled = getFeatureFlagClient().getBooleanValue(FlagKeys.FaroSessionReplay, false);
+
+    const transports: BaseTransport[] = [new EchoSrvTransport({ ignoreUrls })];
+
+    // If in cross origin iframe, default to writing to instance logging endpoint
+    if (options.customEndpoint && !isCrossOriginIframe()) {
+      transports.push(
+        new FetchTransport({
+          url: options.customEndpoint,
+          apiKey: options.apiKey,
+          // When session replay is enabled, gzip-compress request bodies via the browser's
+          // CompressionStream — session replay produces the large payloads that benefit most.
+          // Falls back to uncompressed when CompressionStream is unavailable.
+          ...(sessionReplayEnabled ? { requestCompression: true } : {}),
+        })
+      );
+    }
+
+    // Assigned after init; onSessionChange can fire during initializeFaro, before page meta exists.
+    let refreshFaroPageMeta: (() => void) | undefined;
 
     // initialize GrafanaJavascriptAgent so it can set up its hooks and start collecting errors
     const grafanaJavaScriptAgentOptions: BrowserConfig = {
-      globalObjectKey: options.globalObjectKey || 'faro',
-      preventGlobalExposure: options.preventGlobalExposure || false,
       app: {
         name: 'grafana-frontend',
         version: options.buildInfo.version,
         environment: options.buildInfo.env,
       },
-      instrumentations: options.allInstrumentationsEnabled
-        ? [...getWebInstrumentations(), new TracingInstrumentation()]
-        : instrumentations,
-      consoleInstrumentation: consoleInstrumentationOptions,
-      trackWebVitalsAttribution: options.webVitalsInstrumentalizationEnabled || options.allInstrumentationsEnabled,
+
+      user: {
+        id: options.userIdentifier,
+      },
+
+      instrumentations: instrumentations,
       transports,
+
+      consoleInstrumentation: {
+        serializeErrors: true,
+      },
       ignoreErrors: [
         'ResizeObserver loop limit exceeded',
         'ResizeObserver loop completed',
@@ -114,23 +103,72 @@ export class GrafanaJavascriptAgentBackend
       ignoreUrls,
       sessionTracking: {
         persistent: true,
+        // Faro rotates sessions on expiration/inactivity without navigation; re-anchor the
+        // sessionStart page attribute so it never describes the previous session.
+        onSessionChange: () => refreshFaroPageMeta?.(),
       },
       batching: {
-        sendTimeout: 1000,
+        sendTimeout: 2000,
+        itemLimit: 250,
       },
-      internalLoggerLevel: options.internalLoggerLevel || defaultInternalLoggerLevel,
-      beforeSend: beforeSendHandler,
+      beforeSend: (item) => beforeSendHandler(options.botFilterEnabled, item),
+      internalLoggerLevel: options.internalLoggerLevel ?? defaultInternalLoggerLevel,
     };
-    this.faroInstance = initializeFaro(grafanaJavaScriptAgentOptions);
 
-    if (options.user) {
-      this.faroInstance.api.setUser({
-        id: options.user.id,
-        attributes: {
-          orgId: String(options.user.orgId) || '',
-        },
-      });
+    const faro = initializeFaro(grafanaJavaScriptAgentOptions);
+
+    if (faro) {
+      // Attach navigation + session context (referrer, previousUrl, sessionStart) to the meta of
+      // every emitted signal.
+      refreshFaroPageMeta = setupFaroPageMeta(faro);
+
+      if (sessionReplayEnabled) {
+        this.initReplayAfterDomRendered(faro);
+      }
     }
+  }
+
+  /**
+   * Defer rrweb session replay until React has committed its initial render.
+   *
+   * rrweb's record() takes a full DOM snapshot on start and then tracks
+   * incremental mutations. If it starts before React renders, the snapshot
+   * captures an empty #reactRoot and the entire first render arrives as one
+   * massive mutation batch — which triggers a known rrweb bug where the
+   * MutationBuffer.emit() addList silently drops nodes it cannot resolve.
+   * Those dropped nodes later surface as "[replayer] Node with id 'X' not found."
+   *
+   * By observing #reactRoot for its first child, we start rrweb only after
+   * React has committed, so the snapshot contains the real UI and the
+   * problematic initial mutation batch never occurs.
+   */
+  private initReplayAfterDomRendered(faro: Faro): void {
+    const addReplay = () => {
+      faro.instrumentations.add(
+        new ReplayInstrumentation({
+          maskAllInputs: true,
+          maskTextSelector: '*',
+          collectFonts: false,
+          inlineImages: false,
+          inlineStylesheet: false,
+          recordCanvas: false,
+          recordCrossOriginIframes: false,
+        })
+      );
+    };
+
+    const reactRoot = document.getElementById('reactRoot');
+    if (reactRoot && reactRoot.childNodes.length > 0) {
+      requestAnimationFrame(addReplay);
+      return;
+    }
+
+    const observer = new MutationObserver((_mutations, obs) => {
+      obs.disconnect();
+      requestAnimationFrame(addReplay);
+    });
+
+    observer.observe(reactRoot ?? document.body, { childList: true });
   }
 
   // noop because the EchoSrvTransport registered in Faro will already broadcast all signals emitted by the Faro API

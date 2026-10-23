@@ -20,6 +20,58 @@ To improve the consistency across Grafana we encourage devs to use tokens instea
 
 Instead of using `0` to remove a previously set border-radius, use `unset`.
 
+### `no-invalid-css-properties`
+
+Disallow invalid CSS property names in Emotion `css()` calls.
+
+This rule catches typos and invalid CSS properties in Emotion's `css()` function calls, helping prevent bugs where styles are silently ignored by browsers. It uses the [`known-css-properties`](https://www.npmjs.com/package/known-css-properties) package (the same one used by Stylelint) to validate property names against all standard CSS properties.
+
+The rule automatically converts camelCase property names to kebab-case for validation and allows:
+
+- Valid CSS properties (e.g., `paddingLeft`, `backgroundColor`)
+- CSS custom properties/variables (e.g., `--my-custom-property`)
+- Nested selectors and pseudo-classes (e.g., `&:hover`, `& > div`)
+- At-rules (e.g., `@media`, `@supports`)
+- HTML tag selectors (e.g., `button`, `span`)
+
+#### Examples
+
+```tsx
+// Bad ❌ - Typo in property name
+const styles = css({
+  addingLeft: 10, // Should be "paddingLeft"
+  backgroudColor: 'red', // Should be "backgroundColor"
+});
+
+// Good ✅ - Valid CSS properties
+const styles = css({
+  paddingLeft: 10,
+  backgroundColor: 'red',
+});
+
+// Good ✅ - CSS custom properties
+const styles = css({
+  '--my-custom-property': '10px',
+});
+
+// Good ✅ - Nested selectors and pseudo-classes
+const styles = css({
+  '&:hover': {
+    backgroundColor: 'blue',
+  },
+  '& > span': {
+    color: 'red',
+  },
+});
+
+// Good ✅ - Media queries
+const styles = css({
+  '@media (max-width: 768px)': {
+    display: 'none',
+  },
+});
+```
+
 ### `no-unreduced-motion`
 
 Avoid direct use of `animation*` or `transition*` properties.
@@ -139,4 +191,169 @@ export default storyConfig;
 // Bad ❌ - Variable assignment with too many sections
 const storyConfig = { title: 'Components/Forms/Button' };
 export default storyConfig;
+```
+
+### `no-plugin-external-import-paths`
+
+Prevent plugins from importing anything outside their own directory.
+
+This rule enforces strict plugin isolation by preventing plugins from importing anything that reaches outside their own plugin directory. This helps maintain clean plugin boundaries and prevents tight coupling between plugins and other parts of the codebase.
+
+The rule automatically detects the current plugin directory from the file path and blocks any relative imports that would reach outside that directory.
+
+The rule is applied to specific plugins by configuring the `files` pattern in the ESLint configuration, similar to `grafana/decoupled-plugins-overrides`.
+
+#### Examples
+
+```tsx
+// Bad ❌ - Importing from sibling plugin
+import { getDataLinks } from '../status-history/utils';
+import { isTooltipScrollable } from '../timeseries/utils';
+
+// Bad ❌ - Importing from Grafana core
+import { something } from '../../../features/dashboard/state';
+
+// Bad ❌ - Importing from outside plugin directory
+import { other } from '../some-other-folder/utils';
+
+// Good ✅ - Importing from same plugin
+import { someUtil } from './utils';
+import { Component } from './Component';
+import { helper } from './subfolder/helper';
+
+// Good ✅ - Importing from external packages
+import React from 'react';
+import { Button } from '@grafana/ui';
+```
+
+#### Error Message
+
+When a violation is detected, the rule reports:
+
+```
+Import '../status-history/utils' reaches outside the 'histogram' plugin directory. Plugins should only import from external dependencies or relative paths within their own directory.
+```
+
+### `zod-import-namespace`
+
+Require all zod imports to use a namespace named `z` from the root `zod` package.
+
+This rule allows only:
+
+```ts
+import * as z from 'zod';
+import type * as z from 'zod';
+```
+
+It disallows any other zod import style, including named/default imports and all zod subpath imports such as `zod/mini`. This ensures that all zod imports are consistent, allowing for a smaller bundle size.
+
+#### Examples
+
+```ts
+// Bad ❌
+import { z } from 'zod';
+import z from 'zod';
+import * as zod from 'zod';
+import type { ZodType } from 'zod';
+import * as z from 'zod/mini';
+
+// Good ✅
+import * as z from 'zod';
+import type * as z from 'zod';
+```
+
+### `define-feature-events`
+
+Enforces best practices when using `defineFeatureEvents` from `@grafana/runtime/internal`.
+Only activates in files that import `defineFeatureEvents`.
+
+#### Rules enforced:
+
+- **`literalArgsRequired`** — `repo` and `feature` args must be string literals so the analytics scanner script can statically extract event names.
+
+```ts
+// Bad ❌
+const feature = 'dashboard_library';
+defineFeatureEvents('grafana', feature);
+
+// Good ✅
+defineFeatureEvents('grafana', 'dashboard_library');
+```
+
+- **`missingOwnerTag`** — Exported events objects must have a JSDoc block with `@owner`.
+
+```ts
+// Bad ❌
+export const MyInteractions = { loaded: createEvent('loaded') };
+
+// Good ✅
+/** @owner grafana-dashboards */
+export const MyInteractions = { loaded: createEvent('loaded') };
+```
+
+- **`missingEventComment`** — Each event in the object must be documented.
+
+```ts
+// Bad ❌
+export const MyInteractions = {
+  loaded: createEvent('loaded'),
+};
+
+// Good ✅
+export const MyInteractions = {
+  /** Fires when the library finishes rendering. */
+  loaded: createEvent('loaded'),
+};
+```
+
+- **`interfaceMustExtend`** — Event property interfaces must extend `EventProperty`.
+
+- **`missingPropertyComment`** — Each property in the interface must have a JSDoc comment, enabling the analytics report scanner to extract descriptions automatically.
+
+```ts
+// Bad ❌
+interface LoadedProperties extends EventProperty {
+  numberOfItems: number;
+}
+
+// Good ✅
+interface LoadedProperties extends EventProperty {
+  /** Total number of items visible in the library at load time. */
+  numberOfItems: number;
+}
+```
+
+- **`stackedJSDocComment`** — Each event and interface property must be documented with a single JSDoc block. TypeScript allows stacking several blocks on one declaration, and the analytics report concatenates them into one description, which is rarely what the author intended. Merge the text, and move tags such as `@owner` into the same block.
+
+```ts
+// Bad ❌
+interface LoadedProperties extends EventProperty {
+  /** Total number of items visible in the library. */
+  /** Only counts the ones rendered at load time. */
+  numberOfItems: number;
+}
+
+// Good ✅
+interface LoadedProperties extends EventProperty {
+  /** Total number of items visible in the library, counting only the ones rendered at load time. */
+  numberOfItems: number;
+}
+```
+
+### `no-direct-create-monitoring-logger`
+
+Disallow direct named imports of `createMonitoringLogger` from `@grafana/runtime`. New loggers must be registered in `packages/grafana-runtime/src/services/logging/loggers.ts` and retrieved via `getLogger` from `@grafana/runtime/unstable`.
+
+This keeps every valid logger source declared in one place so its defaults (context, console output) are discoverable and the registry can initialize it at app boot.
+
+#### Examples
+
+```ts
+// Bad ❌
+import { createMonitoringLogger } from '@grafana/runtime';
+const logger = createMonitoringLogger('features.my-area');
+
+// Good ✅ — register the source in loggers.ts, then:
+import { getLogger } from '@grafana/runtime/unstable';
+const logger = getLogger('features.my-area');
 ```

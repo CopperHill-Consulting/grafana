@@ -3,45 +3,189 @@ package orgimpl
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/configprovider"
 	"github.com/grafana/grafana/pkg/infra/db"
+	"github.com/grafana/grafana/pkg/infra/db/dbtest"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/org"
-	"github.com/grafana/grafana/pkg/services/playlist"
-	"github.com/grafana/grafana/pkg/services/playlist/playlistimpl"
+	"github.com/grafana/grafana/pkg/services/org/orgdelete"
 	"github.com/grafana/grafana/pkg/services/quota/quotaimpl"
 	"github.com/grafana/grafana/pkg/services/searchusers/sortopts"
 	"github.com/grafana/grafana/pkg/services/sqlstore"
+	"github.com/grafana/grafana/pkg/services/sqlstore/migrator"
 	"github.com/grafana/grafana/pkg/services/supportbundles/supportbundlestest"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/services/user/userimpl"
 	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana/pkg/storage/legacysql"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
 	"github.com/grafana/grafana/pkg/util/testutil"
+	"github.com/grafana/grafana/pkg/util/xorm"
+	"github.com/grafana/grafana/pkg/util/xorm/core"
 )
 
 func TestMain(m *testing.M) {
 	testsuite.Run(m)
 }
 
+var registerOrgSQLMockXormDriverOnce sync.Once
+
+type orgSQLMockXormDriver struct{}
+
+func (orgSQLMockXormDriver) Parse(string, string) (*core.Uri, error) {
+	return &core.Uri{DbType: core.SQLITE}, nil
+}
+
+type sqlmockOrgDB struct {
+	dbtest.FakeDB
+	engine *xorm.Engine
+}
+
+func (d *sqlmockOrgDB) WithDbSession(_ context.Context, callback sqlstore.DBTransactionFunc) error {
+	return d.withSession(callback)
+}
+
+func (d *sqlmockOrgDB) WithTransactionalDbSession(_ context.Context, callback sqlstore.DBTransactionFunc) error {
+	return d.withSession(callback)
+}
+
+func (d *sqlmockOrgDB) withSession(callback sqlstore.DBTransactionFunc) error {
+	sess := &sqlstore.DBSession{Session: d.engine.NewSession()}
+	defer sess.Close()
+	return callback(sess)
+}
+
+func (d *sqlmockOrgDB) GetDBType() core.DbType {
+	return core.SQLITE
+}
+
+func (d *sqlmockOrgDB) GetDialect() migrator.Dialect {
+	return migrator.NewSQLite3Dialect()
+}
+
+func (d *sqlmockOrgDB) Quote(value string) string {
+	return d.engine.Quote(value)
+}
+
+func TestStoreUsesProviderTables(t *testing.T) {
+	registerOrgSQLMockXormDriverOnce.Do(func() {
+		if core.QueryDriver("sqlmock") == nil {
+			core.RegisterDriver("sqlmock", orgSQLMockXormDriver{})
+		}
+	})
+
+	dsn := "orgimpl-store"
+	mockDB, mock, err := sqlmock.NewWithDSN(dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = mockDB.Close() })
+
+	engine, err := xorm.NewEngine("sqlmock", dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = engine.Close() })
+
+	legacyDB := &sqlmockOrgDB{engine: engine}
+	type contextKey struct{}
+	ctx := context.WithValue(context.Background(), contextKey{}, "provider context")
+	calls := 0
+	tables := make([]string, 0, 2)
+	provider := func(gotCtx context.Context) (*legacysql.LegacyDatabaseHelper, error) {
+		require.Equal(t, "provider context", gotCtx.Value(contextKey{}))
+		calls++
+		return &legacysql.LegacyDatabaseHelper{
+			DB: legacyDB,
+			Table: func(name string) string {
+				tables = append(tables, name)
+				return "test_schema." + name
+			},
+		}, nil
+	}
+	store := &sqlStore{sql: provider, log: log.NewNopLogger()}
+
+	mock.ExpectQuery(regexp.QuoteMeta("FROM `test_schema`.`org`")).
+		WithArgs(int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow(int64(42)))
+	_, err = store.Get(ctx, 42)
+	require.NoError(t, err)
+
+	mock.ExpectExec(regexp.QuoteMeta(`DELETE FROM "test_schema"."org_user"
+WHERE "user_id" = ?`)).
+		WithArgs(int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(t, store.DeleteUserFromAll(ctx, 42))
+
+	require.Equal(t, 2, calls)
+	require.Equal(t, []string{"org", "org_user"}, tables)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestIntegrationOrgDeleteRenderers(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	type deleteRecord struct {
+		OrgID  int64  `xorm:"org_id"`
+		Marker string `xorm:"marker"`
+	}
+
+	dbStore := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
+	store := &sqlStore{sql: legacysql.NewDatabaseProvider(dbStore), log: log.NewNopLogger()}
+	err := dbStore.WithDbSession(context.Background(), func(sess *db.Session) error {
+		if _, err := sess.Exec("DROP TABLE IF EXISTS org_delete_renderer_test"); err != nil {
+			return err
+		}
+		_, err := sess.Exec("CREATE TABLE org_delete_renderer_test (org_id INTEGER, marker TEXT)")
+		return err
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		err := dbStore.WithDbSession(context.Background(), func(sess *db.Session) error {
+			_, err := sess.Exec("DROP TABLE IF EXISTS org_delete_renderer_test")
+			return err
+		})
+		require.NoError(t, err)
+	})
+
+	created := &org.Org{Name: "delete-renderer-test", Created: time.Now(), Updated: time.Now()}
+	_, err = store.Insert(context.Background(), created)
+	require.NoError(t, err)
+
+	deletionService := &DeletionService{store: store}
+	deletionService.RegisterDelete(func(dbHelper *legacysql.LegacyDatabaseHelper, orgID int64) (orgdelete.Query, error) {
+		return orgdelete.Query{
+			SQL:  "INSERT INTO " + quoteTable(dbHelper, "org_delete_renderer_test") + " (org_id, marker) VALUES (?, ?)",
+			Args: []any{orgID, "rendered"},
+		}, nil
+	})
+
+	require.NoError(t, store.Delete(context.Background(), &org.DeleteOrgCommand{ID: created.ID}))
+
+	var records []deleteRecord
+	err = dbStore.WithDbSession(context.Background(), func(sess *db.Session) error {
+		return sess.Table("org_delete_renderer_test").Find(&records)
+	})
+	require.NoError(t, err)
+	require.Equal(t, []deleteRecord{{OrgID: created.ID, Marker: "rendered"}}, records)
+}
+
 func TestIntegrationOrgDataAccess(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	ss := db.InitTestDB(t)
+	ss := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	orgStore := sqlStore{
-		db:      ss,
-		dialect: ss.GetDialect(),
-		log:     log.NewNopLogger(),
+		sql: legacysql.NewDatabaseProvider(ss),
+		log: log.NewNopLogger(),
 	}
 
 	t.Run("org not found", func(t *testing.T) {
@@ -122,29 +266,10 @@ func TestIntegrationOrgDataAccess(t *testing.T) {
 		ac2 := &org.Org{ID: 22, Name: "ac2", Version: 1, Created: time.Now(), Updated: time.Now()}
 		orgId, err := orgStore.Insert(context.Background(), ac2)
 		require.NoError(t, err)
-
-		// Create some org-scoped items like playlists, so we can assert that they
-		// are cleaned up on delete.
-		plItems := []playlist.PlaylistItem{
-			{
-				Type: "foo",
-			},
-		}
-		plStore := playlistimpl.ProvideService(ss, tracing.InitializeTracerForTest())
-		plCreateCommand := playlist.CreatePlaylistCommand{
-			OrgId: orgId,
-			Name:  "test",
-			Items: plItems,
-		}
-		pl, err := plStore.Create(context.Background(), &plCreateCommand)
-		require.NoError(t, err)
+		t.Logf("remove: %d\n", orgId)
 
 		err = orgStore.Delete(context.Background(), &org.DeleteOrgCommand{ID: ac2.ID})
 		require.NoError(t, err)
-
-		plDTO, err := plStore.Get(context.Background(), &playlist.GetPlaylistByUidQuery{OrgId: pl.OrgId, UID: pl.UID})
-		require.Error(t, err)
-		require.Nil(t, plDTO)
 
 		// TODO: this part of the test will be added when we move RemoveOrgUser to org store
 		// "Removing user from org should delete user completely if in no other org"
@@ -178,7 +303,7 @@ func TestIntegrationOrgDataAccess(t *testing.T) {
 	})
 
 	t.Run("Given we have organizations, we can limit and paginate search", func(t *testing.T) {
-		ss = db.InitTestDB(t)
+		ss = db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 		for i := 1; i < 4; i++ {
 			cmd := &org.CreateOrgCommand{Name: fmt.Sprint("Orga #", i)}
 			_, err := orgStore.CreateWithMember(context.Background(), cmd)
@@ -227,10 +352,9 @@ func TestIntegrationOrgDataAccess(t *testing.T) {
 	})
 
 	t.Run("Testing Account DB Access", func(t *testing.T) {
-		ss := db.InitTestDB(t)
+		ss := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 		orgStore = sqlStore{
-			db:      ss,
-			dialect: ss.GetDialect(),
+			sql: legacysql.NewDatabaseProvider(ss),
 		}
 		ids := []int64{}
 
@@ -278,11 +402,10 @@ func TestIntegrationOrgDataAccess(t *testing.T) {
 func TestIntegrationOrgUserDataAccess(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	ss := db.InitTestDB(t)
+	ss := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	orgUserStore := sqlStore{
-		db:      ss,
-		dialect: ss.GetDialect(),
-		log:     log.NewNopLogger(),
+		sql: legacysql.NewDatabaseProvider(ss),
+		log: log.NewNopLogger(),
 	}
 
 	t.Run("org user inserted", func(t *testing.T) {
@@ -355,7 +478,7 @@ func TestIntegrationOrgUserDataAccess(t *testing.T) {
 		require.NoError(t, err)
 	})
 	t.Run("GetOrgUsers and UpdateOrgUsers", func(t *testing.T) {
-		ss, cfg := db.InitTestDBWithCfg(t)
+		ss, cfg := db.InitTestDBWithCfg(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 		_, usrSvc := createOrgAndUserSvc(t, ss, cfg)
 		ac1cmd := &user.CreateUserCommand{Login: "ac1", Email: "ac1@test.com", Name: "ac1 name"}
 		ac2cmd := &user.CreateUserCommand{Login: "ac2", Email: "ac2@test.com", Name: "ac2 name"}
@@ -508,8 +631,131 @@ func TestIntegrationOrgUserDataAccess(t *testing.T) {
 		})
 	})
 
+	t.Run("SearchOrgUsersByEmails", func(t *testing.T) {
+		ss, cfg := db.InitTestDBWithCfg(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
+		_, usrSvc := createOrgAndUserSvc(t, ss, cfg)
+
+		ac1, err := usrSvc.Create(context.Background(), &user.CreateUserCommand{Login: "ac1", Email: "ac1@test.com", Name: "ac1 name"})
+		require.NoError(t, err)
+		ac2, err := usrSvc.Create(context.Background(), &user.CreateUserCommand{Login: "ac2", Email: "ac2@test.com", Name: "ac2 name"})
+		require.NoError(t, err)
+		ac3, err := usrSvc.Create(context.Background(), &user.CreateUserCommand{Login: "ac3", Email: "ac3@test.com", Name: "ac3 name"})
+		require.NoError(t, err)
+
+		// ac1 is already in its own org; add ac2 to that same org, leave ac3 out
+		err = orgUserStore.AddOrgUser(context.Background(), &org.AddOrgUserCommand{
+			OrgID: ac1.OrgID, UserID: ac2.ID, Role: org.RoleViewer,
+		})
+		require.NoError(t, err)
+
+		store := sqlStore{sql: legacysql.NewDatabaseProvider(ss), log: log.NewNopLogger()}
+
+		t.Run("returns matched members", func(t *testing.T) {
+			result, err := store.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:  ac1.OrgID,
+				Emails: []string{ac1.Email, ac2.Email},
+			})
+			require.NoError(t, err)
+			require.Len(t, result, 2)
+			emails := []string{result[0].Email, result[1].Email}
+			require.ElementsMatch(t, emails, []string{ac1.Email, ac2.Email})
+		})
+
+		t.Run("excludes non-members even when email is listed", func(t *testing.T) {
+			result, err := store.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:  ac1.OrgID,
+				Emails: []string{ac1.Email, ac3.Email},
+			})
+			require.NoError(t, err)
+			require.Len(t, result, 1)
+			require.Equal(t, ac1.Email, result[0].Email)
+		})
+
+		t.Run("returns empty slice for empty email list", func(t *testing.T) {
+			result, err := store.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:  ac1.OrgID,
+				Emails: []string{},
+			})
+			require.NoError(t, err)
+			require.Empty(t, result)
+		})
+
+		t.Run("returns empty slice when no email matches", func(t *testing.T) {
+			result, err := store.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:  ac1.OrgID,
+				Emails: []string{"nobody@test.com"},
+			})
+			require.NoError(t, err)
+			require.Empty(t, result)
+		})
+
+		t.Run("excludes hidden users when ExcludeHiddenUsers is set", func(t *testing.T) {
+			storeWithHidden := sqlStore{
+				sql: legacysql.NewDatabaseProvider(ss),
+				log: log.NewNopLogger(),
+				cfg: &setting.Cfg{HiddenUsers: map[string]struct{}{ac2.Login: {}}},
+			}
+			result, err := storeWithHidden.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:              ac1.OrgID,
+				Emails:             []string{ac1.Email, ac2.Email},
+				ExcludeHiddenUsers: true,
+			})
+			require.NoError(t, err)
+			require.Len(t, result, 1)
+			require.Equal(t, ac1.Email, result[0].Email)
+		})
+
+		t.Run("excludes service accounts", func(t *testing.T) {
+			sa, err := usrSvc.Create(context.Background(), &user.CreateUserCommand{
+				Login:            "sa1",
+				Email:            "sa1@test.com",
+				Name:             "sa1 name",
+				IsServiceAccount: true,
+				SkipOrgSetup:     true,
+			})
+			require.NoError(t, err)
+			err = orgUserStore.AddOrgUser(context.Background(), &org.AddOrgUserCommand{
+				OrgID: ac1.OrgID, UserID: sa.ID, Role: org.RoleViewer, AllowAddingServiceAccount: true,
+			})
+			require.NoError(t, err)
+
+			result, err := store.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:  ac1.OrgID,
+				Emails: []string{ac1.Email, sa.Email},
+			})
+			require.NoError(t, err)
+			require.Len(t, result, 1)
+			require.Equal(t, ac1.Email, result[0].Email)
+		})
+
+		t.Run("matches emails case-insensitively", func(t *testing.T) {
+			result, err := store.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:  ac1.OrgID,
+				Emails: []string{"AC1@TEST.COM", "AC2@TEST.COM"},
+			})
+			require.NoError(t, err)
+			require.Len(t, result, 2)
+			emails := []string{result[0].Email, result[1].Email}
+			require.ElementsMatch(t, emails, []string{ac1.Email, ac2.Email})
+		})
+
+		t.Run("returns hidden users when ExcludeHiddenUsers is false", func(t *testing.T) {
+			storeWithHidden := sqlStore{
+				sql: legacysql.NewDatabaseProvider(ss),
+				log: log.NewNopLogger(),
+				cfg: &setting.Cfg{HiddenUsers: map[string]struct{}{ac2.Login: {}}},
+			}
+			result, err := storeWithHidden.SearchOrgUsersByEmails(context.Background(), &org.SearchOrgUsersByEmailsQuery{
+				OrgID:  ac1.OrgID,
+				Emails: []string{ac1.Email, ac2.Email},
+			})
+			require.NoError(t, err)
+			require.Len(t, result, 2)
+		})
+	})
+
 	t.Run("Given single org and 2 users inserted", func(t *testing.T) {
-		ss, cfg := db.InitTestDBWithCfg(t)
+		ss, cfg := db.InitTestDBWithCfg(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 		cfg.AutoAssignOrg = true
 		cfg.AutoAssignOrgId = 1
 		cfg.AutoAssignOrgRole = "Viewer"
@@ -567,7 +813,7 @@ func TestIntegrationOrgUserDataAccess(t *testing.T) {
 func TestIntegrationSQLStore_AddOrgUser(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	store, cfg := db.InitTestDBWithCfg(t)
+	store, cfg := db.InitTestDBWithCfg(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	defer func() {
 		cfg.AutoAssignOrg, cfg.AutoAssignOrgId, cfg.AutoAssignOrgRole = false, 0, ""
 	}()
@@ -575,9 +821,8 @@ func TestIntegrationSQLStore_AddOrgUser(t *testing.T) {
 	cfg.AutoAssignOrgId = 1
 	cfg.AutoAssignOrgRole = "Viewer"
 	orgUserStore := sqlStore{
-		db:      store,
-		dialect: store.GetDialect(),
-		log:     log.NewNopLogger(),
+		sql: legacysql.NewDatabaseProvider(store),
+		log: log.NewNopLogger(),
 	}
 	orgSvc, usrSvc := createOrgAndUserSvc(t, store, cfg)
 
@@ -637,11 +882,10 @@ func TestIntegrationSQLStore_AddOrgUser(t *testing.T) {
 func TestIntegration_SQLStore_GetOrgUsers(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	store, cfg := db.InitTestDBWithCfg(t)
+	store, cfg := db.InitTestDBWithCfg(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	orgUserStore := sqlStore{
-		db:      store,
-		dialect: store.GetDialect(),
-		log:     log.NewNopLogger(),
+		sql: legacysql.NewDatabaseProvider(store),
+		log: log.NewNopLogger(),
 	}
 	cfg.IsEnterprise = true
 	defer func() {
@@ -755,11 +999,10 @@ func TestIntegration_SQLStore_GetOrgUsers_PopulatesCorrectly(t *testing.T) {
 	userimpl.MockTimeNow(constNow)
 	defer userimpl.ResetTimeNow()
 
-	store, cfg := db.InitTestDBWithCfg(t, sqlstore.InitTestDBOpt{})
+	store, cfg := db.InitTestDBWithCfg(t, sqlstore.InitTestDBOpt{}) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	orgUserStore := sqlStore{
-		db:      store,
-		dialect: store.GetDialect(),
-		log:     log.NewNopLogger(),
+		sql: legacysql.NewDatabaseProvider(store),
+		log: log.NewNopLogger(),
 	}
 	_, usrSvc := createOrgAndUserSvc(t, store, cfg)
 
@@ -815,19 +1058,27 @@ func TestIntegration_SQLStore_GetOrgUsers_PopulatesCorrectly(t *testing.T) {
 func TestIntegration_SQLStore_SearchOrgUsers(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	store, cfg := db.InitTestDBWithCfg(t, sqlstore.InitTestDBOpt{})
+	store, cfg := db.InitTestDBWithCfg(t, sqlstore.InitTestDBOpt{}) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	orgUserStore := sqlStore{
-		db:      store,
-		dialect: store.GetDialect(),
-		log:     log.NewNopLogger(),
+		sql: legacysql.NewDatabaseProvider(store),
+		log: log.NewNopLogger(),
+		cfg: cfg,
 	}
-	// orgUserStore.cfg.Skip
+
 	orgSvc, userSvc := createOrgAndUserSvc(t, store, cfg)
 
 	o, err := orgSvc.CreateWithMember(context.Background(), &org.CreateOrgCommand{Name: "test org"})
 	require.NoError(t, err)
 
 	seedOrgUsers(t, &orgUserStore, 10, userSvc, o.ID)
+
+	user1, err := userSvc.GetByLogin(context.Background(), &user.GetUserByLoginQuery{LoginOrEmail: "user-1"})
+	require.NoError(t, err)
+
+	cfg.HiddenUsers = map[string]struct{}{
+		"user-1": {},
+		"user-2": {},
+	}
 
 	tests := []struct {
 		desc             string
@@ -840,7 +1091,7 @@ func TestIntegration_SQLStore_SearchOrgUsers(t *testing.T) {
 				OrgID: o.ID,
 				User: &user.SignedInUser{
 					OrgID:       o.ID,
-					Permissions: map[int64]map[string][]string{1: {accesscontrol.ActionOrgUsersRead: {accesscontrol.ScopeUsersAll}}},
+					Permissions: map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {accesscontrol.ScopeUsersAll}}},
 				},
 			},
 			expectedNumUsers: 10,
@@ -851,7 +1102,7 @@ func TestIntegration_SQLStore_SearchOrgUsers(t *testing.T) {
 				OrgID: o.ID,
 				User: &user.SignedInUser{
 					OrgID:       o.ID,
-					Permissions: map[int64]map[string][]string{1: {accesscontrol.ActionOrgUsersRead: {""}}},
+					Permissions: map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {""}}},
 				},
 			},
 			expectedNumUsers: 0,
@@ -862,14 +1113,63 @@ func TestIntegration_SQLStore_SearchOrgUsers(t *testing.T) {
 				OrgID: o.ID,
 				User: &user.SignedInUser{
 					OrgID: o.ID,
-					Permissions: map[int64]map[string][]string{1: {accesscontrol.ActionOrgUsersRead: {
-						"users:id:1",
+					Permissions: map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {
+						"users:id:2",
 						"users:id:5",
 						"users:id:9",
 					}}},
 				},
 			},
 			expectedNumUsers: 3,
+		},
+		{
+			desc: "should exclude hidden users when ExcludeHiddenUsers is true and user is nil",
+			query: &org.SearchOrgUsersQuery{
+				OrgID:                    o.ID,
+				ExcludeHiddenUsers:       true,
+				User:                     nil,
+				DontEnforceAccessControl: true,
+			},
+			expectedNumUsers: 8,
+		},
+		{
+			desc: "should not exclude hidden users when ExcludeHiddenUsers is true and user is Grafana Admin",
+			query: &org.SearchOrgUsersQuery{
+				OrgID:              o.ID,
+				ExcludeHiddenUsers: true,
+				User: &user.SignedInUser{
+					OrgID:          o.ID,
+					IsGrafanaAdmin: true,
+					Permissions:    map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {accesscontrol.ScopeUsersAll}}},
+				},
+			},
+			expectedNumUsers: 10,
+		},
+		{
+			desc: "should return all users if ExcludeHiddenUsers is false",
+			query: &org.SearchOrgUsersQuery{
+				OrgID:              o.ID,
+				ExcludeHiddenUsers: false,
+				User: &user.SignedInUser{
+					OrgID:       o.ID,
+					Permissions: map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {accesscontrol.ScopeUsersAll}}},
+				},
+			},
+			expectedNumUsers: 10,
+		},
+		{
+			desc: "should include the hidden user when the request is made by the hidden user and ExcludeHiddenUsers is true",
+			query: &org.SearchOrgUsersQuery{
+				OrgID:              o.ID,
+				ExcludeHiddenUsers: true,
+				User: &user.SignedInUser{
+					UserID:      user1.ID,
+					Login:       user1.Login,
+					OrgID:       o.ID,
+					Permissions: map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {accesscontrol.ScopeUsersAll}}},
+				},
+			},
+			expectedNumUsers: 9,
 		},
 	}
 
@@ -879,23 +1179,67 @@ func TestIntegration_SQLStore_SearchOrgUsers(t *testing.T) {
 			require.NoError(t, err)
 			assert.Len(t, result.OrgUsers, tt.expectedNumUsers)
 
-			if !hasWildcardScope(tt.query.User, accesscontrol.ActionOrgUsersRead) {
+			// No pagination is applied, so TotalCount should equal to number of returned users
+			assert.Equal(t, int64(tt.expectedNumUsers), result.TotalCount)
+
+			if tt.query.User != nil && !hasWildcardScope(tt.query.User, accesscontrol.ActionOrgUsersRead) && !tt.query.User.GetIsGrafanaAdmin() {
 				for _, u := range result.OrgUsers {
 					assert.Contains(t, tt.query.User.GetPermissions()[accesscontrol.ActionOrgUsersRead], fmt.Sprintf("users:id:%d", u.UserID))
 				}
 			}
 		})
 	}
+
+	t.Run("should paginate correctly when ExcludeHiddenUsers is true", func(t *testing.T) {
+		query := &org.SearchOrgUsersQuery{
+			OrgID:              o.ID,
+			ExcludeHiddenUsers: true,
+			User: &user.SignedInUser{
+				OrgID:       o.ID,
+				Permissions: map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {accesscontrol.ScopeUsersAll}}},
+			},
+			Limit: 5,
+			Page:  1,
+		}
+		result, err := orgUserStore.SearchOrgUsers(context.Background(), query)
+		require.NoError(t, err)
+		assert.Len(t, result.OrgUsers, 5)
+		assert.Equal(t, int64(8), result.TotalCount)
+
+		query.Page = 2
+		result, err = orgUserStore.SearchOrgUsers(context.Background(), query)
+		require.NoError(t, err)
+		assert.Len(t, result.OrgUsers, 3)
+		assert.Equal(t, int64(8), result.TotalCount)
+	})
+
+	t.Run("should return all users if HiddenUsers is empty", func(t *testing.T) {
+		oldHiddenUsers := cfg.HiddenUsers
+		cfg.HiddenUsers = make(map[string]struct{})
+		defer func() { cfg.HiddenUsers = oldHiddenUsers }()
+
+		query := &org.SearchOrgUsersQuery{
+			OrgID:              o.ID,
+			ExcludeHiddenUsers: true,
+			User: &user.SignedInUser{
+				OrgID:       o.ID,
+				Permissions: map[int64]map[string][]string{o.ID: {accesscontrol.ActionOrgUsersRead: {accesscontrol.ScopeUsersAll}}},
+			},
+		}
+		result, err := orgUserStore.SearchOrgUsers(context.Background(), query)
+		require.NoError(t, err)
+		assert.Len(t, result.OrgUsers, 10)
+		assert.Equal(t, int64(10), result.TotalCount)
+	})
 }
 
 func TestIntegration_SQLStore_RemoveOrgUser(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	store, cfg := db.InitTestDBWithCfg(t)
+	store, cfg := db.InitTestDBWithCfg(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	orgUserStore := sqlStore{
-		db:      store,
-		dialect: store.GetDialect(),
-		log:     log.NewNopLogger(),
+		sql: legacysql.NewDatabaseProvider(store),
+		log: log.NewNopLogger(),
 	}
 
 	orgSvc, usrSvc := createOrgAndUserSvc(t, store, cfg)
@@ -1032,12 +1376,12 @@ func createOrgAndUserSvc(t *testing.T, store db.DB, cfg *setting.Cfg) (org.Servi
 
 	cfgProvider, err := configprovider.ProvideService(cfg)
 	require.NoError(t, err)
-	quotaService := quotaimpl.ProvideService(context.Background(), store, cfgProvider)
-	orgService, err := ProvideService(store, cfg, quotaService)
+	quotaService := quotaimpl.ProvideService(context.Background(), legacysql.NewDatabaseProvider(store), cfgProvider)
+	orgService, err := ProvideService(legacysql.NewDatabaseProvider(store), cfg, quotaService)
 	require.NoError(t, err)
 	usrSvc, err := userimpl.ProvideService(
 		store, orgService, cfg, nil, nil, tracing.InitializeTracerForTest(),
-		quotaService, supportbundlestest.NewFakeBundleService(),
+		quotaService, supportbundlestest.NewFakeBundleService(), nil,
 	)
 	require.NoError(t, err)
 

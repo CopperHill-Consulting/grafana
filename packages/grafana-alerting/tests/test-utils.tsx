@@ -13,7 +13,14 @@ import '@testing-library/jest-dom';
  * method which wraps the passed element in all of the necessary Providers,
  * so it can render correctly in the context of the application
  */
-const customRender = (ui: React.ReactNode, renderOptions: RenderOptions = {}) => {
+const customRender = (
+  ui: React.ReactNode,
+  renderOptions: RenderOptions = {}
+): {
+  renderResult: ReturnType<typeof render>;
+  user: ReturnType<typeof userEvent.setup>;
+  store: typeof store;
+} => {
   const user = userEvent.setup();
   const Providers = renderOptions.wrapper || getDefaultWrapper();
 
@@ -25,4 +32,4 @@ const customRender = (ui: React.ReactNode, renderOptions: RenderOptions = {}) =>
 };
 
 export * from '@testing-library/react';
-export { customRender as render, userEvent };
+export { customRender as render };

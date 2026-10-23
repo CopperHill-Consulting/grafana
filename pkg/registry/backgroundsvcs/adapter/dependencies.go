@@ -3,9 +3,27 @@ package adapter
 import (
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/modules"
+	"github.com/grafana/grafana/pkg/services/accesscontrol"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/installsync"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/plugininstaller"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
+	"github.com/grafana/grafana/pkg/services/provisioning"
+	"github.com/grafana/grafana/pkg/services/sqlstore"
 )
 
 const (
+	// InstallSync is the module name for the install sync service.
+	InstallSync = installsync.ServiceName
+
+	// PluginStore is the module name for the plugin store service.
+	PluginStore = pluginstore.ServiceName
+
+	// PluginInstaller is the module name for the plugin installer service.
+	PluginInstaller = plugininstaller.ServiceName
+
+	// Provisioning is the module name for the provisioning service.
+	Provisioning = provisioning.ServiceName
+
 	// Tracing is the module name for the tracing service.
 	Tracing = tracing.ServiceName
 
@@ -19,6 +37,26 @@ const (
 	// Core is the module name for the core module.
 	// This module is an alias for a set of service dependencies that must be running before most other services can start.
 	Core = "core"
+
+	// FixedRolesLoader is the module name for the fixed roles loader service.
+	FixedRolesLoader = accesscontrol.FixedRolesLoaderServiceName
+
+	// IAMRolesSyncer is the module name for the IAM roles syncer service.
+	// In OSS a noop (always-disabled) module is registered so the dependency
+	// graph resolves; enterprise overwrites it with the real implementation.
+	IAMRolesSyncer = accesscontrol.IAMRolesSyncerServiceName
+
+	// GlobalRoleSeeder is the module name for the GlobalRole management
+	// service. OSS registers an always-disabled noop; enterprise overwrites it
+	// with the real implementation, which (when elected leader) seeds the
+	// fixed-role GlobalRoles and then aggregates the basic roles under a single
+	// lease.
+	GlobalRoleSeeder = accesscontrol.GlobalRoleSeederServiceName
+
+	// SQLStore is the module name for the SQLStore background service.
+	// It is the root of the dependency graph so that the database engine is
+	// closed last during shutdown, after every other service has stopped.
+	SQLStore = sqlstore.ServiceName
 )
 
 // dependencyMap returns the module dependency relationships for the background service system.
@@ -27,9 +65,17 @@ const (
 // unless they are explicitly listed in this map.
 func dependencyMap() map[string][]string {
 	return map[string][]string{
-		Tracing:            {},
+		SQLStore:           {},
+		Tracing:            {SQLStore},
 		GrafanaAPIServer:   {Tracing},
-		Core:               {GrafanaAPIServer},
+		PluginStore:        {GrafanaAPIServer},
+		PluginInstaller:    {PluginStore},
+		IAMRolesSyncer:     {GrafanaAPIServer},
+		FixedRolesLoader:   {PluginInstaller, IAMRolesSyncer},
+		Provisioning:       {PluginStore, PluginInstaller, FixedRolesLoader},
+		InstallSync:        {Provisioning},
+		GlobalRoleSeeder:   {GrafanaAPIServer},
+		Core:               {GrafanaAPIServer, PluginStore, PluginInstaller, FixedRolesLoader, Provisioning, InstallSync, GlobalRoleSeeder},
 		BackgroundServices: {Core},
 	}
 }

@@ -1,12 +1,13 @@
 import { LoadingState } from '@grafana/data';
 import { getPanelPlugin } from '@grafana/data/test';
 import { config } from '@grafana/runtime';
+import { setPanelPluginMetas } from '@grafana/runtime/internal';
 import {
   AdHocFiltersVariable,
   behaviors,
   ConstantVariable,
   SceneDataTransformer,
-  SceneGridItem,
+  type SceneGridItem,
   SceneGridLayout,
   SceneGridRow,
   SceneQueryRunner,
@@ -16,24 +17,25 @@ import {
   DashboardCursorSync,
   defaultDashboard,
   defaultTimePickerConfig,
-  Panel,
-  RowPanel,
-  VariableType,
+  type Panel,
+  type RowPanel,
+  type VariableType,
 } from '@grafana/schema';
-import { contextSrv } from 'app/core/core';
+import { contextSrv } from 'app/core/services/context_srv';
 import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
 import { PanelModel } from 'app/features/dashboard/state/PanelModel';
 import { createPanelSaveModel } from 'app/features/dashboard/state/__fixtures__/dashboardFixtures';
 import { SHARED_DASHBOARD_QUERY, DASHBOARD_DATASOURCE_PLUGIN_ID } from 'app/plugins/datasource/dashboard/constants';
-import { DashboardDataDTO } from 'app/types/dashboard';
+import { type DashboardDataDTO } from 'app/types/dashboard';
 
+import { getSceneCreationOptions } from '../pages/DashboardScenePageStateManager';
 import { DashboardDataLayerSet } from '../scene/DashboardDataLayerSet';
 import { LibraryPanelBehavior } from '../scene/LibraryPanelBehavior';
-import { PanelTimeRange } from '../scene/PanelTimeRange';
 import { DashboardGridItem } from '../scene/layout-default/DashboardGridItem';
-import { DefaultGridLayoutManager } from '../scene/layout-default/DefaultGridLayoutManager';
+import { type DefaultGridLayoutManager } from '../scene/layout-default/DefaultGridLayoutManager';
 import { RowRepeaterBehavior } from '../scene/layout-default/RowRepeaterBehavior';
-import { RowsLayoutManager } from '../scene/layout-rows/RowsLayoutManager';
+import { type RowsLayoutManager } from '../scene/layout-rows/RowsLayoutManager';
+import { PanelTimeRange } from '../scene/panel-timerange/PanelTimeRange';
 import { NEW_LINK } from '../settings/links/utils';
 import { getQueryRunnerFor } from '../utils/utils';
 
@@ -151,6 +153,29 @@ describe('transformSaveModelToScene', () => {
 
       const liveNowTimer = scene.state.$behaviors?.find((b) => b instanceof behaviors.LiveNowTimer);
       expect(liveNowTimer).toBeInstanceOf(behaviors.LiveNowTimer);
+    });
+
+    it('should leave preload undefined when the dashboard JSON omits it', () => {
+      const dash = {
+        ...defaultDashboard,
+        title: 'test',
+        uid: 'test-uid',
+      };
+      const oldModel = new DashboardModel(dash);
+      const scene = createDashboardSceneFromDashboardModel(oldModel, dash);
+
+      // Unset preload must stay undefined so getIsLazy can defer to the instance-wide default.
+      expect(scene.state.preload).toBeUndefined();
+    });
+
+    it('should preserve an explicit preload value from the dashboard JSON', () => {
+      const dashOff = { ...defaultDashboard, title: 'off', uid: 'off', preload: false };
+      const sceneOff = createDashboardSceneFromDashboardModel(new DashboardModel(dashOff), dashOff);
+      expect(sceneOff.state.preload).toBe(false);
+
+      const dashOn = { ...defaultDashboard, title: 'on', uid: 'on', preload: true };
+      const sceneOn = createDashboardSceneFromDashboardModel(new DashboardModel(dashOn), dashOn);
+      expect(sceneOn.state.preload).toBe(true);
     });
 
     it('should initialize the Dashboard Scene with empty template variables', () => {
@@ -319,6 +344,10 @@ describe('transformSaveModelToScene', () => {
   });
 
   describe('when organizing panels as scene children', () => {
+    beforeEach(() => {
+      setPanelPluginMetas({});
+    });
+
     it('should leave panels outside second row if it is collapsed', () => {
       const panel1 = createPanelSaveModel({
         title: 'test1',
@@ -648,6 +677,7 @@ describe('transformSaveModelToScene', () => {
         type: 'test-plugin',
         timeFrom: '2h',
         timeShift: '1d',
+        timeCompare: '1d',
       };
 
       const { vizPanel } = buildGridItemForTest(panel);
@@ -656,6 +686,20 @@ describe('transformSaveModelToScene', () => {
       expect(timeRange).toBeInstanceOf(PanelTimeRange);
       expect(timeRange.state.timeFrom).toBe('2h');
       expect(timeRange.state.timeShift).toBe('1d');
+      expect(timeRange.state.compareWith).toBe('1d');
+    });
+
+    it('should set PanelTimeRange when only timeCompare is present', () => {
+      const panel = {
+        type: 'test-plugin',
+        timeCompare: '1w',
+      };
+
+      const { vizPanel } = buildGridItemForTest(panel);
+      const timeRange = vizPanel.state.$timeRange as PanelTimeRange;
+
+      expect(timeRange).toBeInstanceOf(PanelTimeRange);
+      expect(timeRange.state.compareWith).toBe('1w');
     });
 
     it('should handle a dashboard query data source', () => {
@@ -683,9 +727,11 @@ describe('transformSaveModelToScene', () => {
         targets: [{ refId: 'A' }],
       };
 
-      config.panels['text-plugin-34'] = getPanelPlugin({
-        skipDataQuery: true,
-      }).meta;
+      setPanelPluginMetas({
+        'text-plugin-34': getPanelPlugin({
+          skipDataQuery: true,
+        }).meta,
+      });
 
       const { vizPanel } = buildGridItemForTest(panel);
 
@@ -810,41 +856,6 @@ describe('transformSaveModelToScene', () => {
       expect((libPanelBehavior as LibraryPanelBehavior).state.name).toEqual(panel.libraryPanel.name);
       expect(gridItem.state.body.state.title).toEqual(panel.title);
     });
-
-    describe('header actions', () => {
-      beforeEach(() => {
-        jest.clearAllMocks();
-      });
-
-      it('should include headerActions when timeComparison feature toggle is enabled', () => {
-        config.featureToggles.timeComparison = true;
-
-        const panel = {
-          title: 'Test Panel',
-          type: 'timeseries',
-          gridPos: { x: 0, y: 0, w: 12, h: 8 },
-        };
-
-        const { vizPanel } = buildGridItemForTest(panel);
-
-        expect(vizPanel.state.headerActions).toBeDefined();
-        expect(vizPanel.state.headerActions).toHaveLength(1);
-      });
-
-      it('should not include headerActions when timeComparison feature toggle is disabled', () => {
-        config.featureToggles.timeComparison = false;
-
-        const panel = {
-          title: 'Test Panel',
-          type: 'timeseries',
-          gridPos: { x: 0, y: 0, w: 12, h: 8 },
-        };
-
-        const { vizPanel } = buildGridItemForTest(panel);
-
-        expect(vizPanel.state.headerActions).toBeUndefined();
-      });
-    });
   });
 
   describe('Convert to new rows', () => {
@@ -857,10 +868,14 @@ describe('transformSaveModelToScene', () => {
     });
 
     it('Should convert legacy rows to new rows', () => {
-      const scene = transformSaveModelToScene({
-        dashboard: repeatingRowsAndPanelsDashboardJson as DashboardDataDTO,
-        meta: {},
-      });
+      const scene = transformSaveModelToScene(
+        {
+          dashboard: repeatingRowsAndPanelsDashboardJson as DashboardDataDTO,
+          meta: {},
+        },
+        undefined,
+        getSceneCreationOptions()
+      );
 
       const layout = scene.state.body as RowsLayoutManager;
       const row1 = layout.state.rows[0];
@@ -892,10 +907,14 @@ describe('transformSaveModelToScene', () => {
     });
 
     it('Should convert legacy rows to new rows with free panels before first row', () => {
-      const scene = transformSaveModelToScene({
-        dashboard: rowsAfterFreePanels as DashboardDataDTO,
-        meta: {},
-      });
+      const scene = transformSaveModelToScene(
+        {
+          dashboard: rowsAfterFreePanels as DashboardDataDTO,
+          meta: {},
+        },
+        undefined,
+        getSceneCreationOptions()
+      );
 
       const layout = scene.state.body as RowsLayoutManager;
       const row1 = layout.state.rows[0];

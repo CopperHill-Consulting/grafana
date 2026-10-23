@@ -1,11 +1,14 @@
 import { isEqual } from 'lodash';
-import { BehaviorSubject, Observable, combineLatest, Subscription } from 'rxjs';
+import { BehaviorSubject, type Observable, combineLatest, type Subscription } from 'rxjs';
 import { map, distinctUntilChanged } from 'rxjs/operators';
 
-import { LocationService, ScopesContextValue, ScopesContextValueState } from '@grafana/runtime';
+import { type LocationService, type ScopesContextValue, type ScopesContextValueState } from '@grafana/runtime';
 
-import { ScopesDashboardsService } from './dashboards/ScopesDashboardsService';
-import { ScopesSelectorService } from './selector/ScopesSelectorService';
+import { type ScopesApiClient } from './ScopesApiClient';
+import { type ScopesDashboardsService } from './dashboards/ScopesDashboardsService';
+import { deserializeFolderPath, serializeFolderPath } from './dashboards/scopeNavgiationUtils';
+import { type ScopesSelectorService } from './selector/ScopesSelectorService';
+import { type ScopesMap, type SelectedScope } from './selector/types';
 
 export interface State {
   enabled: boolean;
@@ -29,7 +32,8 @@ export class ScopesService implements ScopesContextValue {
   constructor(
     private selectorService: ScopesSelectorService,
     private dashboardsService: ScopesDashboardsService,
-    private locationService: LocationService
+    private locationService: LocationService,
+    private apiClient: ScopesApiClient
   ) {
     this._state = new BehaviorSubject<State>({
       enabled: false,
@@ -70,14 +74,45 @@ export class ScopesService implements ScopesContextValue {
 
     // Init from the URL when we first load
     const queryParams = new URLSearchParams(locationService.getLocation().search);
-    const parentNodeId = queryParams.get('scope_parent');
+    const scopeNodeId = queryParams.get('scope_node');
+    const navigationScope = queryParams.get('navigation_scope');
+    const navScopePath = queryParams.get('nav_scope_path');
 
-    this.changeScopes(queryParams.getAll('scopes'), parentNodeId ?? undefined);
+    if (navigationScope) {
+      this.dashboardsService.setNavigationScope(
+        navigationScope,
+        undefined,
+        navScopePath ? deserializeFolderPath(navScopePath) : undefined
+      );
+    }
 
-    // Pre-load parent node, to prevent UI flickering
-    if (parentNodeId) {
-      this.selectorService.getScopeNode(parentNodeId).catch((error) => {
-        console.error('Failed to pre-load parent node', error);
+    this.changeScopes(queryParams.getAll('scopes'), undefined, scopeNodeId ?? undefined).then(() => {
+      if (navScopePath && !navigationScope) {
+        this.dashboardsService.setNavScopePath(deserializeFolderPath(navScopePath));
+      }
+
+      // If scope_node wasn't in the URL, derive it from defaultPath and preload the path
+      // so the badge and tree display correctly on initial load.
+      if (!scopeNodeId) {
+        const firstApplied = this.selectorService.state.appliedScopes[0];
+        const scope = firstApplied ? this.selectorService.state.scopes[firstApplied.scopeId] : undefined;
+        const defaultPath = scope?.spec.defaultPath || [];
+        if (defaultPath.length > 0) {
+          const derivedNodeId = defaultPath[defaultPath.length - 1];
+          const tree = this.selectorService.state.tree;
+          if (derivedNodeId && tree) {
+            this.selectorService.resolvePathToRoot(derivedNodeId, tree, firstApplied.scopeId).catch((error) => {
+              console.error('Failed to pre-load node path from defaultPath', error);
+            });
+          }
+        }
+      }
+    });
+
+    // Preload scope node (which loads parent too)
+    if (scopeNodeId) {
+      this.selectorService.resolvePathToRoot(scopeNodeId, this.selectorService.state.tree!).catch((error) => {
+        console.error('Failed to pre-load node path', error);
       });
     }
 
@@ -90,32 +125,86 @@ export class ScopesService implements ScopesContextValue {
         }
         const queryParams = new URLSearchParams(location.search);
 
-        // If we have a parent node in the URL, fetch and expand it
-        const parentNode = queryParams.get('scope_parent');
         const scopes = queryParams.getAll('scopes');
+        const scopeNodeId = queryParams.get('scope_node');
 
-        if (scopes.length) {
+        const navigationScope = queryParams.get('navigation_scope');
+        const navScopePath = queryParams.get('nav_scope_path');
+
+        // Check if new scopes are different from the old scopes
+        const currentScopes = this.selectorService.state.appliedScopes.map((scope) => scope.scopeId);
+        if (scopes.length && !isEqual(scopes, currentScopes)) {
           // We only update scopes but never delete them. This is to keep the scopes in memory if user navigates to
           // page that does not use scopes (like from dashboard to dashboard list back to dashboard). If user
           // changes the URL directly, it would trigger a reload so scopes would still be reset.
-          this.changeScopes(scopes, parentNode ?? undefined);
+          this.changeScopes(scopes, undefined, scopeNodeId ?? undefined);
+        }
+
+        // Handle navigation_scope and nav_scope_path changes from back/forward navigation
+        const currentNavigationScope = this.dashboardsService.state.navigationScope;
+        const currentNavScopePath = this.dashboardsService.state.navScopePath;
+        const newNavScopePath = navScopePath ? deserializeFolderPath(navScopePath) : undefined;
+        const decodedNavigationScope = navigationScope ? decodeURIComponent(navigationScope) : undefined;
+
+        const navigationScopeChanged = decodedNavigationScope !== currentNavigationScope;
+        const navScopePathChanged = !isEqual(newNavScopePath, currentNavScopePath);
+
+        if (navigationScopeChanged) {
+          // Navigation scope changed - do full update
+          if (decodedNavigationScope) {
+            this.dashboardsService.setNavigationScope(decodedNavigationScope, undefined, newNavScopePath);
+          } else if (newNavScopePath?.length) {
+            this.changeScopes(scopes, undefined, scopeNodeId ?? undefined).then(() => {
+              this.dashboardsService.setNavScopePath(newNavScopePath);
+            });
+          } else {
+            this.dashboardsService.setNavigationScope(undefined);
+          }
+        } else if (navScopePathChanged) {
+          // Navigation scope unchanged but path changed
+          this.dashboardsService.setNavScopePath(newNavScopePath);
         }
       })
     );
 
     // Update the URL based on change in the scopes state
     this.subscriptions.push(
-      selectorService.subscribeToState((state, prev) => {
-        const oldParentNode = prev.appliedScopes[0]?.parentNodeId;
-        const newParentNode = state.appliedScopes[0]?.parentNodeId;
-        if (oldParentNode !== newParentNode && newParentNode) {
-          this.locationService.partial({ scope_parent: newParentNode }, true);
-        }
-
-        const oldScopeNames = prev.appliedScopes.map((scope) => scope.scopeId);
+      selectorService.subscribeToState((state, prevState) => {
+        const oldScopeNames = prevState.appliedScopes.map((scope) => scope.scopeId);
         const newScopeNames = state.appliedScopes.map((scope) => scope.scopeId);
-        if (!isEqual(oldScopeNames, newScopeNames)) {
-          this.locationService.partial({ scopes: newScopeNames }, true);
+
+        const oldScopeNodeId = this.getScopeNodeIdForUrl(prevState.appliedScopes, prevState.scopes);
+        const newScopeNodeId = this.getScopeNodeIdForUrl(state.appliedScopes, state.scopes);
+
+        const scopesChanged = !isEqual(oldScopeNames, newScopeNames);
+        const scopeNodeChanged = oldScopeNodeId !== newScopeNodeId;
+
+        if (scopesChanged || scopeNodeChanged) {
+          this.locationService.partial(
+            {
+              scopes: newScopeNames,
+              scope_node: newScopeNodeId ?? null,
+              scope_parent: null,
+            },
+            true
+          );
+        }
+      })
+    );
+    // Update the URL based on change in the navigation scope
+    this.subscriptions.push(
+      this.dashboardsService.subscribeToState((state, prevState) => {
+        if (
+          state.navigationScope !== prevState.navigationScope ||
+          !isEqual(state.navScopePath, prevState.navScopePath)
+        ) {
+          this.locationService.partial(
+            {
+              navigation_scope: state.navigationScope ? encodeURIComponent(state.navigationScope) : null,
+              nav_scope_path: state.navScopePath?.length ? serializeFolderPath(state.navScopePath) : null,
+            },
+            true
+          );
         }
       })
     );
@@ -142,8 +231,9 @@ export class ScopesService implements ScopesContextValue {
     return this._stateObservable;
   }
 
-  public changeScopes = (scopeNames: string[], parentNodeId?: string) =>
-    this.selectorService.changeScopes(scopeNames, parentNodeId);
+  public changeScopes = (scopeNames: string[], parentNodeId?: string, scopeNodeId?: string) =>
+    // Don't redirect on apply for initial load from URL. We only want to redirect when selecting from the selector
+    this.selectorService.changeScopes(scopeNames, parentNodeId, scopeNodeId, false);
 
   public setReadOnly = (readOnly: boolean) => {
     if (this.state.readOnly !== readOnly) {
@@ -159,15 +249,100 @@ export class ScopesService implements ScopesContextValue {
     if (this.state.enabled !== enabled) {
       this.updateState({ enabled });
       if (enabled) {
+        const { appliedScopes, scopes } = this.selectorService.state;
+        // When there is no selection yet, fetch the default scope and apply
+        // it. Fire-and-forget so setEnabled stays sync. fetchDefaultScope is
+        // itself gated on grafana.useDefaultScopesEndpoint and returns
+        // undefined when off, so the call is safe here.
+        if (appliedScopes.length === 0) {
+          this.apiClient
+            .fetchDefaultScope()
+            .then((name) => {
+              // Only apply if scopes is still enabled AND the user has neither
+              // applied nor started picking a scope in the meantime. Checking
+              // selectedScopes as well as appliedScopes preserves any pending
+              // selection: the user may have opened the selector and ticked a
+              // scope before this slower fetch resolved — clobbering that with
+              // the default scope would silently discard their choice. If the
+              // user navigated to a non-scope page before the fetch resolved,
+              // state.enabled is now false and applying would leak `?scopes=…`
+              // into a page that doesn't use scopes.
+              if (
+                !name ||
+                !this.state.enabled ||
+                this.selectorService.state.appliedScopes.length > 0 ||
+                this.selectorService.state.selectedScopes.length > 0
+              ) {
+                return;
+              }
+              // Bypass this.changeScopes (which hardcodes redirectOnApply=false
+              // for URL-driven init) and call the selector service directly
+              // with redirectOnApply=true. If the default scope's scope node
+              // resolves with a redirectPath once applyScopes has loaded scope
+              // metadata and nodes, the user is redirected there — same as manual
+              // selection. The scope metadata is already in the getScope RTK Query
+              // cache (seeded by fetchDefaultScope), so applyScopes' downstream
+              // fetch is a cache hit.
+              // Return the promise so the outer .catch below actually catches
+              // a rejection from changeScopes → applyScopes → fetch chains.
+              // Without the return, the inner promise floats free and any
+              // rejection surfaces as unhandled.
+              return this.selectorService.changeScopes([name], undefined, undefined, true);
+            })
+            .catch((err) => {
+              // Match the .catch(...) pattern used by the resolvePathToRoot(...)
+              // calls elsewhere in this file so a rejection from either
+              // fetchDefaultScope or the changeScopes chain above is logged
+              // instead of surfacing as an unhandled rejection.
+              console.error('Failed to apply default scope:', err);
+            });
+        }
+        // Defer the URL write when scope metadata has not loaded yet.
+        // setEnabled is called from `@grafana/scenes` during dashboard mount,
+        // which can race with `applyScopes` and re-write a stale `scope_node`
+        // that the subscription has already settled (or is about to settle).
+        // The URL-sync subscription will fire once metadata arrives.
+        const firstScope = appliedScopes[0];
+        if (firstScope && !scopes[firstScope.scopeId]) {
+          return;
+        }
+        const scopeNodeId = this.getScopeNodeIdForUrl(appliedScopes, scopes);
         this.locationService.partial(
           {
-            scopes: this.selectorService.state.appliedScopes.map((s) => s.scopeId),
+            scopes: appliedScopes.map((s) => s.scopeId),
+            scope_node: scopeNodeId ?? null,
+            scope_parent: null,
           },
           true
         );
       }
     }
   };
+
+  /**
+   * Returns the scope node id to sync with the URL, or `undefined` when the
+   * URL should not carry `scope_node` at all.
+   *
+   * We skip writing `scope_node` when the scope has a non-empty `defaultPath`,
+   * since that value is redundant — it is re-derived from `defaultPath` on load
+   * and kept in sync by the selector service. Bookmarked URLs that still carry
+   * `scope_node=...` continue to work via the read path.
+   * @private
+   */
+  private getScopeNodeIdForUrl(appliedScopes: SelectedScope[], scopes: ScopesMap): string | undefined {
+    const firstScope = appliedScopes[0];
+    if (!firstScope) {
+      return undefined;
+    }
+
+    const scope = scopes[firstScope.scopeId];
+
+    if (scope?.spec.defaultPath && scope.spec.defaultPath.length > 0) {
+      return undefined;
+    }
+
+    return firstScope.scopeNodeId;
+  }
 
   /**
    * Returns observable that emits when relevant parts of the selectorService state change.

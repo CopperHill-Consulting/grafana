@@ -1,4 +1,4 @@
-import { SelectableValue } from '@grafana/data';
+import { type SelectableValue } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { RadioButtonGroup, Field } from '@grafana/ui';
 
@@ -25,7 +25,7 @@ export const ThemePicker = ({ selectedTheme = 'current', onChange, description }
   ];
 
   return (
-    <Field label={t('share-modal.theme-picker.field-name', `Theme`)} description={description}>
+    <Field label={t('share-modal.theme-picker.field-name', `Theme`)} description={description} noMargin>
       <RadioButtonGroup options={themeOptions} value={selectedTheme} onChange={onChange} />
     </Field>
   );

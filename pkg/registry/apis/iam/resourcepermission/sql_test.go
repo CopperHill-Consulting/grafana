@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -100,7 +101,7 @@ func TestMain(m *testing.M) {
 }
 
 func setupBackend(t *testing.T) *ResourcePermSqlBackend {
-	store := db.InitTestDB(t)
+	store := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 
 	sqlHelper := &legacysql.LegacyDatabaseHelper{
 		DB:    store,
@@ -111,7 +112,7 @@ func setupBackend(t *testing.T) *ResourcePermSqlBackend {
 		return sqlHelper, nil
 	}
 
-	return ProvideStorageBackend(dbProvider)
+	return ProvideStorageBackend(dbProvider, NewMappersRegistry())
 }
 
 func setupTestRoles(t *testing.T, store db.DB) {
@@ -402,7 +403,7 @@ func TestIntegration_ResourcePermSqlBackend_deleteResourcePermission(t *testing.
 func TestIntegration_ResourcePermSqlBackend_CreateResourcePermission(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	store := db.InitTestDB(t)
+	store := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 
 	timeNow = func() time.Time {
 		return time.Date(2025, 8, 28, 17, 13, 0, 0, time.UTC)
@@ -450,7 +451,10 @@ func TestIntegration_ResourcePermSqlBackend_CreateResourcePermission(t *testing.
 		sqlHelper, _ := backend.dbProvider(ctx)
 		backend.identityStore = NewFakeIdentityStore(t)
 
-		mapper, grn, err := backend.splitResourceName(resourcePerm.Name)
+		grn, err := splitResourceName(resourcePerm.Name)
+		require.NoError(t, err)
+
+		mapper, err := backend.getResourceMapper(grn.Group, grn.Resource)
 		require.NoError(t, err)
 
 		rv, err := backend.createResourcePermission(ctx, sqlHelper, types.NamespaceInfo{Value: "default", OrgID: 1}, mapper, grn, resourcePerm)
@@ -544,7 +548,10 @@ func TestIntegration_ResourcePermSqlBackend_UpdateResourcePermission(t *testing.
 			},
 		}
 
-		mapper, grn, err := backend.splitResourceName(resourcePerm.Name)
+		grn, err := splitResourceName(resourcePerm.Name)
+		require.NoError(t, err)
+
+		mapper, err := backend.getResourceMapper(grn.Group, grn.Resource)
 		require.NoError(t, err)
 
 		_, err = backend.updateResourcePermission(ctx, sql, types.NamespaceInfo{Value: "default", OrgID: 1}, mapper, grn, resourcePerm)
@@ -583,7 +590,10 @@ func TestIntegration_ResourcePermSqlBackend_UpdateResourcePermission(t *testing.
 			},
 		}
 
-		mapper, grn, err := backend.splitResourceName(resourcePerm.Name)
+		grn, err := splitResourceName(resourcePerm.Name)
+		require.NoError(t, err)
+
+		mapper, err := backend.getResourceMapper(grn.Group, grn.Resource)
 		require.NoError(t, err)
 
 		rv, err := backend.updateResourcePermission(ctx, sql, types.NamespaceInfo{Value: "default", OrgID: 1}, mapper, grn, resourcePerm)
@@ -624,16 +634,24 @@ type fakeIdentityStore struct {
 	users           map[string]int64
 	serviceAccounts map[string]int64
 	teams           map[string]int64
-	expectedNs      types.NamespaceInfo
+
+	usersByID           map[int64]string
+	serviceAccountsByID map[int64]string
+	teamsByID           map[int64]string
+
+	expectedNs types.NamespaceInfo
 }
 
 func NewFakeIdentityStore(t *testing.T) *fakeIdentityStore {
 	return &fakeIdentityStore{
-		t:               t,
-		users:           map[string]int64{"captain": 101, "user-1": 1, "user-2": 2},
-		serviceAccounts: map[string]int64{"robot": 201, "sa-1": 3},
-		teams:           map[string]int64{"devs": 301},
-		expectedNs:      types.NamespaceInfo{Value: "default"},
+		t:                   t,
+		users:               map[string]int64{"captain": 101, "user-1": 1, "user-2": 2},
+		serviceAccounts:     map[string]int64{"robot": 201, "sa-1": 3},
+		teams:               map[string]int64{"devs": 301},
+		usersByID:           map[int64]string{101: "captain", 1: "user-1", 2: "user-2"},
+		serviceAccountsByID: map[int64]string{201: "robot", 3: "sa-1"},
+		teamsByID:           map[int64]string{301: "devs"},
+		expectedNs:          types.NamespaceInfo{Value: "default"},
 	}
 }
 
@@ -670,102 +688,147 @@ func (f *fakeIdentityStore) GetUserInternalID(ctx context.Context, ns types.Name
 	return &legacy.GetUserInternalIDResult{ID: id}, nil
 }
 
-func TestValidateCreateAndUpdateInput(t *testing.T) {
-	grn := &groupResourceName{
-		Group:    "dashboard.grafana.app",
-		Resource: "dashboards",
-		Name:     "test-dashboard",
+func (f *fakeIdentityStore) GetTeamUIDByID(ctx context.Context, ns types.NamespaceInfo, query legacy.GetTeamUIDByIDQuery) (*legacy.GetTeamUIDByIDResult, error) {
+	uid, ok := f.teamsByID[query.ID]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return &legacy.GetTeamUIDByIDResult{UID: uid}, nil
+}
+
+func (f *fakeIdentityStore) GetUserUIDByID(ctx context.Context, ns types.NamespaceInfo, query legacy.GetUserUIDByIDQuery) (*legacy.GetUserUIDByIDResult, error) {
+	uid, ok := f.usersByID[query.ID]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return &legacy.GetUserUIDByIDResult{UID: uid}, nil
+}
+
+func (f *fakeIdentityStore) GetServiceAccountUIDByID(ctx context.Context, ns types.NamespaceInfo, query legacy.GetUserUIDByIDQuery) (*legacy.GetUserUIDByIDResult, error) {
+	uid, ok := f.serviceAccountsByID[query.ID]
+	if !ok {
+		return nil, errors.New("not found")
+	}
+	return &legacy.GetUserUIDByIDResult{UID: uid}, nil
+}
+
+func TestIntegration_ResourcePermSqlBackend_ListDirectPermissionsForSubject(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	backend := setupBackend(t)
+	sql, err := backend.dbProvider(context.Background())
+	require.NoError(t, err)
+	setupTestRoles(t, sql.DB)
+
+	tests := []struct {
+		name      string
+		namespace string
+		subject   string
+		wantPerms []v0alpha1.PermissionSpec
+		wantNil   bool
+	}{
+		{
+			name:    "empty subject UID returns nil",
+			subject: "",
+			wantNil: true,
+		},
+		{
+			name:      "returns permissions for a user UID",
+			namespace: "default",
+			subject:   "user-1",
+			wantPerms: []v0alpha1.PermissionSpec{
+				{Action: "folders:view", Scope: "folders:uid:fold1"},
+				{Action: "dashboards:edit", Scope: "dashboards:uid:dash1"},
+			},
+		},
+		{
+			name:      "returns permissions for a team UID",
+			namespace: "default",
+			subject:   "team-1",
+			wantPerms: []v0alpha1.PermissionSpec{
+				{Action: "dashboards:admin", Scope: "dashboards:uid:dash1"},
+			},
+		},
+		{
+			name:      "returns permissions for a basic role",
+			namespace: "default",
+			subject:   "Editor",
+			wantPerms: []v0alpha1.PermissionSpec{
+				{Action: "dashboards:edit", Scope: "dashboards:uid:dash1"},
+			},
+		},
+		{
+			name:      "returns empty for unknown subject",
+			namespace: "default",
+			subject:   "unknown-uid",
+			wantPerms: []v0alpha1.PermissionSpec{},
+		},
+		{
+			name:      "does not return permissions from a different org",
+			namespace: "org-2",
+			subject:   "user-1", // user-1's role is in org-1 only
+			wantPerms: []v0alpha1.PermissionSpec{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := backend.ListDirectPermissionsForSubject(context.Background(), tt.namespace, tt.subject)
+			require.NoError(t, err)
+			if tt.wantNil {
+				require.Nil(t, result)
+				return
+			}
+			// build a map for order-independent comparison
+			got := make(map[string]string, len(result))
+			for _, p := range result {
+				got[p.Action] = p.Scope
+			}
+			want := make(map[string]string, len(tt.wantPerms))
+			for _, p := range tt.wantPerms {
+				want[p.Action] = p.Scope
+			}
+			require.Equal(t, want, got)
+		})
+	}
+}
+
+func TestIntegration_ResourcePermSqlBackend_ListDirectPermissionsForSubject_SAMapper(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	store := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
+	sqlHelper := &legacysql.LegacyDatabaseHelper{
+		DB:    store,
+		Table: func(name string) string { return name },
+	}
+	dbProvider := func(ctx context.Context) (*legacysql.LegacyDatabaseHelper, error) {
+		return sqlHelper, nil
 	}
 
-	t.Run("Should pass validation with valid permissions", func(t *testing.T) {
-		resourcePerm := &v0alpha1.ResourcePermission{
-			Spec: v0alpha1.ResourcePermissionSpec{
-				Resource: v0alpha1.ResourcePermissionspecResource{
-					ApiGroup: "dashboard.grafana.app",
-					Resource: "dashboards",
-					Name:     "test-dashboard",
-				},
-				Permissions: []v0alpha1.ResourcePermissionspecPermission{
-					{
-						Kind: v0alpha1.ResourcePermissionSpecPermissionKindBasicRole,
-						Name: "Editor",
-						Verb: "edit",
-					},
-					{
-						Kind: v0alpha1.ResourcePermissionSpecPermissionKindBasicRole,
-						Name: "Viewer", // Different entity name - should be allowed
-						Verb: "view",
-					},
-					{
-						Kind: v0alpha1.ResourcePermissionSpecPermissionKindUser,
-						Name: "user-1",
-						Verb: "edit", // Different kind - should be allowed
-					},
-				},
-			},
-		}
+	backend := ProvideStorageBackend(dbProvider, saMapper())
+	backend.identityStore = NewFakeIdentityStore(t)
+	setupTestRoles(t, store)
 
-		err := validateCreateAndUpdateInput(resourcePerm, grn)
-		require.NoError(t, err)
-	})
+	// Seed a serviceaccounts:id:3 permission onto user-1's role.
+	// The backend should resolve it to serviceaccounts:uid:sa-1 on read.
+	sess := store.GetSqlxSession()
+	_, err := sess.Exec(context.Background(),
+		`INSERT INTO permission (role_id, action, scope, created, updated) VALUES (?, ?, ?, ?, ?)`,
+		1, "serviceaccounts:admin", "serviceaccounts:id:3", "2025-09-02", "2025-09-02",
+	)
+	require.NoError(t, err)
 
-	t.Run("Should fail validation with duplicate entities", func(t *testing.T) {
-		resourcePerm := &v0alpha1.ResourcePermission{
-			Spec: v0alpha1.ResourcePermissionSpec{
-				Resource: v0alpha1.ResourcePermissionspecResource{
-					ApiGroup: "dashboard.grafana.app",
-					Resource: "dashboards",
-					Name:     "test-dashboard",
-				},
-				Permissions: []v0alpha1.ResourcePermissionspecPermission{
-					{
-						Kind: v0alpha1.ResourcePermissionSpecPermissionKindBasicRole,
-						Name: "Editor",
-						Verb: "edit",
-					},
-					{
-						Kind: v0alpha1.ResourcePermissionSpecPermissionKindBasicRole,
-						Name: "Editor",
-						Verb: "view", // Same entity, different verb - should fail
-					},
-				},
-			},
-		}
+	result, err := backend.ListDirectPermissionsForSubject(context.Background(), "default", "user-1")
+	require.NoError(t, err)
 
-		err := validateCreateAndUpdateInput(resourcePerm, grn)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "duplicate entity found")
-		require.Contains(t, err.Error(), "kind=BasicRole")
-		require.Contains(t, err.Error(), "name=Editor")
-		require.Contains(t, err.Error(), "each entity can only appear once per resource")
-	})
-
-	t.Run("Should pass validation with same name but different kinds", func(t *testing.T) {
-		resourcePerm := &v0alpha1.ResourcePermission{
-			Spec: v0alpha1.ResourcePermissionSpec{
-				Resource: v0alpha1.ResourcePermissionspecResource{
-					ApiGroup: "dashboard.grafana.app",
-					Resource: "dashboards",
-					Name:     "test-dashboard",
-				},
-				Permissions: []v0alpha1.ResourcePermissionspecPermission{
-					{
-						Kind: v0alpha1.ResourcePermissionSpecPermissionKindUser,
-						Name: "editor", // Same name but different kind
-						Verb: "edit",
-					},
-					{
-						Kind: v0alpha1.ResourcePermissionSpecPermissionKindBasicRole,
-						Name: "editor", // Same name but different kind
-						Verb: "view",
-					},
-				},
-			},
-		}
-
-		err := validateCreateAndUpdateInput(resourcePerm, grn)
-		require.NoError(t, err)
-	})
+	got := make(map[string]string, len(result))
+	for _, p := range result {
+		got[p.Action] = p.Scope
+	}
+	require.Equal(t, map[string]string{
+		"folders:view":          "folders:uid:fold1",
+		"dashboards:edit":       "dashboards:uid:dash1",
+		"serviceaccounts:admin": "serviceaccounts:uid:sa-1",
+	}, got)
 }
 
 func TestIntegration_UpdateResourcePermission_VerbChange(t *testing.T) {
@@ -778,7 +841,7 @@ func TestIntegration_UpdateResourcePermission_VerbChange(t *testing.T) {
 	require.NoError(t, err)
 	setupTestRoles(t, sql.DB)
 
-	mapper := backend.mappers[schema.GroupResource{Group: "dashboard.grafana.app", Resource: "dashboards"}]
+	mapper, _ := backend.mappers.Get(schema.GroupResource{Group: "dashboard.grafana.app", Resource: "dashboards"})
 	grn := &groupResourceName{Group: "dashboard.grafana.app", Resource: "dashboards", Name: "test-dash"}
 
 	t.Run("should allow changing verb for same entity", func(t *testing.T) {
@@ -846,4 +909,73 @@ func TestIntegration_UpdateResourcePermission_VerbChange(t *testing.T) {
 		})
 		require.NoError(t, err)
 	})
+}
+
+// TestDatasource_WriteAndReadBackConcreteGroup demonstrates that:
+//  1. We can write a resource permission with a concrete datasource group (loki.datasource.grafana.app)
+//  2. When reading it back, it returns with ApiGroup as "loki.datasource.grafana.app"
+//     because datasource_type is stored in the permission row and resolved via resolveGroup
+func TestIntegration_Datasource_WriteAndReadBackConcreteGroup(t *testing.T) {
+	testutil.SkipIntegrationTestInShortMode(t)
+
+	backend := setupBackend(t)
+	backend.identityStore = NewFakeIdentityStore(t)
+	ctx := context.Background()
+	sql, err := backend.dbProvider(ctx)
+	require.NoError(t, err)
+	setupTestRoles(t, sql.DB)
+
+	backend.mappers = NewMappersRegistry()
+	backend.mappers.RegisterMapper(
+		schema.GroupResource{Group: "*.datasource.grafana.app", Resource: "datasources"},
+		NewMapper("datasources", []string{"query", "edit", "admin"}),
+		func() bool { return true },
+	)
+
+	// Write: Create a resource permission for loki.datasource.grafana.app
+	resourcePerm := &v0alpha1.ResourcePermission{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "loki.datasource.grafana.app-datasources-loki-ds",
+			Namespace: "default",
+		},
+		Spec: v0alpha1.ResourcePermissionSpec{
+			Resource: v0alpha1.ResourcePermissionspecResource{
+				ApiGroup: "loki.datasource.grafana.app",
+				Resource: "datasources",
+				Name:     "loki-ds",
+			},
+			Permissions: []v0alpha1.ResourcePermissionspecPermission{
+				{
+					Kind: v0alpha1.ResourcePermissionSpecPermissionKindUser,
+					Name: "user-1",
+					Verb: "query",
+				},
+			},
+		},
+	}
+
+	grn, err := splitResourceName(resourcePerm.Name)
+	require.NoError(t, err)
+
+	mapper, err := backend.getResourceMapper(grn.Group, grn.Resource)
+	require.NoError(t, err)
+
+	_, err = backend.createResourcePermission(ctx, sql, types.NamespaceInfo{Value: "default", OrgID: 1}, mapper, grn, resourcePerm)
+	require.NoError(t, err, "should write loki.datasource.grafana.app permission")
+
+	// Read: Get the resource permission back - it should show loki.datasource.grafana.app
+	var got *v0alpha1.ResourcePermission
+	err = sql.DB.GetSqlxSession().WithTransaction(ctx, func(tx *session.SessionTx) error {
+		got, err = backend.getResourcePermission(ctx, sql, tx, types.NamespaceInfo{Value: "default", OrgID: 1}, "loki.datasource.grafana.app-datasources-loki-ds")
+		return err
+	})
+	require.NoError(t, err, "should read back the permission")
+	require.NotNil(t, got)
+
+	// Assert: ApiGroup should be loki.datasource.grafana.app because datasource_type
+	// is stored in the permission row and used by ParseScope to resolve the concrete group
+	assert.Equal(t, "loki.datasource.grafana.app-datasources-loki-ds", got.Name)
+	assert.Equal(t, "loki.datasource.grafana.app", got.Spec.Resource.ApiGroup)
+	assert.Equal(t, "datasources", got.Spec.Resource.Resource)
+	assert.Equal(t, "loki-ds", got.Spec.Resource.Name)
 }

@@ -1,31 +1,41 @@
 import { defaults, each, sortBy } from 'lodash';
 
-import { DataSourceRef, PanelPluginMeta, VariableOption, VariableRefresh } from '@grafana/data';
+import { type DataSourceRef, type VariableOption, VariableRefresh } from '@grafana/data';
 import { getDataSourceSrv } from '@grafana/runtime';
-import { Panel } from '@grafana/schema';
+import { getPanelPluginMeta } from '@grafana/runtime/internal';
+import { type Panel } from '@grafana/schema';
 import {
-  Spec as DashboardV2Spec,
-  PanelKind,
-  PanelQueryKind,
-  AnnotationQueryKind,
-  QueryVariableKind,
-  LibraryPanelRef,
-  LibraryPanelKind,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
-import { notifyApp } from 'app/core/actions';
+  type Spec as DashboardV2Spec,
+  type PanelKind,
+  type LibraryPanelRef,
+  type LibraryPanelKind,
+  type DataQueryKind,
+  type AdhocVariableKind,
+  type GroupByVariableKind,
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
 import config from 'app/core/config';
 import { createErrorNotification } from 'app/core/copy/appNotification';
+import { notifyApp } from 'app/core/reducers/appNotification';
 import { buildPanelKind } from 'app/features/dashboard/api/ResponseTransformers';
-import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
-import { PanelModel, GridPos } from 'app/features/dashboard/state/PanelModel';
+import { type DashboardModel } from 'app/features/dashboard/state/DashboardModel';
+import { type PanelModel, type GridPos } from 'app/features/dashboard/state/PanelModel';
+import { visitDashboardLayoutSections } from 'app/features/dashboard/utils/visitDashboardLayoutSections';
 import { getLibraryPanel } from 'app/features/library-panels/state/api';
 import { variableRegexExec } from 'app/features/variables/utils';
 import { dispatch } from 'app/store/store';
 
 import { isPanelModelLibraryPanel } from '../../../library-panels/guard';
 import { LibraryElementKind } from '../../../library-panels/types';
-import { DashboardJson } from '../../../manage-dashboards/types';
+import { type DashboardJson } from '../../../manage-dashboards/types';
 import { isConstant } from '../../../variables/guard';
+
+// This label is used to store the export label for a datasource when exporting a V2 dashboard for external sharing.
+// E.g. if a dashboard has two datasources with the same type, the export label will be used to distinguish them.
+export const ExportLabel = 'grafana.app/export-label';
+
+// This label is used to store the original datasource display name when exporting a V2 dashboard.
+// The importer surfaces it in the datasource picker so users can tell which original datasource each input refers to.
+export const ExportDatasourceName = 'grafana.app/export-datasource-name';
 
 export interface InputUsage {
   libraryPanels?: LibraryPanelRef[];
@@ -95,7 +105,6 @@ export async function makeExportableV1(dashboard: DashboardModel) {
   dashboard.cleanUpRepeats();
 
   const saveModel = dashboard.getSaveModelCloneOld();
-  saveModel.id = null;
 
   // undo repeat cleanup
   dashboard.processRepeats();
@@ -128,6 +137,12 @@ export async function makeExportableV1(dashboard: DashboardModel) {
     if (match) {
       varName = match[1] || match[2] || match[4];
       datasourceVariable = variableLookup[varName];
+
+      // if datasource variable is already templated, skip it
+      if (datasourceVariableRefNameMap[varName]) {
+        return;
+      }
+
       if (datasourceVariable && datasourceVariable.current) {
         datasource = datasourceVariable.current.value;
       }
@@ -172,7 +187,7 @@ export async function makeExportableV1(dashboard: DashboardModel) {
           };
         }
 
-        // if it panel or query is relying on a datasource variable
+        // if panel or query is relying on a datasource variable
         // skip templating datasource uid but save the reference so we can set datasource variable's current prop
         if (datasourceVariable && varName) {
           datasourceVariableRefNameMap[varName] = '${' + refName + '}';
@@ -193,7 +208,7 @@ export async function makeExportableV1(dashboard: DashboardModel) {
         }
       }
 
-      const panelDef: PanelPluginMeta = config.panels[panel.type];
+      const panelDef = await getPanelPluginMeta(panel.type);
       if (panelDef) {
         requires['panel' + panelDef.id] = {
           type: 'panel',
@@ -409,37 +424,142 @@ async function convertLibraryPanelToInlinePanel(libraryPanelElement: LibraryPane
 }
 
 export async function makeExportableV2(dashboard: DashboardV2Spec, isSharingExternally = false) {
-  const variableLookup: { [key: string]: any } = {};
+  const dataQueryLabels: { [key: string]: Map<string, number> } = {};
 
-  // get all datasource variables
-  const datasourceVariables = dashboard.variables.filter((v) => v.kind === 'DatasourceVariable');
-
+  // Collect datasource variables from dashboard-level and section (row/tab) scopes
+  // so panel/query refs to section DS vars are not incorrectly templateized, and so
+  // we can still attach export labels for import pickers (mirrors V1).
+  const datasourceVariablesByName = new Map<string, { currentUid?: string }>();
+  const rememberDatasourceVariable = (variable: DashboardV2Spec['variables'][number]) => {
+    if (variable.kind !== 'DatasourceVariable') {
+      return;
+    }
+    const currentValue = variable.spec.current?.value;
+    const currentUid =
+      typeof currentValue === 'string' && currentValue && !currentValue.startsWith('$') ? currentValue : undefined;
+    datasourceVariablesByName.set(variable.spec.name, { currentUid });
+  };
   for (const variable of dashboard.variables) {
-    variableLookup[variable.spec.name] = variable.spec;
+    rememberDatasourceVariable(variable);
   }
+  visitDashboardLayoutSections(dashboard.layout, (variables) => {
+    for (const variable of variables) {
+      rememberDatasourceVariable(variable);
+    }
+  });
 
-  const removeDataSourceRefs = (
-    obj: AnnotationQueryKind['spec'] | QueryVariableKind['spec'] | PanelQueryKind['spec']
+  const getDatasourceVariableName = (datasourceUid: string): string | undefined => {
+    if (!datasourceUid.startsWith('$')) {
+      return undefined;
+    }
+    return datasourceUid.startsWith('${') && datasourceUid.endsWith('}')
+      ? datasourceUid.slice(2, -1)
+      : datasourceUid.slice(1);
+  };
+
+  const isReferencingDsTemplateVariable = (datasourceUid: string) => {
+    const varName = getDatasourceVariableName(datasourceUid);
+    return varName !== undefined && datasourceVariablesByName.has(varName);
+  };
+
+  const attachExportLabels = (
+    group: string,
+    datasourceUid: string,
+    existingLabels: DataQueryKind['labels'] | AdhocVariableKind['labels']
   ) => {
-    const datasourceUid = obj.query?.datasource?.name;
+    // For $dsVar refs, prefer the variable's current UID so the import picker can
+    // show the original datasource name — same idea as V1's datasourceVariableRefNameMap.
+    const varName = getDatasourceVariableName(datasourceUid);
+    const resolvedUid = (varName ? datasourceVariablesByName.get(varName)?.currentUid : undefined) ?? datasourceUid;
+    const datasourceName = getDatasourceDisplayName(resolvedUid);
 
-    if (datasourceUid?.startsWith('${') && datasourceUid?.endsWith('}')) {
-      const varName = datasourceUid.slice(2, -1);
-      // if there's a match we don't want to remove the datasource ref
-      const match = datasourceVariables.find((v) => v.spec.name === varName);
-      if (match) {
-        return;
-      }
+    return {
+      ...(existingLabels ?? {}),
+      [ExportLabel]: getLabel(group, resolvedUid),
+      ...(datasourceName ? { [ExportDatasourceName]: datasourceName } : {}),
+    };
+  };
+
+  const processDataQueryKind = (dataQueryKind: DataQueryKind) => {
+    if (!dataQueryKind.datasource?.name) {
+      return;
     }
 
-    obj.query && (obj.query.datasource = undefined);
+    const datasourceUid = dataQueryKind.datasource.name;
+
+    if (isReferencingDsTemplateVariable(datasourceUid)) {
+      // Keep $var on the query, but label it so external import can prompt for this DS type.
+      dataQueryKind.labels = attachExportLabels(dataQueryKind.group, datasourceUid, dataQueryKind.labels);
+      return;
+    }
+
+    dataQueryKind.labels = attachExportLabels(dataQueryKind.group, datasourceUid, dataQueryKind.labels);
+    dataQueryKind.datasource = undefined;
+  };
+
+  const processAdHocAndGroupByVariables = (variable: AdhocVariableKind | GroupByVariableKind) => {
+    const datasourceUid = variable.datasource?.name;
+
+    if (!datasourceUid) {
+      return;
+    }
+
+    if (isReferencingDsTemplateVariable(datasourceUid)) {
+      variable.labels = attachExportLabels(variable.group, datasourceUid, variable.labels);
+      return;
+    }
+
+    variable.labels = attachExportLabels(variable.group, datasourceUid, variable.labels);
+    variable.datasource = undefined;
+  };
+
+  const getDatasourceDisplayName = (datasourceUid: string): string | undefined => {
+    const settings = getDataSourceSrv().getInstanceSettings(datasourceUid);
+    if (!settings || settings.meta?.builtIn) {
+      return undefined;
+    }
+    return settings.name;
+  };
+
+  const getLabel = (datasourceGroup: string, datasourceUid: string) => {
+    let group = dataQueryLabels[datasourceGroup];
+
+    if (!group) {
+      group = new Map<string, number>();
+      dataQueryLabels[datasourceGroup] = group;
+    }
+
+    if (!group.has(datasourceUid)) {
+      group.set(datasourceUid, group.size + 1);
+    }
+
+    const index = group.get(datasourceUid);
+    return `${datasourceGroup}-${index}`;
   };
 
   const processPanel = (panel: PanelKind) => {
     if (panel.spec.data.spec.queries) {
       for (const query of panel.spec.data.spec.queries) {
-        removeDataSourceRefs(query.spec);
+        processDataQueryKind(query.spec.query);
       }
+    }
+  };
+
+  const processVariable = (variable: DashboardV2Spec['variables'][number]) => {
+    if (variable.kind === 'QueryVariable') {
+      processDataQueryKind(variable.spec.query);
+      variable.spec.options = [];
+      variable.spec.current = {
+        text: '',
+        value: '',
+      };
+    } else if (variable.kind === 'DatasourceVariable') {
+      variable.spec.current = {
+        text: '',
+        value: '',
+      };
+    } else if (variable.kind === 'AdhocVariable' || variable.kind === 'GroupByVariable') {
+      processAdHocAndGroupByVariables(variable);
     }
   };
 
@@ -463,26 +583,19 @@ export async function makeExportableV2(dashboard: DashboardV2Spec, isSharingExte
       }
     }
 
-    // process template variables
+    // process dashboard-level and section (row/tab) template variables
     for (const variable of dashboard.variables) {
-      if (variable.kind === 'QueryVariable') {
-        removeDataSourceRefs(variable.spec);
-        variable.spec.options = [];
-        variable.spec.current = {
-          text: '',
-          value: '',
-        };
-      } else if (variable.kind === 'DatasourceVariable') {
-        variable.spec.current = {
-          text: '',
-          value: '',
-        };
-      }
+      processVariable(variable);
     }
+    visitDashboardLayoutSections(dashboard.layout, (variables) => {
+      for (const variable of variables) {
+        processVariable(variable);
+      }
+    });
 
     // process annotations vars
     for (const annotation of dashboard.annotations) {
-      removeDataSourceRefs(annotation.spec);
+      processDataQueryKind(annotation.spec.query);
     }
 
     return dashboard;

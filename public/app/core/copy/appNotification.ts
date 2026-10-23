@@ -1,12 +1,12 @@
-import { useMemo, ReactElement } from 'react';
-import { v4 as uuidv4 } from 'uuid';
+import { useMemo, type ReactElement } from 'react';
 
+import { generateUUID } from '@grafana/data';
 import { getMessageFromError } from 'app/core/utils/errors';
 import { dispatch as storeDispatch } from 'app/store/store';
-import { AppNotificationSeverity, AppNotification } from 'app/types/appNotifications';
+import { AppNotificationSeverity, type AppNotification } from 'app/types/appNotifications';
 import { useDispatch } from 'app/types/store';
 
-import { notifyApp } from '../actions';
+import { notifyApp } from '../reducers/appNotification';
 
 const defaultSuccessNotification = {
   title: '',
@@ -29,11 +29,18 @@ const defaultErrorNotification = {
   icon: 'exclamation-triangle',
 };
 
-export const createSuccessNotification = (title: string, text = '', traceId?: string): AppNotification => ({
+export const createSuccessNotification = (
+  title: string,
+  text = '',
+  traceId?: string,
+  component?: ReactElement
+): AppNotification => ({
   ...defaultSuccessNotification,
   title,
   text,
-  id: uuidv4(),
+  traceId,
+  component,
+  id: generateUUID(),
   timestamp: Date.now(),
   showing: true,
 });
@@ -48,7 +55,7 @@ export const createErrorNotification = (
     ...defaultErrorNotification,
     text: getMessageFromError(text),
     title,
-    id: uuidv4(),
+    id: generateUUID(),
     traceId,
     component,
     timestamp: Date.now(),
@@ -56,12 +63,18 @@ export const createErrorNotification = (
   };
 };
 
-export const createWarningNotification = (title: string, text = '', traceId?: string): AppNotification => ({
+export const createWarningNotification = (
+  title: string,
+  text = '',
+  traceId?: string,
+  component?: ReactElement
+): AppNotification => ({
   ...defaultWarningNotification,
   title,
   text,
   traceId,
-  id: uuidv4(),
+  component,
+  id: generateUUID(),
   timestamp: Date.now(),
   showing: true,
 });
@@ -71,7 +84,7 @@ export const createInfoNotification = (title: string, text = '', traceId?: strin
   icon: 'info-circle',
   title,
   text,
-  id: uuidv4(),
+  id: generateUUID(),
   timestamp: Date.now(),
   showing: true,
 });

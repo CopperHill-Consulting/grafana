@@ -1,12 +1,16 @@
 import { useMemo, useState } from 'react';
 
-import { AppEvents } from '@grafana/data';
-import { t, Trans } from '@grafana/i18n';
-import { reportInteraction } from '@grafana/runtime';
+import { Trans } from '@grafana/i18n';
+import { logMeasurement, logWarning, reportInteraction } from '@grafana/runtime';
 import { Button, Stack } from '@grafana/ui';
-import appEvents from 'app/core/app_events';
+import { appEvents } from 'app/core/app_events';
+import { buildNotificationButton } from 'app/core/components/AppNotifications/NotificationButton';
+import { createSuccessNotification } from 'app/core/copy/appNotification';
+import { notifyApp } from 'app/core/reducers/appNotification';
+import { getStatusFromError } from 'app/core/utils/errors';
 import { AnnoKeyFolder } from 'app/features/apiserver/types';
-import { GENERAL_FOLDER_UID } from 'app/features/search/constants';
+import { getDashboardAPI } from 'app/features/dashboard/api/dashboard_api';
+import { isRootFolderUID } from 'app/features/search/constants';
 import { useDispatch } from 'app/types/store';
 
 import { deletedDashboardsCache } from '../../search/service/deletedDashboardsCache';
@@ -14,6 +18,7 @@ import { useRestoreDashboardMutation } from '../api/browseDashboardsAPI';
 import { useRecentlyDeletedStateManager } from '../api/useRecentlyDeletedStateManager';
 import { useActionSelectionState } from '../state/hooks';
 import { clearFolders, setAllSelection } from '../state/slice';
+import { getRestoreNotificationData, RESTORE_FETCH_NOT_FOUND } from '../utils/notifications';
 
 import { RestoreModal } from './RestoreModal';
 
@@ -25,44 +30,6 @@ export function RecentlyDeletedActions() {
   const [isBulkRestoreLoading, setIsBulkRestoreLoading] = useState(false);
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
 
-  const showRestoreNotifications = (successful: string[], failedCount: number) => {
-    const successCount = successful.length;
-
-    if (successCount === 0 && failedCount === 0) {
-      return;
-    }
-
-    let alertType = AppEvents.alertSuccess.name;
-    let message = t('browse-dashboards.restore.success', 'Dashboards restored successfully');
-
-    if (failedCount > 0) {
-      if (successCount > 0) {
-        // Partial success
-        alertType = AppEvents.alertWarning.name;
-        const successMessage = t(
-          'browse-dashboards.restore.success-count',
-          '{{count}} dashboard restored successfully',
-          { count: successCount }
-        );
-        const failedMessage = t('browse-dashboards.restore.failed-count', '{{count}} dashboard failed', {
-          count: failedCount,
-        });
-        message = `${successMessage}. ${failedMessage}.`;
-      } else {
-        // All failed
-        alertType = AppEvents.alertError.name;
-        message = t('browse-dashboards.restore.all-failed', 'Failed to restore {{count}} dashboard', {
-          count: failedCount,
-        });
-      }
-    }
-
-    appEvents.publish({
-      type: alertType,
-      payload: [message],
-    });
-  };
-
   const selectedDashboards = useMemo(() => {
     return Object.entries(selectedItemsState.dashboard)
       .filter(([_, selected]) => selected)
@@ -70,29 +37,50 @@ export function RecentlyDeletedActions() {
   }, [selectedItemsState.dashboard]);
 
   const selectedDashboardOrigin = useMemo(() => {
-    if (!searchState.result) {
-      return [];
+    if (!searchState.result || selectedDashboards.length === 0) {
+      return undefined;
     }
 
-    const origins: string[] = [];
+    let originCandidate: string | undefined;
     for (const selectedDashboard of selectedDashboards) {
       const index = searchState.result.view.fields.uid.values.findIndex((e) => e === selectedDashboard);
+      if (index === -1) {
+        return undefined;
+      }
 
-      // SQLSearcher changes the location from empty string to 'general' for items with no parent,
-      // but the restore API doesn't work with 'general' folder UID, so we need to convert it back
-      // to an empty string
+      // Searcher reports root-parented items with the "general" UID, but the
+      // restore API doesn't accept it — convert back to "" so the dashboard
+      // is restored to the root.
       const location = searchState.result.view.fields.location.values[index];
-      const fixedLocation = location === GENERAL_FOLDER_UID ? '' : location;
-      origins.push(fixedLocation);
+      const fixedLocation = isRootFolderUID(location) ? '' : location;
+
+      if (originCandidate === undefined) {
+        originCandidate = fixedLocation;
+        continue;
+      }
+
+      if (originCandidate !== fixedLocation) {
+        return undefined;
+      }
     }
-    return origins;
+
+    return originCandidate;
   }, [selectedDashboards, searchState.result]);
 
-  const onActionComplete = () => {
-    dispatch(setAllSelection({ isSelected: false, folderUID: undefined }));
-
-    deletedDashboardsCache.clear();
-    stateManager.doSearchWithDebounce();
+  const getErrorMessage = (error: unknown) => {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    if (typeof error === 'string') {
+      return error;
+    }
+    if (error && typeof error === 'object' && 'message' in error) {
+      return String(error.message);
+    }
+    if (error) {
+      return JSON.stringify(error);
+    }
+    return '';
   };
 
   const onRestore = async (restoreTarget: string) => {
@@ -104,13 +92,15 @@ export function RecentlyDeletedActions() {
     setIsBulkRestoreLoading(true);
 
     const promises = selectedDashboards.map(async (uid) => {
-      const deletedDashboards = await deletedDashboardsCache.getAsResourceList();
-      const dashboard = deletedDashboards?.items.find((d) => d.metadata.name === uid);
+      const api = await getDashboardAPI();
+      const dashboard = await api.getDeletedDashboard(uid);
       if (!dashboard) {
-        console.warn(`Dashboard ${uid} not found in deleted items`);
-        return { uid, error: 'not_found' };
+        // The recently-deleted listing is deleter/permission-aware: empty result means
+        // this user cannot read the deleted dashboard (or it is no longer recently deleted).
+        logWarning('Deleted dashboard not visible in the recently-deleted listing during restore', { uid });
+        return { uid, error: RESTORE_FETCH_NOT_FOUND, step: 'fetch' as const };
       }
-      // Clone the dashboard to be able to edit the immutable data from the store
+
       const copy = structuredClone(dashboard);
       copy.metadata = {
         ...copy.metadata,
@@ -124,20 +114,52 @@ export function RecentlyDeletedActions() {
 
     // Separate successful and failed restores
     const successful: string[] = [];
-    const failed: string[] = [];
+    const failed: Array<{ uid: string; error: string; status?: number; step: 'fetch' | 'create' }> = [];
 
     results.forEach((result, index) => {
       const dashboardUid = selectedDashboards[index];
-      if (result.status === 'rejected' || result.value.error) {
-        failed.push(dashboardUid);
-      } else if ('data' in result.value && result.value.data?.name) {
-        successful.push(result.value.data.name);
+      if (result.status === 'rejected') {
+        // Rejections come from the recently-deleted listing fetch — the read path of the
+        // restore pipeline.
+        failed.push({
+          uid: dashboardUid,
+          error: getErrorMessage(result.reason),
+          status: getStatusFromError(result.reason),
+          step: 'fetch',
+        });
+      } else if (result.value.error) {
+        failed.push({
+          uid: dashboardUid,
+          error: getErrorMessage(result.value.error),
+          status: getStatusFromError(result.value.error),
+          step: 'step' in result.value ? result.value.step : 'create',
+        });
+      } else {
+        // Every settled promise lands in exactly one bucket: an empty error
+        // message or an untitled dashboard must not fall through, or the
+        // measurement below and the deletedDashboardsCache cleanup drift out of sync.
+        successful.push(dashboardUid);
       }
     });
 
-    // Show consolidated notification
-    const failedCount = failed.length;
-    showRestoreNotifications(successful, failedCount);
+    // Outcome telemetry for the restore flow: failures are caught and surfaced
+    // only as a toast, so this measurement is the only regression signal
+    // (PIR follow-up for #127601, removable once FEP ships wider coverage).
+    const errorStatusCodes = [...new Set(failed.map((f) => f.status?.toString() ?? 'unknown'))].join(',');
+    const failedSteps = [...new Set(failed.map((f) => f.step))].join(',');
+    logMeasurement(
+      'browse_dashboards.restore_result',
+      {
+        total_count: selectedDashboards.length,
+        success_count: successful.length,
+        failure_count: failed.length,
+      },
+      {
+        status: failed.length === 0 ? 'success' : successful.length === 0 ? 'failure' : 'partial_failure',
+        error_status_codes: errorStatusCodes, // e.g. '404' | '404,500' | 'unknown' | ''
+        failed_steps: failedSteps, // e.g. 'fetch' | 'fetch,create' | ''
+      }
+    );
 
     const parentUIDs = new Set<string | undefined>();
     for (const uid of selectedDashboards) {
@@ -145,14 +167,33 @@ export function RecentlyDeletedActions() {
       if (!foundItem) {
         continue;
       }
-      // Search API returns items with no parent with a location of 'general', so we
-      // need to convert that back to undefined
-      const folderUID = foundItem.location === GENERAL_FOLDER_UID ? undefined : foundItem.location;
+      // Search API reports root-parented items with the "general" UID —
+      // convert that back to undefined.
+      const folderUID = isRootFolderUID(foundItem.location) ? undefined : foundItem.location;
       parentUIDs.add(folderUID);
     }
     dispatch(clearFolders(Array.from(parentUIDs)));
+    dispatch(setAllSelection({ isSelected: false, folderUID: undefined }));
 
-    onActionComplete();
+    deletedDashboardsCache.removeItems(successful);
+    await stateManager.doSearch();
+
+    const notificationData = getRestoreNotificationData(successful, failed, restoreTarget);
+    if (notificationData) {
+      if (notificationData.kind === 'action') {
+        const component = buildNotificationButton({
+          title: notificationData.data.title,
+          buttonLabel: notificationData.data.buttonLabel,
+          href: notificationData.data.targetUrl,
+        });
+        dispatch(notifyApp(createSuccessNotification('', '', undefined, component)));
+      } else {
+        appEvents.publish({
+          type: notificationData.data.alertType,
+          payload: [notificationData.data.message],
+        });
+      }
+    }
     setIsBulkRestoreLoading(false);
     setIsRestoreModalOpen(false);
   };
@@ -173,14 +214,15 @@ export function RecentlyDeletedActions() {
           <Trans i18nKey="recently-deleted.buttons.restore">Restore</Trans>
         </Button>
       </Stack>
-      <RestoreModal
-        isOpen={isRestoreModalOpen}
-        onConfirm={onRestore}
-        onDismiss={() => setIsRestoreModalOpen(false)}
-        selectedDashboards={selectedDashboards}
-        dashboardOrigin={selectedDashboardOrigin}
-        isLoading={isBulkRestoreLoading}
-      />
+      {isRestoreModalOpen && (
+        <RestoreModal
+          onConfirm={onRestore}
+          onDismiss={() => setIsRestoreModalOpen(false)}
+          selectedDashboards={selectedDashboards}
+          originCandidate={selectedDashboardOrigin}
+          isLoading={isBulkRestoreLoading}
+        />
+      )}
     </>
   );
 }

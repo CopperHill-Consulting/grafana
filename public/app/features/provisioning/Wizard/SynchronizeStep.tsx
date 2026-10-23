@@ -1,60 +1,118 @@
-import { skipToken } from '@reduxjs/toolkit/query';
-import { useState } from 'react';
+import { memo, useCallback, useEffect } from 'react';
 import { useFormContext } from 'react-hook-form';
 
 import { Trans, t } from '@grafana/i18n';
-import { Alert, Button, Checkbox, Field, Spinner, Stack, Text, TextLink } from '@grafana/ui';
-import { Job, useGetRepositoryStatusQuery } from 'app/api/clients/provisioning/v0alpha1';
+import { config } from '@grafana/runtime';
+import { Box, Button, Checkbox, Field, LoadingPlaceholder, Stack, Text } from '@grafana/ui';
 
 import { JobStatus } from '../Job/JobStatus';
-import { ProvisioningAlert } from '../Shared/ProvisioningAlert';
+import { GitSyncLimitationsAlert } from '../Shared/GitSyncLimitationsAlert';
 
 import { useStepStatus } from './StepStatusContext';
-import { useCreateSyncJob } from './hooks/useCreateSyncJob';
+import { useRepositoryStatus } from './hooks/useRepositoryStatus';
 import { useResourceStats } from './hooks/useResourceStats';
-import { WizardFormData } from './types';
+import { useSyncJob } from './hooks/useSyncJob';
+import { type WizardFormData, type WizardStep } from './types';
+import { getSyncStepStatus } from './utils/getSteps';
 
 export interface SynchronizeStepProps {
-  isLegacyStorage?: boolean;
   onCancel?: (repoName: string) => void;
+  goToStep: (stepId: WizardStep) => void;
   isCancelling?: boolean;
 }
 
-export function SynchronizeStep({ isLegacyStorage, onCancel, isCancelling }: SynchronizeStepProps) {
-  const { getValues, register, watch } = useFormContext<WizardFormData>();
+export const SynchronizeStep = memo(function SynchronizeStep({
+  onCancel,
+  isCancelling,
+  goToStep,
+}: SynchronizeStepProps) {
+  const { watch, register } = useFormContext<WizardFormData>();
   const { setStepStatusInfo } = useStepStatus();
-  const [repoName = '', repoType] = watch(['repositoryName', 'repository.type']);
-  const { requiresMigration } = useResourceStats(repoName, isLegacyStorage);
-  const { createSyncJob, supportsHistory } = useCreateSyncJob({
-    repoName,
-    requiresMigration,
-    repoType,
-    isLegacyStorage,
-    setStepStatusInfo,
-  });
-  const [job, setJob] = useState<Job>();
-  const repositoryStatusQuery = useGetRepositoryStatusQuery(repoName ? { name: repoName } : skipToken);
+  const [repoName = '', syncTarget, migrateResources] = watch([
+    'repositoryName',
+    'repository.sync.target',
+    'migrate.migrateResources',
+  ]);
 
   const {
-    healthy: isRepositoryHealthy,
-    message: repositoryHealthMessages,
-    checked,
-  } = repositoryStatusQuery?.data?.status?.health || {};
-  const isButtonDisabled = checked !== undefined && isRepositoryHealthy === false;
+    isHealthy,
+    isUnhealthy,
+    healthMessage: repositoryHealthMessages,
+    healthStatusNotReady,
+    hasError,
+    fieldErrors,
+    isLoading,
+  } = useRepositoryStatus(repoName);
 
-  const startSynchronization = async () => {
-    const [history] = getValues(['migrate.history']);
-    const response = await createSyncJob({ history });
-    if (response) {
-      setJob(response);
-    }
-  };
+  const { requiresMigration } = useResourceStats(repoName, syncTarget, migrateResources, {
+    isHealthy,
+    healthStatusNotReady,
+  });
 
-  if (repositoryStatusQuery.isFetching) {
-    return <Spinner />;
+  const { job, setJob, startJob } = useSyncJob({ repoName, setStepStatusInfo });
+
+  useEffect(() => {
+    // This useEffect is used to update the step status info based on the repository status and the form errors
+    setStepStatusInfo(
+      getSyncStepStatus({
+        fieldErrors,
+        hasError,
+        isUnhealthy,
+        isLoading,
+        healthStatusNotReady,
+        repositoryHealthMessages,
+        goToStep,
+      })
+    );
+  }, [
+    fieldErrors,
+    hasError,
+    isUnhealthy,
+    isLoading,
+    healthStatusNotReady,
+    repositoryHealthMessages,
+    setStepStatusInfo,
+    goToStep,
+  ]);
+
+  const isButtonDisabled = hasError || !isHealthy;
+
+  const startSynchronization = useCallback(async () => {
+    await startJob(requiresMigration, { syncTarget });
+  }, [startJob, requiresMigration, syncTarget]);
+
+  const retryJob = useCallback(() => {
+    setJob(undefined);
+    void startSynchronization();
+  }, [setJob, startSynchronization]);
+
+  if (isLoading || healthStatusNotReady) {
+    return (
+      <Box padding={4}>
+        <LoadingPlaceholder
+          text={t('provisioning.synchronize-step.text-checking-repository', 'Checking repository status...')}
+        />
+      </Box>
+    );
+  }
+  if (hasError || isUnhealthy) {
+    // Error message is handled by status context, only show cancel button
+    return (
+      <Stack direction="column" gap={3}>
+        <Field noMargin>
+          <Button variant="destructive" onClick={() => onCancel?.(repoName)} disabled={isCancelling}>
+            {isCancelling ? (
+              <Trans i18nKey="provisioning.wizard.button-cancelling">Cancelling...</Trans>
+            ) : (
+              <Trans i18nKey="provisioning.wizard.button-cancel">Cancel</Trans>
+            )}
+          </Button>
+        </Field>
+      </Stack>
+    );
   }
   if (job) {
-    return <JobStatus watch={job} onStatusChange={setStepStatusInfo} jobType="sync" />;
+    return <JobStatus watch={job} onStatusChange={setStepStatusInfo} jobType="sync" onRetry={retryJob} />;
   }
 
   return (
@@ -65,89 +123,41 @@ export function SynchronizeStep({ isLegacyStorage, onCancel, isCancelling }: Syn
           to the repository and provisioned back into the instance.
         </Trans>
       </Text>
-      {repositoryHealthMessages && !isRepositoryHealthy && (
-        <ProvisioningAlert
-          error={{
-            title: t(
-              'provisioning.synchronize-step.repository-unhealthy',
-              'The repository cannot be synchronized. Cancel provisioning and try again once the issue has been resolved. See details below.'
-            ),
-            message: repositoryHealthMessages,
-          }}
-        />
-      )}
-      {isRepositoryHealthy && (
-        <Alert
-          title={t(
-            'provisioning.wizard.alert-title',
-            'Important: No data or configuration will be lost, but dashboards will be temporarily unavailable for a few minutes.'
-          )}
-          severity={'info'}
-        >
-          <ul style={{ marginLeft: '16px' }}>
-            <li>
-              <Trans i18nKey="provisioning.wizard.alert-point-1">
-                Resources won&#39;t be able to be created, edited, or deleted during this process. In the last step,
-                they will disappear.
-              </Trans>
-            </li>
-            <li>
-              <Trans i18nKey="provisioning.wizard.alert-point-2">
-                Once provisioning is complete, resources will reappear and be managed through external storage.
-              </Trans>
-            </li>
-            <li>
-              <Trans i18nKey="provisioning.wizard.alert-point-3">
-                The duration of this process depends on the number of resources involved.
-              </Trans>
-            </li>
-            <li>
-              <Trans i18nKey="provisioning.wizard.alert-point-4">
-                Enterprise instance administrators can display an announcement banner to users. See{' '}
-                <TextLink external href="https://grafana.com/docs/grafana/latest/administration/announcement-banner/">
-                  this guide
-                </TextLink>{' '}
-                for step-by-step instructions.
-              </Trans>
-            </li>
-          </ul>
-        </Alert>
-      )}
-      {supportsHistory && (
+      {isHealthy && <GitSyncLimitationsAlert syncTarget={syncTarget} />}
+      {config.featureToggles.provisioningExport && (
         <>
           <Text element="h3">
-            <Trans i18nKey="provisioning.synchronize-step.synchronization-options">Synchronization options</Trans>
+            <Trans i18nKey="provisioning.synchronize-step.options">Options</Trans>
           </Text>
           <Field noMargin>
             <Checkbox
-              {...register('migrate.history')}
-              id="migrate-history"
-              label={t('provisioning.wizard.sync-option-history', 'History')}
+              {...register('migrate.migrateResources')}
+              id="migrate-resources"
+              label={t('provisioning.wizard.sync-option-migrate-resources', 'Migrate existing resources')}
+              checked={syncTarget === 'instance' ? true : undefined}
+              disabled={syncTarget === 'instance'}
               description={
-                <Trans i18nKey="provisioning.synchronize-step.synchronization-description">
-                  Include commits for each historical value
-                </Trans>
+                syncTarget === 'instance' ? (
+                  <Trans i18nKey="provisioning.synchronize-step.instance-migrate-resources-description">
+                    Instance sync requires all resources to be managed. Existing resources will be migrated
+                    automatically.
+                  </Trans>
+                ) : (
+                  <Trans i18nKey="provisioning.synchronize-step.migrate-resources-description">
+                    Import existing dashboards from connected external storage into the provisioning folder created in
+                    the previous step
+                  </Trans>
+                )
               }
             />
           </Field>
         </>
       )}
-
       <Field noMargin>
-        {isRepositoryHealthy === false ? (
-          <Button variant="destructive" onClick={() => onCancel?.(repoName)} disabled={isCancelling}>
-            {isCancelling ? (
-              <Trans i18nKey="provisioning.wizard.button-cancelling">Cancelling...</Trans>
-            ) : (
-              <Trans i18nKey="provisioning.wizard.button-cancel">Cancel</Trans>
-            )}
-          </Button>
-        ) : (
-          <Button variant="primary" onClick={startSynchronization} disabled={isButtonDisabled}>
-            <Trans i18nKey="provisioning.wizard.button-start">Begin synchronization</Trans>
-          </Button>
-        )}
+        <Button variant="primary" onClick={startSynchronization} disabled={isButtonDisabled}>
+          <Trans i18nKey="provisioning.wizard.button-start">Begin synchronization</Trans>
+        </Button>
       </Field>
     </Stack>
   );
-}
+});

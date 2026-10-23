@@ -1,13 +1,14 @@
-import { LogRowModel } from '@grafana/data';
+import { type LogRowModel } from '@grafana/data';
 
-import { LOG_LINE_BODY_FIELD_NAME } from '../LogDetailsBody';
-import { LogListModel } from '../panel/processing';
+import { LOG_LINE_BODY_FIELD_NAME, OTEL_LOG_LINE_ATTRIBUTES_FIELD_NAME } from '../fieldSelector/logFields';
+import { type LogListModel, NEWLINES_REGEX } from '../panel/processing';
 
 /**
  * The presence of this field along log fields determines OTel origin.
  */
 export const OTEL_PROBE_FIELD = 'severity_number';
-const OTEL_LANGUAGE_UNKNOWN = 'unknown';
+export const OTEL_LANGUAGE_UNKNOWN = 'unknown';
+
 export function identifyOTelLanguages(logs: LogListModel[] | LogRowModel[]): string[] {
   const languagesSet = new Set<string>();
   logs.forEach((log) => {
@@ -28,7 +29,7 @@ export function identifyOTelLanguage(log: LogListModel | LogRowModel): string | 
     : undefined;
 }
 
-export function getDisplayedFieldsForLanguages(logs: LogListModel[] | LogRowModel[], languages: string[]) {
+function getDisplayedFieldsForLanguages(logs: LogListModel[] | LogRowModel[], languages: string[]) {
   const displayedFields: string[] = [];
 
   languages.forEach((language) => {
@@ -41,38 +42,137 @@ export function getDisplayedFieldsForLanguages(logs: LogListModel[] | LogRowMode
   });
 
   return displayedFields.filter(
-    (field) => field === LOG_LINE_BODY_FIELD_NAME || logs.some((log) => log.labels[field] !== undefined)
+    (field) =>
+      field === LOG_LINE_BODY_FIELD_NAME ||
+      field === OTEL_LOG_LINE_ATTRIBUTES_FIELD_NAME ||
+      logs.some((log) => log.labels[field] !== undefined)
   );
 }
 
+/***
+ * Given a list of logs, identify the OTel language for each, use the language to match displayed fields
+ * and return a list of fields to display based on the languages present in the logs.
+ */
 export function getDisplayedFieldsForLogs(logs: LogListModel[] | LogRowModel[]): string[] {
   return getDisplayedFieldsForLanguages(logs, identifyOTelLanguages(logs));
 }
 
 // Languages not implemented.
-export function getDisplayFormatForLanguage(language: string) {
+function getDisplayFormatForLanguage(language: string) {
   return undefined;
 }
 
-export function getDefaultOTelDisplayFormat() {
-  return ['scope_name', 'thread_name', 'exception_type', 'exception_message', LOG_LINE_BODY_FIELD_NAME];
+/***
+ * Given a list of logs, return a list of suggested fields to display for the user.
+ */
+export function getSuggestedFieldsForLogs(logs: LogListModel[] | LogRowModel[]): string[] {
+  const suggestedFields = getSuggestedFieldsForAnyLogs();
+
+  const languages = identifyOTelLanguages(logs);
+  const otelFields = languages.length ? getSuggestedOTelDisplayFormat() : [];
+
+  const fields = [...new Set([...suggestedFields, ...otelFields])];
+
+  const availableLabels = new Set<string>();
+  logs.forEach((log) => {
+    for (const label in log.labels) {
+      availableLabels.add(label.toLowerCase());
+    }
+  });
+
+  return fields.filter(
+    (field) =>
+      field === LOG_LINE_BODY_FIELD_NAME ||
+      field === OTEL_LOG_LINE_ATTRIBUTES_FIELD_NAME ||
+      availableLabels.has(field.toLowerCase())
+  );
+}
+
+function getSuggestedFieldsForAnyLogs() {
+  return [
+    'app',
+    'app_kubernetes_io_name',
+    'body',
+    'cluster',
+    'container',
+    'deployment_environment',
+    'duration',
+    'env',
+    'environment',
+    'err',
+    'error',
+    'error_message',
+    'exception',
+    'exception_message',
+    'exception_stacktrace',
+    'exception_type',
+    'filename',
+    'host',
+    'host_name',
+    'hostname',
+    'instance',
+    'job',
+    'k8s_cluster_name',
+    'k8s_pod_name',
+    'log',
+    'logger',
+    'message',
+    'method',
+    'msg',
+    'name',
+    'namespace',
+    'path',
+    'pod',
+    'scope_name',
+    'service',
+    'service_instance_id',
+    'service_name',
+    'service_namespace',
+    'service_version',
+    'severity_text',
+    'source',
+    'span_id',
+    'stack_trace',
+    'status',
+    'stream',
+    'thread',
+    'thread_name',
+    'trace_id',
+    'traceid',
+  ];
+}
+
+function getSuggestedOTelDisplayFormat() {
+  return ['scope_name', ...getDefaultOTelDisplayFormat()];
+}
+
+function getDefaultOTelDisplayFormat() {
+  return [
+    'thread_name',
+    'exception_type',
+    'exception_message',
+    LOG_LINE_BODY_FIELD_NAME,
+    OTEL_LOG_LINE_ATTRIBUTES_FIELD_NAME,
+  ];
 }
 
 const OTEL_RESOURCE_ATTRS_REGEX =
-  /^(aws_|cloud_|cloudfoundry_|container_|deployment_|faas_|gcp_|host_|k8s_|os_|process_|service_|telemetry_)/;
+  /^(aws_|aws\.|cloud_|cloud\.|cloudfoundry_|cloudfoundry\.|container_|container\.|deployment_|deployment\.|faas_|faas\.|gcp_|gcp\.|host_|host\.|k8s_|k8s\.|os_|os\.|process_|process\.|service_|service\.|telemetry_|telemetry\.|cluster$|cluster\.|namespace$|namespace\.|pod$|pod\.)/;
 const OTEL_LOG_FIELDS_REGEX =
-  /^(flags|observed_timestamp|scope_name|severity_number|severity_text|span_id|trace_id|detected_level)$/;
+  /^(flags|observed_timestamp|observed\.timestamp|severity_number|severity\.number|severity_text|severity\.text|span_id|span\.id|trace_id|trace\.id|detected_level)$/;
 
-export function getOtelFormattedBody(log: LogListModel) {
-  if (!log.otelLanguage) {
-    return log.raw;
-  }
+export function getOtelAttributesField(log: LogListModel, wrapLogMessage: boolean) {
   const additionalFields = Object.keys(log.labels).filter(
-    (label) => !OTEL_RESOURCE_ATTRS_REGEX.test(label) && !OTEL_LOG_FIELDS_REGEX.test(label)
+    (label) =>
+      !OTEL_RESOURCE_ATTRS_REGEX.test(label) &&
+      !OTEL_LOG_FIELDS_REGEX.test(label) &&
+      label !== OTEL_LOG_LINE_ATTRIBUTES_FIELD_NAME
   );
-  return (
-    log.raw +
-    ' ' +
-    additionalFields.map((field) => (log.labels[field] ? `${field}=${log.labels[field]}` : '')).join(' ')
-  );
+  const attributes = additionalFields
+    .map((field) => (log.labels[field] ? `${field}=${log.labels[field]}` : ''))
+    .join(' ');
+  if (!wrapLogMessage) {
+    return attributes.replace(NEWLINES_REGEX, '');
+  }
+  return attributes;
 }

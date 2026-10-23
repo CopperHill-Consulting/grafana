@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"testing"
 	"time"
 
@@ -13,16 +12,13 @@ import (
 	"github.com/prometheus/alertmanager/pkg/labels"
 	"github.com/stretchr/testify/require"
 
-	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
-	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/datasources"
-	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/folder"
-	ac "github.com/grafana/grafana/pkg/services/ngalert/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
+	v1 "github.com/grafana/grafana/pkg/services/ngalert/notifier/legacy_storage/v1"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 )
@@ -32,7 +28,7 @@ var alertRulesPermissions = map[string][]string{
 	accesscontrol.ActionAlertingRuleRead:   {"*"},
 	accesscontrol.ActionAlertingRuleCreate: {"*"},
 	accesscontrol.ActionAlertingRuleUpdate: {"*"},
-	dashboards.ActionFoldersRead:           {"*"},
+	folder.ActionFoldersRead:               {"*"},
 	datasources.ActionQuery:                {"*"},
 }
 
@@ -45,8 +41,7 @@ func TestGetAlertMuteTimings(t *testing.T) {
 	t.Run("it returns the mute timings", func(t *testing.T) {
 		t.Parallel()
 
-		s := setUpServiceTest(t, false).(*Service)
-		s.features = featuremgmt.WithFeatures(featuremgmt.FlagOnPremToCloudMigrations)
+		s := setUpServiceTest(t).(*Service)
 
 		user := &user.SignedInUser{OrgID: 1}
 
@@ -56,7 +51,7 @@ func TestGetAlertMuteTimings(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, muteTimeIntervals)
 		require.Len(t, muteTimeIntervals, 1)
-		require.Equal(t, createdMuteTiming.Name, muteTimeIntervals[0].Name)
+		require.Equal(t, createdMuteTiming.Title, muteTimeIntervals[0].Name)
 	})
 }
 
@@ -69,7 +64,7 @@ func TestGetNotificationTemplates(t *testing.T) {
 	t.Run("it returns the notification templates", func(t *testing.T) {
 		t.Parallel()
 
-		s := setUpServiceTest(t, false).(*Service)
+		s := setUpServiceTest(t).(*Service)
 
 		user := &user.SignedInUser{OrgID: 1}
 
@@ -79,7 +74,7 @@ func TestGetNotificationTemplates(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, notificationTemplates)
 		require.Len(t, notificationTemplates, 1)
-		require.Equal(t, createdTemplate.Name, notificationTemplates[0].Name)
+		require.Equal(t, createdTemplate.Title, notificationTemplates[0].Name)
 	})
 }
 
@@ -92,14 +87,18 @@ func TestGetContactPoints(t *testing.T) {
 	t.Run("it returns the contact points", func(t *testing.T) {
 		t.Parallel()
 
-		s := setUpServiceTest(t, false).(*Service)
+		s := setUpServiceTest(t).(*Service)
 
 		user := &user.SignedInUser{
 			OrgID: 1,
 			Permissions: map[int64]map[string][]string{
 				1: {
-					accesscontrol.ActionAlertingNotificationsRead:    nil,
-					accesscontrol.ActionAlertingReceiversReadSecrets: {ac.ScopeReceiversAll},
+					accesscontrol.ActionAlertingReceiversRead:         {models.ScopeReceiversAll},
+					accesscontrol.ActionAlertingReceiversReadSecrets:  {models.ScopeReceiversAll},
+					accesscontrol.ActionAlertingReceiversCreate:       nil,
+					accesscontrol.ActionAlertingReceiversUpdate:       {models.ScopeReceiversAll},
+					accesscontrol.ActionAlertingReceiversDelete:       {models.ScopeReceiversAll},
+					accesscontrol.ActionAlertingProvisioningSetStatus: nil,
 				},
 			},
 		}
@@ -115,7 +114,7 @@ func TestGetContactPoints(t *testing.T) {
 	t.Run("it returns an error when user lacks permission to read contact point secrets", func(t *testing.T) {
 		t.Parallel()
 
-		s := setUpServiceTest(t, false).(*Service)
+		s := setUpServiceTest(t).(*Service)
 
 		user := &user.SignedInUser{
 			OrgID: 1,
@@ -128,10 +127,7 @@ func TestGetContactPoints(t *testing.T) {
 
 		contactPoints, err := s.getContactPoints(ctx, user)
 		require.Nil(t, contactPoints)
-
-		gfErr := errutil.Error{}
-		require.ErrorAs(t, err, &gfErr)
-		require.Equal(t, http.StatusForbidden, gfErr.Reason.Status().HTTPStatus())
+		require.Contains(t, err.Error(), "alert.notifications.receivers.secrets:read")
 	})
 }
 
@@ -144,17 +140,25 @@ func TestGetNotificationPolicies(t *testing.T) {
 	t.Run("it returns the contact points", func(t *testing.T) {
 		t.Parallel()
 
-		s := setUpServiceTest(t, false).(*Service)
+		s := setUpServiceTest(t).(*Service)
 
-		user := &user.SignedInUser{OrgID: 1}
+		user := &user.SignedInUser{OrgID: 1, Permissions: map[int64]map[string][]string{
+			1: {
+				accesscontrol.ActionAlertingReceiversRead:         {models.ScopeReceiversAll},
+				accesscontrol.ActionAlertingReceiversCreate:       nil,
+				accesscontrol.ActionAlertingReceiversUpdate:       {models.ScopeReceiversAll},
+				accesscontrol.ActionAlertingReceiversDelete:       {models.ScopeReceiversAll},
+				accesscontrol.ActionAlertingProvisioningSetStatus: nil,
+			},
+		}}
 
 		muteTiming := createMuteTiming(t, ctx, s, user)
-		require.NotEmpty(t, muteTiming.Name)
+		require.NotEmpty(t, muteTiming.Title)
 
 		contactPoints := createContactPoints(t, ctx, s, user)
 		require.GreaterOrEqual(t, len(contactPoints), 1)
 
-		updateNotificationPolicyTree(t, ctx, s, user, contactPoints[0].Name, muteTiming.Name)
+		updateNotificationPolicyTree(t, ctx, s, user, contactPoints[0].Name, muteTiming.Title)
 
 		notificationPolicies, err := s.getNotificationPolicies(ctx, user)
 		require.NoError(t, err)
@@ -172,7 +176,7 @@ func TestGetAlertRules(t *testing.T) {
 	t.Run("it returns the alert rules", func(t *testing.T) {
 		t.Parallel()
 
-		s := setUpServiceTest(t, false).(*Service)
+		s := setUpServiceTest(t).(*Service)
 
 		user := &user.SignedInUser{OrgID: 1, Permissions: map[int64]map[string][]string{1: alertRulesPermissions}}
 
@@ -191,7 +195,7 @@ func TestGetAlertRules(t *testing.T) {
 			c.CloudMigration.AlertRulesState = setting.GMSAlertRulesPaused
 		}
 
-		s := setUpServiceTest(t, false, alertRulesState).(*Service)
+		s := setUpServiceTest(t, alertRulesState).(*Service)
 
 		user := &user.SignedInUser{OrgID: 1, Permissions: map[int64]map[string][]string{1: alertRulesPermissions}}
 
@@ -218,7 +222,7 @@ func TestGetAlertRuleGroups(t *testing.T) {
 	t.Run("it returns the alert rule groups", func(t *testing.T) {
 		t.Parallel()
 
-		s := setUpServiceTest(t, false).(*Service)
+		s := setUpServiceTest(t).(*Service)
 
 		user := &user.SignedInUser{OrgID: 1, Permissions: map[int64]map[string][]string{1: alertRulesPermissions}}
 
@@ -257,7 +261,7 @@ func TestGetAlertRuleGroups(t *testing.T) {
 			c.CloudMigration.AlertRulesState = setting.GMSAlertRulesPaused
 		}
 
-		s := setUpServiceTest(t, false, alertRulesState).(*Service)
+		s := setUpServiceTest(t, alertRulesState).(*Service)
 
 		user := &user.SignedInUser{OrgID: 1, Permissions: map[int64]map[string][]string{1: alertRulesPermissions}}
 
@@ -292,7 +296,7 @@ func TestGetAlertRuleGroups(t *testing.T) {
 	})
 }
 
-func createMuteTiming(t *testing.T, ctx context.Context, service *Service, user *user.SignedInUser) definitions.MuteTimeInterval {
+func createMuteTiming(t *testing.T, ctx context.Context, service *Service, user *user.SignedInUser) v1.TimeInterval {
 	t.Helper()
 
 	muteTiming := `{
@@ -312,18 +316,19 @@ func createMuteTiming(t *testing.T, ctx context.Context, service *Service, user 
 	var mt definitions.MuteTimeInterval
 	require.NoError(t, json.Unmarshal([]byte(muteTiming), &mt))
 
-	createdTiming, err := service.ngAlert.Api.MuteTimings.CreateMuteTiming(ctx, mt, user.GetOrgID())
+	interval := v1.NewTimeInterval(mt.Name, mt.TimeIntervals, models.ProvenanceNone)
+	createdTiming, err := service.ngAlert.Api.MuteTimings.CreateMuteTiming(ctx, interval, user.GetOrgID())
 	require.NoError(t, err)
 
 	return createdTiming
 }
 
-func createNotificationTemplate(t *testing.T, ctx context.Context, service *Service, user *user.SignedInUser) definitions.NotificationTemplate {
+func createNotificationTemplate(t *testing.T, ctx context.Context, service *Service, user *user.SignedInUser) v1.TemplateGroup {
 	t.Helper()
 
-	tmpl := definitions.NotificationTemplate{
-		Name:     "MyTestNotificationTemplate",
-		Template: "This is a test template\n{{ .ExternalURL }}",
+	tmpl := v1.TemplateGroup{
+		Title:   "MyTestNotificationTemplate",
+		Content: "This is a test template\n{{ .ExternalURL }}",
 	}
 
 	createdTemplate, err := service.ngAlert.Api.Templates.CreateTemplate(ctx, user.GetOrgID(), tmpl)
@@ -436,7 +441,7 @@ func createAlertRule(t *testing.T, ctx context.Context, service *Service, user *
 		ExecErrState:    models.OkErrState,
 	}
 
-	createdRule, err := service.ngAlert.Api.AlertRules.CreateAlertRule(ctx, user, rule, "")
+	createdRule, err := service.ngAlert.Api.AlertRules.CreateAlertRule(ctx, user, rule, models.ProvenanceToManagerProperties(models.ProvenanceNone))
 	require.NoError(t, err)
 
 	return createdRule
@@ -450,7 +455,7 @@ func createFolder(t *testing.T, ctx context.Context, service *Service, user *use
 		Title:        title,
 		SignedInUser: user,
 	})
-	if err != nil && !errors.Is(err, dashboards.ErrFolderWithSameUIDExists) {
+	if err != nil && !errors.Is(err, folder.ErrSameUIDExists) {
 		require.NoError(t, err)
 	}
 }
@@ -465,7 +470,7 @@ func createAlertRuleGroup(t *testing.T, ctx context.Context, service *Service, u
 		Rules:     rules,
 	}
 
-	err := service.ngAlert.Api.AlertRules.ReplaceRuleGroup(ctx, user, group, "")
+	err := service.ngAlert.Api.AlertRules.ReplaceRuleGroup(ctx, user, group, models.ProvenanceToManagerProperties(models.ProvenanceNone), "")
 	require.NoError(t, err)
 
 	return group

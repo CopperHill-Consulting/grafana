@@ -1,7 +1,14 @@
 import { css } from '@emotion/css';
-import { useMemo } from 'react';
+import { type ReactNode, useMemo } from 'react';
 
-import { ActionModel, Field, GrafanaTheme2, LinkModel, ThemeSpacingTokens } from '@grafana/data';
+import {
+  type ActionModel,
+  type Field,
+  type GrafanaTheme2,
+  type LinkModel,
+  type ThemeSpacingTokens,
+} from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { Trans } from '@grafana/i18n';
 
 import { useStyles2 } from '../../themes/ThemeContext';
@@ -10,21 +17,37 @@ import { Button } from '../Button/Button';
 import { DataLinkButton } from '../DataLinks/DataLinkButton';
 import { Icon } from '../Icon/Icon';
 import { Stack } from '../Layout/Stack/Stack';
-import { ResponsiveProp } from '../Layout/utils/responsiveness';
-import { AdHocFilterItem } from '../Table/TableNG/types';
+import { type ResponsiveProp } from '../Layout/utils/responsiveness';
+import { type AdHocFilterItem } from '../Table/TableNG/types';
 
+/** @alpha */
 export interface AdHocFilterModel extends AdHocFilterItem {
   onClick: () => void;
 }
 
-interface VizTooltipFooterProps {
-  dataLinks: Array<LinkModel<Field>>;
-  actions?: Array<ActionModel<Field>>;
-  adHocFilters?: AdHocFilterModel[];
-  annotate?: () => void;
+/** @alpha */
+export interface FilterByGroupedLabelsModel {
+  onFilterForGroupedLabels?: () => void;
+  onFilterOutGroupedLabels?: () => void;
 }
 
-export const ADD_ANNOTATION_ID = 'add-annotation-button';
+/** @alpha */
+export interface VizTooltipFooterProps {
+  /** Data links to render as clickable buttons. Defaults to an empty array. */
+  dataLinks?: Array<LinkModel<Field>>;
+  /** Actions to render as clickable buttons. */
+  actions?: Array<ActionModel<Field>>;
+  /** Ad hoc filter buttons, typically used to filter dashboards by a label/value pair. */
+  adHocFilters?: AdHocFilterModel[];
+  /** Controls rendering of grouped label filter buttons (filter for / filter out). */
+  filterByGroupedLabels?: FilterByGroupedLabelsModel;
+  /** Callback to open the annotation editor for the hovered point. */
+  annotate?: () => void;
+  /** Content rendered at the end of the footer. */
+  additionalContent?: ReactNode;
+}
+
+const ADD_ANNOTATION_ID = 'add-annotation-button';
 
 type RenderOneClickTrans = (title: string) => React.ReactNode;
 type RenderItem<T extends LinkModel | ActionModel> = (
@@ -85,7 +108,15 @@ const renderActions = makeRenderLinksOrActions<ActionModel>(
   (item, i) => <ActionButton key={i} action={item} variant="secondary" />
 );
 
-export const VizTooltipFooter = ({ dataLinks, actions = [], annotate, adHocFilters = [] }: VizTooltipFooterProps) => {
+/** @alpha */
+export const VizTooltipFooter = ({
+  dataLinks = [],
+  actions = [],
+  annotate,
+  adHocFilters = [],
+  filterByGroupedLabels,
+  additionalContent,
+}: VizTooltipFooterProps) => {
   const styles = useStyles2(getStyles);
   const hasOneClickLink = useMemo(() => dataLinks.some((link) => link.oneClick === true), [dataLinks]);
   const hasOneClickAction = useMemo(() => actions.some((action) => action.oneClick === true), [actions]);
@@ -99,10 +130,37 @@ export const VizTooltipFooter = ({ dataLinks, actions = [], annotate, adHocFilte
           {adHocFilters.map((item, index) => (
             <Button key={index} icon="filter" variant="secondary" size="sm" onClick={item.onClick}>
               <Trans i18nKey="grafana-ui.viz-tooltip.footer-filter-for-value">
-                Filter for '{{ value: item.value }}'
+                Filter for &apos;{{ value: item.value }}&apos;
               </Trans>
             </Button>
           ))}
+        </div>
+      )}
+
+      {!hasOneClickLink && !hasOneClickAction && filterByGroupedLabels && (
+        <div className={styles.footerSection}>
+          <Stack direction="column" gap={0.5} width="fit-content">
+            <Button
+              icon="filter"
+              variant="secondary"
+              size="sm"
+              onClick={filterByGroupedLabels.onFilterForGroupedLabels}
+              data-testid={selectors.components.VizTooltipFooter.buttons.apply}
+            >
+              <Trans i18nKey="grafana-ui.viz-tooltip.footer-apply-series-as-filter">Filter on this value</Trans>
+            </Button>
+            <Button
+              icon="filter"
+              variant="secondary"
+              size="sm"
+              onClick={filterByGroupedLabels.onFilterOutGroupedLabels}
+              data-testid={selectors.components.VizTooltipFooter.buttons.applyInverse}
+            >
+              <Trans i18nKey="grafana-ui.viz-tooltip.footer-apply-series-as-inverse-filter">
+                Filter out this value
+              </Trans>
+            </Button>
+          </Stack>
         </div>
       )}
       {!hasOneClickLink && !hasOneClickAction && annotate != null && (
@@ -112,6 +170,7 @@ export const VizTooltipFooter = ({ dataLinks, actions = [], annotate, adHocFilte
           </Button>
         </div>
       )}
+      {additionalContent}
     </div>
   );
 };

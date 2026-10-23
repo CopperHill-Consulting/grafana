@@ -2,18 +2,10 @@ const cloudwatchPlugin = async () =>
   await import(/* webpackChunkName: "cloudwatchPlugin" */ 'app/plugins/datasource/cloudwatch/module');
 const dashboardDSPlugin = async () =>
   await import(/* webpackChunkName "dashboardDSPlugin" */ 'app/plugins/datasource/dashboard/module');
-const elasticsearchPlugin = async () =>
-  await import(/* webpackChunkName: "elasticsearchPlugin" */ 'app/plugins/datasource/elasticsearch/module');
-const opentsdbPlugin = async () =>
-  await import(/* webpackChunkName: "opentsdbPlugin" */ 'app/plugins/datasource/opentsdb/module');
 const grafanaPlugin = async () =>
   await import(/* webpackChunkName: "grafanaPlugin" */ 'app/plugins/datasource/grafana/module');
-const influxdbPlugin = async () =>
-  await import(/* webpackChunkName: "influxdbPlugin" */ 'app/plugins/datasource/influxdb/module');
 const mixedPlugin = async () =>
   await import(/* webpackChunkName: "mixedPlugin" */ 'app/plugins/datasource/mixed/module');
-const prometheusPlugin = async () =>
-  await import(/* webpackChunkName: "prometheusPlugin" */ 'app/plugins/datasource/prometheus/module');
 const alertmanagerPlugin = async () =>
   await import(/* webpackChunkName: "alertmanagerPlugin" */ 'app/plugins/datasource/alertmanager/module');
 
@@ -30,8 +22,6 @@ const candlestickPanel = async () =>
   await import(/* webpackChunkName: "candlestickPanel" */ 'app/plugins/panel/candlestick/module');
 const dashListPanel = async () =>
   await import(/* webpackChunkName: "dashListPanel" */ 'app/plugins/panel/dashlist/module');
-const dataGridPanel = async () =>
-  await import(/* webpackChunkName: "dataGridPanel" */ 'app/plugins/panel/datagrid/module');
 const debugPanel = async () => await import(/* webpackChunkName: "debugPanel" */ 'app/plugins/panel/debug/module');
 const flamegraphPanel = async () =>
   await import(/* webpackChunkName: "flamegraphPanel" */ 'app/plugins/panel/flamegraph/module');
@@ -42,6 +32,8 @@ const histogramPanel = async () =>
   await import(/* webpackChunkName: "histogramPanel" */ 'app/plugins/panel/histogram/module');
 const livePanel = async () => await import(/* webpackChunkName: "livePanel" */ 'app/plugins/panel/live/module');
 const logsPanel = async () => await import(/* webpackChunkName: "logsPanel" */ 'app/plugins/panel/logs/module');
+const logsTablePanel = async () =>
+  await import(/* webpackChunkName: "logsTablePanel" */ 'app/plugins/panel/logstable/module');
 const newsPanel = async () => await import(/* webpackChunkName: "newsPanel" */ 'app/plugins/panel/news/module');
 const pieChartPanel = async () =>
   await import(/* webpackChunkName: "pieChartPanel" */ 'app/plugins/panel/piechart/module');
@@ -72,12 +64,8 @@ const builtInPlugins: Record<string, System.Module | (() => Promise<System.Modul
   // datasources
   'core:plugin/cloudwatch': cloudwatchPlugin,
   'core:plugin/dashboard': dashboardDSPlugin,
-  'core:plugin/elasticsearch': elasticsearchPlugin,
-  'core:plugin/opentsdb': opentsdbPlugin,
   'core:plugin/grafana': grafanaPlugin,
-  'core:plugin/influxdb': influxdbPlugin,
   'core:plugin/mixed': mixedPlugin,
-  'core:plugin/prometheus': prometheusPlugin,
   'core:plugin/alertmanager': alertmanagerPlugin,
   // panels
   'core:plugin/text': textPanel,
@@ -97,7 +85,6 @@ const builtInPlugins: Record<string, System.Module | (() => Promise<System.Modul
   'core:plugin/news': newsPanel,
   'core:plugin/live': livePanel,
   'core:plugin/stat': statPanel,
-  'core:plugin/datagrid': dataGridPanel,
   'core:plugin/debug': debugPanel,
   'core:plugin/flamegraph': flamegraphPanel,
   'core:plugin/gettingstarted': gettingStartedPanel,
@@ -106,10 +93,15 @@ const builtInPlugins: Record<string, System.Module | (() => Promise<System.Modul
   'core:plugin/bargauge': barGaugePanel,
   'core:plugin/barchart': barChartPanel,
   'core:plugin/logs': logsPanel,
+  'core:plugin/logstable': logsTablePanel,
   'core:plugin/traces': tracesPanel,
   'core:plugin/welcome': welcomeBanner,
   'core:plugin/nodeGraph': nodeGraph,
   'core:plugin/histogram': histogramPanel,
 };
+
+export function isBuiltinPluginPath(path: string): path is keyof typeof builtInPlugins {
+  return Boolean(builtInPlugins[path]);
+}
 
 export default builtInPlugins;

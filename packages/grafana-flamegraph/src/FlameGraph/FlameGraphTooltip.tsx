@@ -1,9 +1,9 @@
 import { css } from '@emotion/css';
 
-import { DisplayValue, getValueFormat, GrafanaTheme2 } from '@grafana/data';
+import { type DisplayValue, getValueFormat, type GrafanaTheme2, type ValueFormatter } from '@grafana/data';
 import { InteractiveTable, Portal, useStyles2, VizTooltipContainer } from '@grafana/ui';
 
-import { CollapseConfig, FlameGraphDataContainer, LevelItem } from './dataTransform';
+import { type CollapseConfig, type FlameGraphDataContainer, type LevelItem } from './dataTransform';
 
 type Props = {
   data: FlameGraphDataContainer;
@@ -122,6 +122,11 @@ type DiffTableData = {
   diff: string | number;
 };
 
+const formatWithSuffix = (value: number, formatter: ValueFormatter): string => {
+  const displayValue = formatter(value);
+  return displayValue.text + displayValue.suffix;
+};
+
 export const getDiffTooltipData = (
   data: FlameGraphDataContainer,
   item: LevelItem,
@@ -130,15 +135,17 @@ export const getDiffTooltipData = (
   const levels = data.getLevels();
   const totalTicksRight = levels[0][0].valueRight!;
   const totalTicksLeft = totalTicks - totalTicksRight;
-  const valueLeft = item.value - item.valueRight!;
+  // Guard against missing valueRight (e.g. a merged sandwich-view node) so we show 0 instead of NaN/undefined.
+  const itemValueRight = item.valueRight ?? 0;
+  const valueLeft = item.value - itemValueRight;
 
   const percentageLeft = Math.round((10000 * valueLeft) / totalTicksLeft) / 100;
-  const percentageRight = Math.round((10000 * item.valueRight!) / totalTicksRight) / 100;
+  const percentageRight = Math.round((10000 * itemValueRight) / totalTicksRight) / 100;
 
   const diff = ((percentageRight - percentageLeft) / percentageLeft) * 100;
 
   const displayValueLeft = getValueWithUnit(data, data.valueDisplayProcessor(valueLeft));
-  const displayValueRight = getValueWithUnit(data, data.valueDisplayProcessor(item.valueRight!));
+  const displayValueRight = getValueWithUnit(data, data.valueDisplayProcessor(itemValueRight));
 
   const shortValFormat = getValueFormat('short');
 
@@ -148,21 +155,21 @@ export const getDiffTooltipData = (
       label: '% of total',
       baseline: percentageLeft + '%',
       comparison: percentageRight + '%',
-      diff: shortValFormat(diff).text + '%',
+      diff: formatWithSuffix(diff, shortValFormat) + '%',
     },
     {
       rowId: '2',
       label: 'Value',
       baseline: displayValueLeft,
       comparison: displayValueRight,
-      diff: getValueWithUnit(data, data.valueDisplayProcessor(item.valueRight! - valueLeft)),
+      diff: getValueWithUnit(data, data.valueDisplayProcessor(itemValueRight - valueLeft)),
     },
     {
       rowId: '3',
       label: 'Samples',
-      baseline: shortValFormat(valueLeft).text,
-      comparison: shortValFormat(item.valueRight!).text,
-      diff: shortValFormat(item.valueRight! - valueLeft).text,
+      baseline: formatWithSuffix(valueLeft, shortValFormat),
+      comparison: formatWithSuffix(itemValueRight, shortValFormat),
+      diff: formatWithSuffix(itemValueRight - valueLeft, shortValFormat),
     },
   ];
 };

@@ -1,18 +1,18 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { Provider } from 'react-redux';
 
-import { PluginExtensionPoints, PluginExtensionTypes } from '@grafana/data';
+import { type ExplorePanelsState, PluginExtensionPoints, PluginExtensionTypes } from '@grafana/data';
 import { usePluginLinks } from '@grafana/runtime';
-import { DataQuery } from '@grafana/schema';
+import { type DataQuery, LogsSortOrder } from '@grafana/schema';
 import { contextSrv } from 'app/core/services/context_srv';
 import { configureStore } from 'app/store/configureStore';
-import { ExplorePanelData, ExploreState } from 'app/types/explore';
+import { type ExplorePanelData, type ExploreState } from 'app/types/explore';
 
 import { createEmptyQueryResponse } from '../state/utils';
 
-import { ToolbarExtensionPoint } from './ToolbarExtensionPoint';
+import { type PluginExtensionExploreContext, ToolbarExtensionPoint } from './ToolbarExtensionPoint';
 
 jest.mock('@grafana/runtime', () => ({
   ...jest.requireActual('@grafana/runtime'),
@@ -27,13 +27,14 @@ const usePluginLinksMock = jest.mocked(usePluginLinks);
 type storeOptions = {
   targets: DataQuery[];
   data: ExplorePanelData;
+  panelsState?: ExplorePanelsState;
 };
 
 function renderWithExploreStore(
   children: ReactNode,
   options: storeOptions = { targets: [{ refId: 'A' }], data: createEmptyQueryResponse() }
 ) {
-  const { targets, data } = options;
+  const { targets, data, panelsState } = options;
   const store = configureStore({
     explore: {
       panes: {
@@ -43,6 +44,7 @@ function renderWithExploreStore(
           range: {
             raw: { from: 'now-1h', to: 'now' },
           },
+          panelsState,
         },
       },
     } as unknown as ExploreState,
@@ -66,6 +68,7 @@ function setupToolbarExtensionPoint(
 describe('ToolbarExtensionPoint', () => {
   describe('with extension points', () => {
     beforeAll(() => {
+      contextSrvMock.hasPermission.mockReturnValue(false);
       usePluginLinksMock.mockReturnValue({
         links: [
           {
@@ -88,6 +91,9 @@ describe('ToolbarExtensionPoint', () => {
         ],
         isLoading: false,
       });
+    });
+    beforeEach(() => {
+      jest.mocked(usePluginLinksMock).mockClear();
     });
 
     it('should render "Add" extension point menu button', () => {
@@ -179,10 +185,48 @@ describe('ToolbarExtensionPoint', () => {
 
       expect(extensionPointId).toBe(PluginExtensionPoints.ExploreToolbarAction);
     });
+
+    it('should pass panelsState to the extensions', async () => {
+      const panelsState: ExplorePanelsState = {
+        logs: { sortOrder: LogsSortOrder.Ascending, displayedFields: ['time', 'body'] },
+      };
+      const targets = [{ refId: 'A' }];
+      const data = createEmptyQueryResponse();
+      renderWithExploreStore(setupToolbarExtensionPoint(), { targets, data, panelsState });
+
+      const [options] = usePluginLinksMock.mock.calls[0];
+      const { context } = options;
+
+      expect(context).toHaveProperty('panelsState', panelsState);
+    });
+
+    it('types the extension context with `panelsState` (guards against the `panelsSate` typo)', () => {
+      const panelsState: ExplorePanelsState = {
+        logs: { sortOrder: LogsSortOrder.Ascending, displayedFields: ['time', 'body'] },
+      };
+
+      // Compile-time regression guard (2026-07-02 DataPro code audit, finding #28): assigning a
+      // fresh object literal to `PluginExtensionExploreContext` triggers excess-property checking,
+      // so if the field regresses to the misspelled `panelsSate`, `panelsState` becomes an unknown
+      // property and `yarn typecheck` fails. Extension authors read `context.panelsState`, so the
+      // type must expose it under that name.
+      const context: PluginExtensionExploreContext = {
+        exploreId: 'left',
+        targets: [{ refId: 'A' }],
+        data: createEmptyQueryResponse(),
+        timeRange: { from: 'now-1h', to: 'now' },
+        timeZone: 'browser',
+        shouldShowAddCorrelation: false,
+        panelsState,
+      };
+
+      expect(context.panelsState).toBe(panelsState);
+    });
   });
 
   describe('with extension points without categories', () => {
     beforeAll(() => {
+      contextSrvMock.hasPermission.mockReturnValue(false);
       usePluginLinksMock.mockReturnValue({
         links: [
           {
@@ -257,6 +301,7 @@ describe('ToolbarExtensionPoint', () => {
 
   describe('with multiple queryless apps links', () => {
     beforeAll(() => {
+      contextSrvMock.hasPermission.mockReturnValue(false);
       usePluginLinksMock.mockReturnValue({
         links: [
           {
@@ -323,6 +368,7 @@ describe('ToolbarExtensionPoint', () => {
 
   describe('with single queryless apps link', () => {
     beforeAll(() => {
+      contextSrvMock.hasPermission.mockReturnValue(false);
       usePluginLinksMock.mockReturnValue({
         links: [
           {

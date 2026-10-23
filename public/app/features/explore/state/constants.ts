@@ -1,5 +1,4 @@
-import { v4 as uuidv4 } from 'uuid';
-
+import { type TraceSearchProps, generateUUID } from '@grafana/data';
 import { config } from '@grafana/runtime';
 
 export const DEFAULT_RANGE = {
@@ -7,19 +6,20 @@ export const DEFAULT_RANGE = {
   to: 'now',
 };
 
-export const randomId = () => uuidv4().slice(0, 12);
+export const randomId = () => generateUUID().slice(0, 12);
 
 export const DEFAULT_TAG_FILTERS = {
   id: randomId(),
   operator: '=',
 };
 
-export const DEFAULT_SPAN_FILTERS = {
+export const DEFAULT_SPAN_FILTERS: TraceSearchProps = {
   spanNameOperator: '=',
   serviceNameOperator: '=',
   fromOperator: '>',
   toOperator: '<',
   tags: [DEFAULT_TAG_FILTERS],
+  adhocFilters: [],
   matchesOnly: false,
   criticalPathOnly: false,
 };

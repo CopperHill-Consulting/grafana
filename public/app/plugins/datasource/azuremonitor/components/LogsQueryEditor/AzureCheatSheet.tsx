@@ -1,7 +1,7 @@
 import { css } from '@emotion/css';
 import { useEffect, useMemo, useState } from 'react';
 
-import { GrafanaTheme2, SelectableValue } from '@grafana/data';
+import { type GrafanaTheme2, type SelectableValue } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
 import { reportInteraction } from '@grafana/runtime';
 import {
@@ -13,17 +13,24 @@ import {
   LoadingPlaceholder,
   ScrollContainer,
   Select,
+  Stack,
   useStyles2,
 } from '@grafana/ui';
 
-import AzureLogAnalyticsDatasource from '../../azure_log_analytics/azure_log_analytics_datasource';
-import { AzureMonitorQuery, AzureQueryType } from '../../types/query';
-import { Category, CheatsheetQueries, CheatsheetQuery, DropdownCategories } from '../../types/types';
+import type AzureLogAnalyticsDatasource from '../../azure_log_analytics/azure_log_analytics_datasource';
+import { AzureQueryType } from '../../dataquery.gen';
+import { type AzureMonitorQuery } from '../../types/query';
+import {
+  type Category,
+  type CheatsheetQueries,
+  type CheatsheetQuery,
+  type DropdownCategories,
+} from '../../types/types';
 
 import { RawQuery } from './RawQuery';
 import tokenizer from './syntax';
 
-export interface AzureCheatSheetProps {
+interface AzureCheatSheetProps {
   onChange: (query: AzureMonitorQuery) => void;
   query: AzureMonitorQuery;
   datasource: AzureLogAnalyticsDatasource;
@@ -185,55 +192,56 @@ const AzureCheatSheet = (props: AzureCheatSheetProps) => {
                 return (
                   <Collapse
                     label={category + ' ' + `(${visibleQueries[category]!.length})`}
-                    collapsible={true}
                     isOpen={areDropdownsOpen[category]}
                     onToggle={(isOpen) => setAreDropdownsOpen({ ...areDropdownsOpen, [category]: isOpen })}
                     key={category}
                   >
-                    {visibleQueries[category]!.map((query) => {
-                      return (
-                        <Card className={styles.card} key={query.id}>
-                          <Card.Heading>{query.displayName}</Card.Heading>
-                          <ScrollContainer showScrollIndicators maxHeight="100px">
-                            <RawQuery
-                              aria-label={t(
-                                'components.azure-cheat-sheet.aria-label-raw-query',
-                                '{{queryDisplayName}} raw query',
-                                { queryDisplayName: query.displayName }
-                              )}
-                              query={query.body}
-                              lang={lang}
-                              className={styles.rawQuery}
-                            />
-                          </ScrollContainer>
-                          <Card.Actions>
-                            <Button
-                              size="sm"
-                              aria-label={t(
-                                'components.azure-cheat-sheet.aria-label-use-query',
-                                'Use this query button'
-                              )}
-                              onClick={() => {
-                                props.onChange({
-                                  refId: 'A',
-                                  queryType: AzureQueryType.LogAnalytics,
-                                  azureLogAnalytics: { query: query.body },
-                                  datasource: props.datasource,
-                                });
-                                reportInteraction('grafana_azure_cheatsheet_logs_query_selected', {
-                                  id: query.id,
-                                  queryName: query.displayName,
-                                  query: query.body,
-                                  queryCategories: query.related.categories,
-                                });
-                              }}
-                            >
-                              <Trans i18nKey="components.azure-cheat-sheet.button-use-query">Use this query</Trans>
-                            </Button>
-                          </Card.Actions>
-                        </Card>
-                      );
-                    })}
+                    <Stack direction="column">
+                      {visibleQueries[category]!.map((query) => {
+                        return (
+                          <Card noMargin className={styles.card} key={query.id}>
+                            <Card.Heading>{query.displayName}</Card.Heading>
+                            <ScrollContainer showScrollIndicators maxHeight="100px">
+                              <RawQuery
+                                aria-label={t(
+                                  'components.azure-cheat-sheet.aria-label-raw-query',
+                                  '{{queryDisplayName}} raw query',
+                                  { queryDisplayName: query.displayName }
+                                )}
+                                query={query.body}
+                                lang={lang}
+                                className={styles.rawQuery}
+                              />
+                            </ScrollContainer>
+                            <Card.Actions>
+                              <Button
+                                size="sm"
+                                aria-label={t(
+                                  'components.azure-cheat-sheet.aria-label-use-query',
+                                  'Use this query button'
+                                )}
+                                onClick={() => {
+                                  props.onChange({
+                                    refId: 'A',
+                                    queryType: AzureQueryType.LogAnalytics,
+                                    azureLogAnalytics: { query: query.body },
+                                    datasource: props.datasource,
+                                  });
+                                  reportInteraction('grafana_azure_cheatsheet_logs_query_selected', {
+                                    id: query.id,
+                                    queryName: query.displayName,
+                                    query: query.body,
+                                    queryCategories: query.related.categories,
+                                  });
+                                }}
+                              >
+                                <Trans i18nKey="components.azure-cheat-sheet.button-use-query">Use this query</Trans>
+                              </Button>
+                            </Card.Actions>
+                          </Card>
+                        );
+                      })}
+                    </Stack>
                   </Collapse>
                 );
               }
@@ -253,9 +261,14 @@ export default AzureCheatSheet;
 const getStyles = (theme: GrafanaTheme2) => {
   return {
     card: css({
+      background: theme.colors.background.secondary,
       width: '90%',
       display: 'flex',
       flexDirection: 'column',
+
+      '&:hover': {
+        background: theme.colors.emphasize(theme.colors.background.secondary, 0.03),
+      },
     }),
     rawQuery: css({
       backgroundColor: `${theme.colors.background.primary}`,

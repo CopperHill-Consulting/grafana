@@ -1,14 +1,24 @@
-import { CSSProperties, ReactElement, useMemo, useState, useRef, useEffect, memo, RefObject } from 'react';
-import { DataGridHandle } from 'react-data-grid';
+import {
+  type CSSProperties,
+  type ReactElement,
+  useMemo,
+  useState,
+  useRef,
+  useEffect,
+  memo,
+  type RefObject,
+} from 'react';
 
-import { ActionModel, DataFrame, Field, GrafanaTheme2 } from '@grafana/data';
+import { type ActionModel, type DataFrame, type Field, type GrafanaTheme2 } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
-import { TableCellTooltipPlacement } from '@grafana/schema';
+import { t } from '@grafana/i18n';
+import { type DataGridHandle } from '@grafana/react-data-grid';
+import { type TableCellTooltipPlacement } from '@grafana/schema';
 
 import { Popover } from '../../../Tooltip/Popover';
-import { TableCellOptions } from '../../types';
-import { getTooltipStyles } from '../styles';
-import { TableCellRenderer, TableCellRendererProps } from '../types';
+import { type TableCellOptions } from '../../types';
+import { type getTooltipStyles } from '../styles';
+import { type TableCellRenderer, type TableCellRendererProps } from '../types';
 
 export interface TableCellTooltipProps {
   cellOptions: TableCellOptions;
@@ -20,13 +30,12 @@ export interface TableCellTooltipProps {
   field: Field;
   getActions: (field: Field, rowIdx: number) => ActionModel[];
   getTextColorForBackground: (bgColor: string) => string;
-  gridRef: RefObject<DataGridHandle>;
+  gridRef: RefObject<DataGridHandle | null>;
   height: number;
   placement?: TableCellTooltipPlacement;
   renderer: TableCellRenderer;
   rowIdx: number;
   style?: CSSProperties;
-  tooltipField: Field;
   theme: GrafanaTheme2;
   width?: number;
 }
@@ -49,7 +58,6 @@ export const TableCellTooltip = memo(
     rowIdx,
     style,
     theme,
-    tooltipField,
     width = 300,
   }: TableCellTooltipProps) => {
     const rawValue = field.values[rowIdx];
@@ -59,7 +67,6 @@ export const TableCellTooltip = memo(
     const [pinned, setPinned] = useState(false);
 
     const show = hovered || pinned;
-    const dynamicHeight = tooltipField.config.custom?.cellOptions?.dynamicHeight;
 
     useEffect(() => {
       if (pinned) {
@@ -144,7 +151,7 @@ export const TableCellTooltip = memo(
             placement={placement}
             wrapperClassName={classes.tooltipWrapper}
             className={className}
-            style={{ ...style, width, ...(!dynamicHeight && { height }) }}
+            style={{ ...style, width }}
             referenceElement={cellElement}
             onMouseLeave={onMouseLeave}
             onMouseEnter={onMouseEnter}
@@ -153,16 +160,25 @@ export const TableCellTooltip = memo(
           />
         )}
 
-        {/* TODO: figure out an accessible way to trigger the tooltip. */}
-        {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
         <div
           className={classes.tooltipCaret}
           ref={tooltipCaretRef}
           data-testid={selectors.components.Panels.Visualization.TableNG.Tooltip.Caret}
+          aria-label={t('grafana-ui.table.tooltip.trigger', 'Toggle tooltip')}
+          role="button"
+          aria-haspopup="true"
           aria-pressed={pinned}
+          tabIndex={0}
           onClick={() => setPinned((prev) => !prev)}
           onMouseLeave={onMouseLeave}
           onMouseEnter={onMouseEnter}
+          onKeyDown={(ev) => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault();
+              ev.stopPropagation();
+              setPinned((prev) => !prev);
+            }
+          }}
           onBlur={onMouseLeave}
           onFocus={onMouseEnter}
         />

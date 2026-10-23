@@ -1,25 +1,18 @@
 import { configureStore as reduxConfigureStore, createListenerMiddleware } from '@reduxjs/toolkit';
 import { setupListeners } from '@reduxjs/toolkit/query';
-import { Middleware } from 'redux';
+import { type Middleware } from 'redux';
 
-import { alertingAPI as alertingPackageAPI } from '@grafana/alerting/unstable';
-import { dashboardAPIv0alpha1 } from 'app/api/clients/dashboard/v0alpha1';
-import { preferencesAPIv1alpha1 } from 'app/api/clients/preferences/v1alpha1';
-import { rulesAPIv0alpha1 } from 'app/api/clients/rules/v0alpha1';
-import { shortURLAPIv1alpha1 } from 'app/api/clients/shorturl/v1alpha1';
+import { generatedAPI as migrateToCloudAPI } from '@grafana/api-clients/internal/rtkq/legacy/migrate-to-cloud';
+import { generatedAPI as preferencesUserAPI } from '@grafana/api-clients/internal/rtkq/legacy/preferences/user';
+import { generatedAPI as legacyUserAPI } from '@grafana/api-clients/internal/rtkq/legacy/user';
+import { allMiddleware as allApiClientMiddleware } from '@grafana/api-clients/rtkq';
+import { generatedAPI as preferencesAPI, type Preferences } from '@grafana/api-clients/rtkq/preferences/v1';
+import { legacyAPI } from 'app/api/clients/legacy';
+import { scopeAPIv0alpha1 } from 'app/api/clients/scope/v0alpha1';
 import { browseDashboardsAPI } from 'app/features/browse-dashboards/api/browseDashboardsAPI';
 import { publicDashboardApi } from 'app/features/dashboard/api/publicDashboardApi';
-import { cloudMigrationAPI } from 'app/features/migrate-to-cloud/api';
-import { userPreferencesAPI } from 'app/features/preferences/api';
-import { StoreState } from 'app/types/store';
+import { type StoreState } from 'app/types/store';
 
-import { advisorAPIv0alpha1 } from '../api/clients/advisor/v0alpha1';
-import { folderAPIv1beta1 } from '../api/clients/folder/v1beta1';
-import { iamAPIv0alpha1 } from '../api/clients/iam/v0alpha1';
-import { playlistAPIv0alpha1 } from '../api/clients/playlist/v0alpha1';
-import { provisioningAPIv0alpha1 } from '../api/clients/provisioning/v0alpha1';
-// Used by the API client generator
-// PLOP_INJECT_IMPORT
 import { buildInitialState } from '../core/reducers/navModel';
 import { addReducer, createRootReducer } from '../core/reducers/root';
 import { alertingApi } from '../features/alerting/unified/api/alertingApi';
@@ -40,29 +33,42 @@ export function addExtraMiddleware(middleware: Middleware) {
   extraMiddleware.push(middleware);
 }
 
-export function configureStore(initialState?: Partial<StoreState>) {
+export interface ConfigureStoreOptions {
+  // Preferences fetched during boot (see initPreferences). Seeded into the RTK
+  // Query cache so useMergedPreferencesQuery serves the cached entry instead of
+  // issuing a duplicate preferences/merged request.
+  mergedPreferences?: Preferences;
+}
+
+export function configureStore(initialState?: Partial<StoreState>, options?: ConfigureStoreOptions) {
   const store = reduxConfigureStore({
     reducer: createRootReducer(),
     middleware: (getDefaultMiddleware) =>
       getDefaultMiddleware({ thunk: true, serializableCheck: false, immutableCheck: false }).concat(
         listenerMiddleware.middleware,
+
+        // older internal alerting API client
         alertingApi.middleware,
-        alertingPackageAPI.middleware,
+
+        // API clients that are not in the api-clients package
+        // Anything here is likely to be deprecated
         publicDashboardApi.middleware,
         browseDashboardsAPI.middleware,
-        cloudMigrationAPI.middleware,
-        userPreferencesAPI.middleware,
-        iamAPIv0alpha1.middleware,
-        playlistAPIv0alpha1.middleware,
-        provisioningAPIv0alpha1.middleware,
-        folderAPIv1beta1.middleware,
-        advisorAPIv0alpha1.middleware,
-        dashboardAPIv0alpha1.middleware,
-        rulesAPIv0alpha1.middleware,
-        shortURLAPIv1alpha1.middleware,
-        preferencesAPIv1alpha1.middleware,
-        // PLOP_INJECT_MIDDLEWARE
-        // Used by the API client generator
+
+        // Legacy API clients that come from the api-clients package
+        // (these are not exported in the same way as we avoid including them in the published package)
+        legacyAPI.middleware,
+        migrateToCloudAPI.middleware,
+        preferencesUserAPI.middleware,
+        legacyUserAPI.middleware,
+
+        // Enterprise API clients from the api-clients package
+        scopeAPIv0alpha1.middleware,
+
+        // All api-clients from the api-clients package
+        ...allApiClientMiddleware,
+
+        // Any additional other middleware, configured from enterprise
         ...extraMiddleware
       ),
     devTools: process.env.NODE_ENV !== 'production',
@@ -74,6 +80,10 @@ export function configureStore(initialState?: Partial<StoreState>) {
 
   // this enables "refetchOnFocus" and "refetchOnReconnect" for RTK Query
   setupListeners(store.dispatch);
+
+  if (options?.mergedPreferences) {
+    store.dispatch(preferencesAPI.util.upsertQueryData('mergedPreferences', undefined, options.mergedPreferences));
+  }
 
   setStore(store);
   return store;

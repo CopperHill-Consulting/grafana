@@ -1,77 +1,116 @@
 package plugins
 
 import (
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apiserver/pkg/authorization/authorizer"
-	"k8s.io/apiserver/pkg/registry/generic"
-	"k8s.io/apiserver/pkg/registry/rest"
-	restclient "k8s.io/client-go/rest"
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 
-	"github.com/grafana/grafana-app-sdk/app"
+	authlib "github.com/grafana/authlib/types"
 	appsdkapiserver "github.com/grafana/grafana-app-sdk/k8s/apiserver"
-	"github.com/grafana/grafana-app-sdk/simple"
-	"github.com/grafana/grafana/apps/plugins/pkg/apis"
-	"github.com/grafana/grafana/pkg/services/apiserver/appinstaller"
-	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
-	"github.com/grafana/grafana/pkg/services/featuremgmt"
-	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana-app-sdk/logging"
+	"github.com/prometheus/client_golang/prometheus"
 
-	pluginsv0alpha1 "github.com/grafana/grafana/apps/plugins/pkg/apis/plugins/v0alpha1"
 	pluginsapp "github.com/grafana/grafana/apps/plugins/pkg/app"
+	"github.com/grafana/grafana/apps/plugins/pkg/app/meta"
+	"github.com/grafana/grafana/apps/plugins/pkg/app/metrics"
+	"github.com/grafana/grafana/pkg/configprovider"
+	"github.com/grafana/grafana/pkg/plugins/pluginassets/modulehash"
+	"github.com/grafana/grafana/pkg/services/accesscontrol"
+	"github.com/grafana/grafana/pkg/services/apiserver"
+	"github.com/grafana/grafana/pkg/services/apiserver/appinstaller"
+	grafanaauthorizer "github.com/grafana/grafana/pkg/services/apiserver/auth/authorizer"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 )
 
 var (
-	_ appsdkapiserver.AppInstaller    = (*PluginsAppInstaller)(nil)
-	_ appinstaller.AuthorizerProvider = (*PluginsAppInstaller)(nil)
+	_ appsdkapiserver.AppInstaller    = (*AppInstaller)(nil)
+	_ appinstaller.AuthorizerProvider = (*AppInstaller)(nil)
 )
 
-type PluginsAppInstaller struct {
-	appsdkapiserver.AppInstaller
-	cfg *setting.Cfg
+type AppInstaller struct {
+	metaManager        *meta.ProviderManager
+	cfgProvider        configprovider.ConfigProvider
+	restConfigProvider apiserver.RestConfigProvider
+
+	*pluginsapp.PluginAppInstaller
 }
 
-func RegisterAppInstaller(
-	cfg *setting.Cfg,
-	features featuremgmt.FeatureToggles,
-) (*PluginsAppInstaller, error) {
-	installer := &PluginsAppInstaller{
-		cfg: cfg,
+func ProvideAppInstaller(
+	cfgProvider configprovider.ConfigProvider,
+	restConfigProvider apiserver.RestConfigProvider,
+	pluginStore pluginstore.Store, moduleHashCalc *modulehash.Calculator,
+	accessControlService accesscontrol.Service, accessClient authlib.AccessClient,
+	features featuremgmt.FeatureToggles, registerer prometheus.Registerer,
+) (*AppInstaller, error) {
+	metrics.MustRegister(registerer)
+
+	//nolint:staticcheck // not yet migrated to OpenFeature
+	if features.IsEnabledGlobally(featuremgmt.FlagPluginStoreServiceLoading) {
+		if err := registerAccessControlRoles(accessControlService); err != nil {
+			return nil, fmt.Errorf("registering access control roles: %w", err)
+		}
 	}
-	specificConfig := any(nil)
-	provider := simple.NewAppProvider(apis.LocalManifest(), specificConfig, pluginsapp.New)
-	appConfig := app.Config{
-		KubeConfig:     restclient.Config{}, // this will be overridden by the installer's InitializeApp method
-		ManifestData:   *apis.LocalManifest().ManifestData,
-		SpecificConfig: specificConfig,
-	}
-	i, err := appsdkapiserver.NewDefaultAppInstaller(provider, appConfig, &apis.GoTypeAssociator{})
+
+	logger := logging.DefaultLogger.With("app", "plugins.app")
+
+	localProvider := meta.NewLocalProvider(pluginStore, moduleHashCalc)
+	coreProvider, err := meta.NewCoreProvider(logger, meta.CoreProviderOpts{
+		StaticRootPath: func() (string, error) {
+			return getStaticRootPath(cfgProvider, logger)
+		},
+	})
 	if err != nil {
 		return nil, err
 	}
-	installer.AppInstaller = i
-	return installer, nil
+	if err = coreProvider.Init(context.Background()); err != nil {
+		logger.Warn("Failed to eagerly load core plugins", "error", err)
+	}
+	metaProviderManager := meta.NewProviderManager(coreProvider, localProvider)
+	authorizer := grafanaauthorizer.NewResourceAuthorizer(accessClient)
+	i, err := pluginsapp.NewPluginsAppInstaller(pluginsapp.PluginAppInstallerConfig{
+		Logger:              logger,
+		Authorizer:          authorizer,
+		MetaProviderManager: metaProviderManager,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return &AppInstaller{
+		metaManager:        metaProviderManager,
+		cfgProvider:        cfgProvider,
+		restConfigProvider: restConfigProvider,
+		PluginAppInstaller: i,
+	}, nil
 }
 
-func (p *PluginsAppInstaller) InstallAPIs(
-	server appsdkapiserver.GenericAPIServer,
-	restOptsGetter generic.RESTOptionsGetter,
-) error {
-	pluginMetaGVR := schema.GroupVersionResource{
-		Group:    pluginsv0alpha1.GroupVersion.Group,
-		Version:  pluginsv0alpha1.GroupVersion.Version,
-		Resource: pluginsv0alpha1.PluginMetaKind().Plural(),
+func getStaticRootPath(cfgProvider configprovider.ConfigProvider, logger logging.Logger) (string, error) {
+	cfg, err := cfgProvider.Get(context.Background())
+	if err != nil {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", errors.New("getStaticRootPath fallback failed: could not determine working directory")
+		}
+		// Check if we're in the Grafana root
+		staticRootPath := filepath.Join(wd, "public")
+		if _, err = os.Stat(filepath.Join(staticRootPath, "app", "plugins")); err != nil {
+			return "", errors.New("getStaticRootPath fallback failed: could not find core plugins directory")
+		}
+		return staticRootPath, nil
 	}
-	replacedStorage := map[schema.GroupVersionResource]rest.Storage{
-		pluginMetaGVR: pluginsapp.NewPluginMetaStorage(request.GetNamespaceMapper(p.cfg)),
-	}
-	wrappedServer := &customStorageWrapper{
-		wrapped: server,
-		replace: replacedStorage,
-	}
-	return p.AppInstaller.InstallAPIs(wrappedServer, restOptsGetter)
-}
 
-// GetAuthorizer returns the authorizer for the plugins app.
-func (p *PluginsAppInstaller) GetAuthorizer() authorizer.Authorizer {
-	return pluginsapp.GetAuthorizer()
+	staticRootPath := cfg.StaticRootPath
+	// cfg.HomePath may not be set correctly depending on the cfgProvider implementation
+	if staticRootPath == "" || staticRootPath == "." || !filepath.IsAbs(staticRootPath) {
+		staticRootPath = "/usr/share/grafana/public"
+	}
+
+	if _, err = os.Stat(filepath.Join(staticRootPath, "app", "plugins")); err != nil {
+		return "", fmt.Errorf("could not find core plugins in directory %s", staticRootPath)
+	}
+
+	return staticRootPath, nil
 }

@@ -1,20 +1,28 @@
-import { PanelPlugin, PanelProps } from '@grafana/data';
+import { PanelPlugin, type PanelProps } from '@grafana/data';
 import { Trans } from '@grafana/i18n';
 import { config } from '@grafana/runtime';
-import { SceneObject, SceneObjectBase, SceneObjectState, sceneUtils, VizPanel, VizPanelState } from '@grafana/scenes';
-import { LibraryPanel } from '@grafana/schema';
+import {
+  type SceneObject,
+  SceneObjectBase,
+  type SceneObjectState,
+  sceneUtils,
+  VizPanel,
+  type VizPanelState,
+} from '@grafana/scenes';
+import { type LibraryPanel } from '@grafana/schema';
 import { Stack } from '@grafana/ui';
 import { PanelModel } from 'app/features/dashboard/state/PanelModel';
 import { getLibraryPanel } from 'app/features/library-panels/state/api';
 
 import { createPanelDataProvider } from '../utils/createPanelDataProvider';
-import { getPanelIdForVizPanel } from '../utils/utils';
+import { getDashboardSceneFor, getPanelIdForVizPanel } from '../utils/utils';
 
 import { VizPanelLinks, VizPanelLinksMenu } from './PanelLinks';
 import { panelLinksBehavior } from './PanelMenuBehavior';
 import { PanelNotices } from './PanelNotices';
-import { PanelTimeRange } from './PanelTimeRange';
 import { DashboardGridItem } from './layout-default/DashboardGridItem';
+import { PanelTimeRange } from './panel-timerange/PanelTimeRange';
+import { getUpdatedHoverHeader } from './panel-timerange/utils';
 
 export interface LibraryPanelBehaviorState extends SceneObjectState {
   uid: string;
@@ -72,8 +80,18 @@ export class LibraryPanelBehavior extends SceneObjectBase<LibraryPanelBehaviorSt
       title = vizPanel.state.title ?? libPanelModel.title;
     }
 
+    const timeRange =
+      libPanelModel.timeFrom || libPanelModel.timeShift
+        ? new PanelTimeRange({
+            timeFrom: libPanelModel.timeFrom,
+            timeShift: libPanelModel.timeShift,
+            hideTimeOverride: libPanelModel.hideTimeOverride,
+          })
+        : undefined;
+
     const vizPanelState: VizPanelState = {
       title,
+      hoverHeader: getUpdatedHoverHeader(title ?? '', timeRange?.state),
       options: libPanelModel.options ?? {},
       fieldConfig: libPanelModel.fieldConfig,
       pluginId: libPanelModel.type,
@@ -84,12 +102,8 @@ export class LibraryPanelBehavior extends SceneObjectBase<LibraryPanelBehaviorSt
       $data: createPanelDataProvider(libPanelModel),
     };
 
-    if (libPanelModel.timeFrom || libPanelModel.timeShift) {
-      vizPanelState.$timeRange = new PanelTimeRange({
-        timeFrom: libPanelModel.timeFrom,
-        timeShift: libPanelModel.timeShift,
-        hideTimeOverride: libPanelModel.hideTimeOverride,
-      });
+    if (timeRange) {
+      vizPanelState.$timeRange = timeRange;
     }
 
     vizPanel.setState(vizPanelState);
@@ -99,15 +113,31 @@ export class LibraryPanelBehavior extends SceneObjectBase<LibraryPanelBehaviorSt
 
     const layoutElement = vizPanel.parent!;
 
-    // Migrate repeat options to layout element
+    // Repeat only exists on DashboardGridItem, so there is nothing to migrate under any other layout
+    // (a notebook cell included). Inside this branch the root is necessarily a DashboardScene, so the
+    // lookup below cannot fail — if it ever does, that is a bug worth surfacing rather than skipping.
     if (libPanelModel.repeat && layoutElement instanceof DashboardGridItem) {
-      layoutElement.setState({
-        variableName: libPanelModel.repeat,
-        repeatDirection: libPanelModel.repeatDirection === 'h' ? 'h' : 'v',
-        maxPerRow: libPanelModel.maxPerRow,
-        itemHeight: layoutElement.state.height ?? 10,
-      });
-      layoutElement.performRepeat();
+      // Skip migrating repeat options from library panel when using dynamic dashboards (dashboardNewLayouts),
+      // as repeat options should only come from the dashboard panel instance (grid item),
+      // not from the library panel definition.
+      // Exception: Public dashboards and scripted dashboards still need this migration
+      // even when dashboardNewLayouts is enabled. This is because public and scripted dashboard migrations are still handled in the frontend.
+      const dashboard = getDashboardSceneFor(this);
+      const isPublicDashboard = dashboard.state.meta.publicDashboardEnabled === true;
+      const isScriptedDashboard = dashboard.state.meta.fromScript === true;
+      const shouldSkipRepeatMigration =
+        config.featureToggles.dashboardNewLayouts && !isPublicDashboard && !isScriptedDashboard;
+
+      // Migrate repeat options to layout element (only for legacy dashboards, or public/scripted dashboards)
+      if (!shouldSkipRepeatMigration) {
+        layoutElement.setState({
+          variableName: libPanelModel.repeat,
+          repeatDirection: libPanelModel.repeatDirection === 'h' ? 'h' : 'v',
+          maxPerRow: libPanelModel.maxPerRow,
+          itemHeight: layoutElement.state.height ?? 10,
+        });
+        layoutElement.performRepeat();
+      }
     }
   }
 

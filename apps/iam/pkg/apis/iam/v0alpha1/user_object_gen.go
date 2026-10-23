@@ -25,6 +25,13 @@ type User struct {
 	Status UserStatus `json:"status" yaml:"status"`
 }
 
+func NewUser() *User {
+	return &User{
+		Spec:   *NewUserSpec(),
+		Status: *NewUserStatus(),
+	}
+}
+
 func (o *User) GetSpec() any {
 	return o.Spec
 }
@@ -236,6 +243,10 @@ func (o *User) DeepCopyInto(dst *User) {
 	o.Status.DeepCopyInto(&dst.Status)
 }
 
+func (User) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.iam.pkg.apis.iam.v0alpha1.User"
+}
+
 // Interface compliance compile-time check
 var _ resource.Object = &User{}
 
@@ -287,6 +298,10 @@ func (o *UserList) DeepCopy() *UserList {
 
 func (o *UserList) DeepCopyInto(dst *UserList) {
 	resource.CopyObjectInto(dst, o)
+}
+
+func (UserList) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.iam.pkg.apis.iam.v0alpha1.UserList"
 }
 
 // Interface compliance compile-time check

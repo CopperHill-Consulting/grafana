@@ -1,8 +1,8 @@
-import * as React from 'react';
+import type * as React from 'react';
 
-import { Field, LinkTarget } from '@grafana/data';
+import { type IconName, type Field, type LinkModel, type LinkTarget } from '@grafana/data';
 
-import { TraceSpan } from './trace';
+import { type TraceSpan } from './trace';
 
 export enum SpanLinkType {
   Logs = 'log',
@@ -22,6 +22,15 @@ export type SpanLinkDef = {
   field: Field;
   type: SpanLinkType;
   target?: LinkTarget;
+  linkModel?: LinkModel;
+};
+
+export type SpanLinkModel = {
+  linkModel: LinkModel;
+  icon: IconName;
+  className?: string;
+  type: SpanLinkType;
+  traceDatasourceUid?: string;
 };
 
 export type SpanLinkFunc = (span: TraceSpan) => SpanLinkDef[] | undefined;

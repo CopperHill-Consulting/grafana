@@ -13,12 +13,16 @@ export function getNewDashboardPhrase() {
   return t('search.dashboard-actions.new-dashboard', 'New dashboard');
 }
 
+export function getNewTemplateDashboardPhrase() {
+  return t('search.dashboard-actions.new-template-dashboard', 'Use template');
+}
+
 export function getNewFolderPhrase() {
   return t('search.dashboard-actions.new-folder', 'New folder');
 }
 
 export function getImportPhrase() {
-  return t('search.dashboard-actions.import', 'Import');
+  return t('search.dashboard-actions.import', 'Import dashboard');
 }
 
 export function getNewPhrase() {

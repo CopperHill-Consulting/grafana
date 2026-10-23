@@ -11,12 +11,17 @@ export default {
     '\\.(svg|png|jpg)': path.resolve(import.meta.dirname, 'mocks', 'images.ts'),
     '^monaco-editor$': 'monaco-editor/esm/vs/editor/editor.api.js',
     '@kusto/monaco-kusto': '@kusto/monaco-kusto/release/esm/monaco.contribution.js',
+    // uwrap has no "main"/"exports" entry Jest can load; see the mock for details.
+    '^uwrap$': path.resolve(import.meta.dirname, 'mocks', 'uwrap.ts'),
   },
   modulePaths: ['<rootDir>'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'cjs'],
   setupFiles: ['jest-canvas-mock'],
   setupFilesAfterEnv: ['<rootDir>/jest-setup.js'],
   testEnvironment: 'jsdom',
+  testEnvironmentOptions: {
+    customExportConditions: ['@grafana-app/source', 'browser'],
+  },
   testMatch: ['<rootDir>/**/__tests__/**/*.{js,jsx,ts,tsx}', '<rootDir>/**/*.{spec,test,jest}.{js,jsx,ts,tsx}'],
   transform: {
     '^.+\\.(t|j)sx?$': [

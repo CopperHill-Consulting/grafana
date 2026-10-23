@@ -585,7 +585,64 @@ message ResourceTableRow {
   // they may be lost in the conversion to k8s resource
   // +optional
   bytes object = 4;
+
+  // Sort fields for the hit, encoded as strings. This can be used in ResourceSearchRequest search_after or search_before fields.
+  // +optional
+  repeated string sort_fields = 5;
 }
+
+message QuotaUsageRequest {
+  // Namespace (tenant)
+  ResourceKey key = 1;
+}
+
+message QuotaUsageResponse {
+  // Error details
+  ErrorResult error = 1;
+
+  // Current usage
+  int64 usage = 2;
+
+  // Current limit
+  int64 limit = 3;
+}
+
+// A single usage event recorded against an object (e.g. a dashboard view).
+message ResourceEvent {
+  // Metric name, e.g. "views", "queries", "errors". Must be declared for the
+  // object's group/resource.
+  string metric = 1;
+  // Increment to apply for the metric. Must not be negative.
+  uint64 value = 2;
+}
+
+message RecordEventRequest {
+  // The object the events are recorded against (group/resource/namespace/name).
+  ResourceKey key = 1;
+  // The events to record.
+  repeated ResourceEvent events = 2;
+}
+
+// Empty on success; failures are reported via gRPC status.
+message RecordEventResponse {}
+
+message GetResourceDailyStatsRequest {
+  // The object to read daily stats for (group/resource/namespace/name).
+  ResourceKey key = 1;
+  // Inclusive lower bound, "YYYY-MM-DD". Empty means no lower bound.
+  string from_day = 2;
+  // Inclusive upper bound, "YYYY-MM-DD". Empty means no upper bound.
+  string to_day = 3;
+}
+
+message DailyStat {
+  // Calendar day, "YYYY-MM-DD".
+  string day = 1;
+  // metric -> count for that day, e.g. {"views": 12, "queries": 40}.
+  map<string, uint64> metrics = 2;
+}
+
+
 
 // This provides the CRUD+List+Watch support needed for a k8s apiserver
 // The semantics and behaviors of this service are constrained by kubernetes
@@ -606,6 +663,52 @@ service ResourceStore {
   // This will perform best-effort filtering to increase performace.
   // NOTE: storage.Interface is ultimatly responsible for the final filtering
   rpc Watch(WatchRequest) returns (stream WatchEvent);
+
+  // Discover which resource identities (namespace/group/resource) exist in
+  // storage, without returning counts. This is a cheap alternative to
+  // GetStats for callers that only need to know what is stored, not how much.
+  rpc ListStoredResources(ListStoredResourcesRequest) returns (ListStoredResourcesResponse);
+}
+
+// Discovery filter for ListStoredResources.
+message ListStoredResourcesRequest {
+  // Namespace (tenant) to discover resources in. Required: discovery across
+  // all namespaces is not supported. An empty namespace is rejected with
+  // InvalidArgument.
+  string namespace = 1;
+
+  // Optional group filter. Empty means no filter on group.
+  string group = 2;
+
+  // Optional resource filter. Empty means no filter on resource.
+  string resource = 3;
+}
+
+message ListStoredResourcesResponse {
+  message StoredResource {
+    string namespace = 1;
+    string group = 2;
+    string resource = 3;
+  }
+
+  // Resource identities that exist in live storage. This is discovery-only:
+  // it may include false positives (a returned identity may have no live
+  // objects by the time the caller queries it). Errors are returned as gRPC
+  // errors, not embedded in this response.
+  repeated StoredResource items = 1;
+}
+
+// Generic, per-object usage analytics for unified storage. Tracked resources
+// are declared server-side; events for untracked resources are ignored.
+service ResourceStats {
+  // Record usage events against an object. Events are buffered in memory and
+  // flushed asynchronously; a small amount of loss is acceptable. Events for
+  // untracked resources are silently dropped.
+  rpc RecordEvent(RecordEventRequest) returns (RecordEventResponse);
+
+  // Read the per-day usage buckets for a single object. Results are streamed
+  // sorted ascending by day; days with no data are omitted.
+  rpc GetResourceDailyStats(GetResourceDailyStatsRequest) returns (stream DailyStat);
 }
 
 service BulkStore {
@@ -625,9 +728,15 @@ service ManagedObjectIndex {
   rpc ListManagedObjects(ListManagedObjectsRequest) returns (ListManagedObjectsResponse);
 }
 
-// Clients can use this service directly
-// NOTE: This is read only, and no read afer write guarantees
+// Deprecated: Use the standard gRPC health checking protocol (grpc.health.v1.Health)
+// instead.
+// This service will be removed in a future release.
 service Diagnostics {
-  // Check if the service is healthy
+  // Deprecated: Use grpc.health.v1.Health/Check instead.
   rpc IsHealthy(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+service Quotas {
+  // Get current quota usage and limits
+  rpc GetQuotaUsage(QuotaUsageRequest) returns (QuotaUsageResponse);
 }

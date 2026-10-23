@@ -4,14 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
-
-	"github.com/grafana/grafana/pkg/kinds/librarypanel"
-)
-
-type LibraryConnectionKind int
-
-const (
-	Dashboard LibraryConnectionKind = iota + 1
 )
 
 // LibraryElement is the model for library element definitions.
@@ -99,43 +91,26 @@ type LibraryElementDTOMeta struct {
 	Created time.Time `json:"created"`
 	Updated time.Time `json:"updated"`
 
-	CreatedBy librarypanel.LibraryElementDTOMetaUser `json:"createdBy"`
-	UpdatedBy librarypanel.LibraryElementDTOMetaUser `json:"updatedBy"`
+	CreatedBy LibraryElementDTOMetaUser `json:"createdBy"`
+	UpdatedBy LibraryElementDTOMetaUser `json:"updatedBy"`
 }
 
-// libraryElementConnection is the model for library element connections.
-type LibraryElementConnection struct {
-	ID           int64 `xorm:"pk autoincr 'id'"`
-	ElementID    int64 `xorm:"element_id"`
-	Kind         int64 `xorm:"kind"`
-	ConnectionID int64 `xorm:"connection_id"`
-	Created      time.Time
-	CreatedBy    int64
-}
-
-// libraryElementConnectionWithMeta is the model for library element connections with meta.
-type LibraryElementConnectionWithMeta struct {
-	ID             int64  `xorm:"pk autoincr 'id'"`
-	ElementID      int64  `xorm:"element_id"`
-	Kind           int64  `xorm:"kind"`
-	ConnectionID   int64  `xorm:"connection_id"`
-	ConnectionUID  string `xorm:"connection_uid"`
-	Created        time.Time
-	CreatedBy      int64
-	CreatedByName  string
-	CreatedByEmail string
+type LibraryElementDTOMetaUser struct {
+	Id        int64  `json:"id"`
+	Name      string `json:"name"`
+	AvatarUrl string `json:"avatarUrl"`
 }
 
 // LibraryElementConnectionDTO is the frontend DTO for element connections.
 type LibraryElementConnectionDTO struct {
 	// Deprecated: this field will be removed in the future
-	ID            int64                                  `json:"id"`
-	Kind          int64                                  `json:"kind"`
-	ElementID     int64                                  `json:"elementId"`
-	ConnectionID  int64                                  `json:"connectionId"`
-	ConnectionUID string                                 `json:"connectionUid"`
-	Created       time.Time                              `json:"created"`
-	CreatedBy     librarypanel.LibraryElementDTOMetaUser `json:"createdBy"`
+	ID            int64                     `json:"id"`
+	Kind          int64                     `json:"kind"`
+	ElementID     int64                     `json:"elementId"`
+	ConnectionID  int64                     `json:"connectionId"`
+	ConnectionUID string                    `json:"connectionUid"`
+	Created       time.Time                 `json:"created"`
+	CreatedBy     LibraryElementDTOMetaUser `json:"createdBy"`
 }
 
 var (
@@ -157,6 +132,10 @@ var (
 	ErrLibraryElementInvalidUID = errors.New("uid contains illegal characters")
 	// errLibraryElementUIDTooLong is an error for when the uid of a library element is invalid
 	ErrLibraryElementUIDTooLong = errors.New("uid too long, max 40 characters")
+	// ErrLibraryElementProvisionedFolder indicates that a library element cannot be created on a provisioned folder.
+	ErrLibraryElementProvisionedFolder = errors.New("resource type not supported in repository-managed folders")
+	// ErrLibraryElementInsufficientPermissions is returned when the caller lacks permission to perform a library element operation in a folder.
+	ErrLibraryElementInsufficientPermissions = errors.New("insufficient permissions for library element operation")
 )
 
 // Commands
@@ -228,6 +207,10 @@ type SearchLibraryElementsQuery struct {
 	// Deprecated: use FolderFilterUIDs instead
 	FolderFilter     string
 	FolderFilterUIDs string
+	// SkipFolderTreeForAdmin skips fetching the folder tree when the caller is admin.
+	// Admin can see all folders, so we avoid listing them.
+	// When set, Meta.FolderName will be empty in the results.
+	SkipFolderTreeForAdmin bool
 }
 
 // LibraryElementResponse is a response struct for LibraryElementDTO.

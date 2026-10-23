@@ -1,15 +1,19 @@
 package migrator
 
 import (
+	"context"
 	"database/sql"
+	"embed"
 	"errors"
 	"fmt"
+	"path"
 	"strconv"
 	"strings"
 
 	"github.com/VividCortex/mysqlerr"
 	"github.com/go-sql-driver/mysql"
 
+	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/util/xorm"
 )
 
@@ -111,7 +115,7 @@ func (db *MySQLDialect) SQLType(c *Column) string {
 }
 
 func (db *MySQLDialect) UpdateTableSQL(tableName string, columns []*Column) string {
-	var statements = []string{}
+	statements := make([]string, 0, 1+len(columns))
 
 	statements = append(statements, "DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
 
@@ -270,6 +274,10 @@ func (db *MySQLDialect) UpsertMultipleSQL(tableName string, keyCols, updateCols 
 	return s, nil
 }
 
+func (db *MySQLDialect) SupportsAdvisoryLocks() bool {
+	return true
+}
+
 func (db *MySQLDialect) Lock(cfg LockCfg) error {
 	query := "SELECT GET_LOCK(?, ?)"
 	var success sql.NullBool
@@ -316,4 +324,93 @@ func (db *MySQLDialect) GetDBName(dsn string) (string, error) {
 	}
 
 	return cfg.DBName, nil
+}
+
+//go:embed snapshot/*.sql
+var sqlFiles embed.FS
+
+func (db *MySQLDialect) CreateDatabaseFromSnapshot(ctx context.Context, engine *xorm.Engine, migrationLogTableName string, logger log.Logger) error {
+	// Entire schema is generated only when called with "migration_log" table.
+	// Normally if schema creates other "*_migration_log" tables, we don't get here. However if new migration table is introduced by later migration,
+	// CreateDatabaseFromSnapshot may be called for given table, but if it wasn't part of original schema, we can't do anything here.
+	if migrationLogTableName != "migration_log" {
+		return nil
+	}
+
+	entries, err := sqlFiles.ReadDir("snapshot")
+	if err != nil {
+		return err
+	}
+
+	logger.Info("creating database schema from snapshot")
+
+	for _, entry := range entries {
+		logger.Debug("using snapshot file", "file", entry.Name())
+		data, err := sqlFiles.ReadFile(path.Join("snapshot", entry.Name()))
+		if err != nil {
+			return err
+		}
+
+		statements := extractStatements(string(data))
+		if err := db.executeStatements(ctx, engine, statements); err != nil {
+			return err
+		}
+	}
+
+	logger.Info("successfully created database schema from snapshot")
+	return nil
+}
+
+func extractStatements(schema string) []string {
+	lines := strings.Split(schema, "\n")
+
+	statements := make([]string, 0, len(lines))
+
+	sb := strings.Builder{}
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "--") {
+			continue
+		}
+
+		if line == "" {
+			continue
+		}
+
+		endOfStatement := false
+		if strings.HasSuffix(line, ";") {
+			endOfStatement = true
+			line = strings.TrimSuffix(line, ";")
+		}
+
+		if sb.Len() > 0 {
+			sb.WriteRune('\n')
+		}
+		sb.WriteString(line)
+		if endOfStatement && sb.Len() > 0 {
+			statements = append(statements, sb.String())
+			sb.Reset()
+		}
+	}
+
+	if sb.Len() > 0 {
+		statements = append(statements, sb.String())
+	}
+	return statements
+}
+
+func (s *MySQLDialect) executeStatements(ctx context.Context, engine *xorm.Engine, statements []string) error {
+	// mysqldump statements rely on connection-scoped session state, so they must all use the same connection.
+	conn, err := engine.DB().Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to acquire connection for snapshot restore: %w", err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	for _, statement := range statements {
+		if _, err := conn.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("statement %s failed with error: %w", statement, err)
+		}
+	}
+	return nil
 }

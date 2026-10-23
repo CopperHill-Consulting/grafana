@@ -1,52 +1,39 @@
-import { action } from '@storybook/addon-actions';
-import { Meta, StoryFn } from '@storybook/react';
-import { PureComponent } from 'react';
+import { type Meta, type StoryFn } from '@storybook/react-webpack5';
+import { memo, useState } from 'react';
+import { action } from 'storybook/actions';
 
 import { Field } from '../Forms/Field';
 
-import { Props, StatsPicker } from './StatsPicker';
+import { type StatsPickerProps, StatsPicker } from './StatsPicker';
 
-interface State {
-  stats: string[];
-}
+const WrapperWithState = memo<StatsPickerProps>(({ placeholder, allowMultiple, width }) => {
+  const [stats, setStats] = useState<string[]>([]);
 
-class WrapperWithState extends PureComponent<Props, State> {
-  constructor(props: Props) {
-    super(props);
-    this.state = {
-      stats: [],
-    };
-  }
+  return (
+    <Field label="Pick stats">
+      <StatsPicker
+        id="stats-picker"
+        placeholder={placeholder}
+        allowMultiple={allowMultiple}
+        stats={stats}
+        onChange={(newStats: string[]) => {
+          action('Picked:')(newStats);
+          setStats(newStats);
+        }}
+        width={width}
+      />
+    </Field>
+  );
+});
 
-  render() {
-    const { placeholder, allowMultiple, menuPlacement, width } = this.props;
-    const { stats } = this.state;
-
-    return (
-      <Field label="Pick stats">
-        <StatsPicker
-          inputId="stats-picker"
-          placeholder={placeholder}
-          allowMultiple={allowMultiple}
-          stats={stats}
-          onChange={(stats: string[]) => {
-            action('Picked:')(stats);
-            this.setState({ stats });
-          }}
-          menuPlacement={menuPlacement}
-          width={width}
-        />
-      </Field>
-    );
-  }
-}
+WrapperWithState.displayName = 'WrapperWithState';
 
 const meta: Meta<typeof StatsPicker> = {
   title: 'Pickers/StatsPicker',
   component: StatsPicker,
   parameters: {
     controls: {
-      exclude: ['onChange', 'stats', 'defaultStat', 'className'],
+      exclude: ['onChange', 'stats', 'defaultStat'],
     },
   },
 };
@@ -61,7 +48,6 @@ export const Picker: StoryFn<typeof StatsPicker> = (args) => {
 Picker.args = {
   placeholder: 'placeholder',
   allowMultiple: false,
-  menuPlacement: 'auto',
   width: 10,
 };
 

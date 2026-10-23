@@ -1,5 +1,8 @@
+import type { JSX } from 'react';
+
 import { PluginExtensionPoints } from '@grafana/data';
 import { config, renderLimitedComponents, usePluginComponents } from '@grafana/runtime';
+import { SETUPGUIDE_PLUGIN_ID } from 'app/core/constants';
 import { useGrafana } from 'app/core/context/GrafanaContext';
 
 export function AppChromeExtensionPoint(): JSX.Element | null {
@@ -30,6 +33,6 @@ function InternalAppChromeExtensionPoint(): JSX.Element | null {
   return renderLimitedComponents({
     props: {},
     components: components,
-    pluginId: 'grafana-setupguide-app',
+    pluginId: SETUPGUIDE_PLUGIN_ID,
   });
 }

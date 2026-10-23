@@ -1,9 +1,10 @@
 import { render, screen } from '@testing-library/react';
 
 import { PluginSignatureStatus, PluginSignatureType, PluginType } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { config } from '@grafana/runtime';
 
-import { CatalogPlugin } from '../types';
+import { type CatalogPlugin } from '../types';
 
 import { PluginList } from './PluginList';
 
@@ -24,7 +25,6 @@ const mockPlugin: CatalogPlugin = {
   isInstalled: true,
   isDisabled: false,
   isDeprecated: false,
-  isManaged: false,
   isPreinstalled: { found: false, withVersion: false },
   isPublished: true,
   name: 'Test Plugin',
@@ -40,6 +40,10 @@ const mockPlugin: CatalogPlugin = {
   angularDetected: false,
   isFullyInstalled: true,
   accessControl: {},
+  managed: {
+    enabled: false,
+    strategy: undefined,
+  },
 };
 
 const mockPlugin2: CatalogPlugin = {
@@ -65,7 +69,7 @@ describe('PluginList', () => {
     const plugins = [mockPlugin, mockPlugin2];
     render(<PluginList plugins={plugins} isLoading={false} />);
 
-    expect(screen.getByTestId('plugin-list')).toBeInTheDocument();
+    expect(screen.getByTestId(selectors.pages.PluginsList.list)).toBeInTheDocument();
     expect(screen.getByText('Test Plugin')).toBeInTheDocument();
     expect(screen.getByText('Test Plugin 2')).toBeInTheDocument();
   });

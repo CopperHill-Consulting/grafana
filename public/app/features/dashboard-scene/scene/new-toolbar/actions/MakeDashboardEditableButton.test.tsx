@@ -18,6 +18,7 @@ import { MakeDashboardEditableButton } from './MakeDashboardEditableButton';
 // Mock the DashboardInteractions module
 jest.mock('app/features/dashboard-scene/utils/interactions', () => ({
   DashboardInteractions: {
+    editSessionStarted: jest.fn(),
     editButtonClicked: jest.fn(),
     exitEditButtonClicked: jest.fn(),
   },
@@ -34,10 +35,11 @@ setPluginImportUtils({
   getPanelPluginFromCache: (id: string) => undefined,
 });
 
-export function buildTestScene(isEditing = false) {
+export function buildTestScene(isEditing?: boolean, editable?: boolean) {
   const testScene = new DashboardScene({
     $timeRange: new SceneTimeRange({ from: 'now-6h', to: 'now' }),
-    isEditing: isEditing,
+    isEditing: isEditing || false,
+    editable: editable || true,
     body: new DefaultGridLayoutManager({
       grid: new SceneGridLayout({
         children: [new DashboardGridItem({ body: new VizPanel({ key: 'panel-1', pluginId: 'text' }) })],
@@ -56,24 +58,35 @@ describe('MakeDashboardEditableButton', () => {
   });
 
   describe('edit dashboard button tracking', () => {
-    it('should call DashboardInteractions.editButtonClicked with outlineExpanded:true if grafana.dashboard.edit-pane.outline.collapsed is undefined', async () => {
-      render(<MakeDashboardEditableButton dashboard={buildTestScene()} />);
-      await userEvent.click(await screen.findByTestId(selectors.components.NavToolbar.editDashboard.editButton));
-      expect(DashboardInteractions.editButtonClicked).toHaveBeenCalledWith({ outlineExpanded: false });
-    });
-
-    it('should call DashboardInteractions.editButtonClicked with outlineExpanded:true if grafana.dashboard.edit-pane.outline.collapsed is false', async () => {
-      localStorageMock.setItem('grafana.dashboard.edit-pane.outline.collapsed', 'false');
+    it('should call DashboardInteractions.editButtonClicked with outlineExpanded:true if grafana.dashboard.sidebar.outline.collapsed is undefined', async () => {
       render(<MakeDashboardEditableButton dashboard={buildTestScene()} />);
       await userEvent.click(await screen.findByTestId(selectors.components.NavToolbar.editDashboard.editButton));
       expect(DashboardInteractions.editButtonClicked).toHaveBeenCalledWith({ outlineExpanded: true });
     });
 
-    it('should call DashboardInteractions.editButtonClicked with outlineExpanded:false if grafana.dashboard.edit-pane.outline.collapsed is true', async () => {
-      localStorageMock.setItem('grafana.dashboard.edit-pane.outline.collapsed', 'true');
+    it('should call DashboardInteractions.editButtonClicked with outlineExpanded:true if grafana.dashboard.sidebar.outline.collapsed is false', async () => {
+      localStorageMock.setItem('grafana.dashboard.sidebar.outline.collapsed', 'false');
+      render(<MakeDashboardEditableButton dashboard={buildTestScene()} />);
+      await userEvent.click(await screen.findByTestId(selectors.components.NavToolbar.editDashboard.editButton));
+      expect(DashboardInteractions.editButtonClicked).toHaveBeenCalledWith({ outlineExpanded: true });
+    });
+
+    it('should call DashboardInteractions.editButtonClicked with outlineExpanded:false if grafana.dashboard.sidebar.outline.collapsed is true', async () => {
+      localStorageMock.setItem('grafana.dashboard.sidebar.outline.collapsed', 'true');
       render(<MakeDashboardEditableButton dashboard={buildTestScene()} />);
       await userEvent.click(await screen.findByTestId(selectors.components.NavToolbar.editDashboard.editButton));
       expect(DashboardInteractions.editButtonClicked).toHaveBeenCalledWith({ outlineExpanded: false });
     });
+  });
+
+  it('should set state correctly', async () => {
+    const scene = buildTestScene(false, false);
+
+    render(<MakeDashboardEditableButton dashboard={scene} />);
+    await userEvent.click(await screen.findByTestId(selectors.components.NavToolbar.editDashboard.editButton));
+
+    expect(scene.state.editable).toBe(true);
+    expect(scene.state.meta.canEdit).toBe(true);
+    expect(scene.state.meta.canSave).toBe(true);
   });
 });

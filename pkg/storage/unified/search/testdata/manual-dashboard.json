@@ -40,7 +40,7 @@
       "name": "created",
       "type": "number",
       "format": "int64",
-      "description": "created timestamp",
+      "description": "created timestamp (unix millis)",
       "priority": 0
     },
     {
@@ -60,22 +60,43 @@
     {
       "name": "schema_version",
       "type": "number",
-      "format": "int32",
+      "format": "int64",
       "description": "Numeric version saying when the schema was saved",
       "priority": 0
     },
     {
       "name": "link_count",
       "type": "number",
-      "format": "int32",
+      "format": "int64",
       "description": "How many links appear on the page",
+      "priority": 0
+    },
+    {
+      "name": "panel_title",
+      "type": "string",
+      "format": "",
+      "description": "The panel title text",
       "priority": 0
     },
     {
       "name": "panel_types",
       "type": "string",
       "format": "",
-      "description": "How many links appear on the page",
+      "description": "The panel types used in this dashboard",
+      "priority": 0
+    },
+    {
+      "name": "ds_types",
+      "type": "string",
+      "format": "",
+      "description": "Data source types referenced by this dashboard's panels",
+      "priority": 0
+    },
+    {
+      "name": "transformation",
+      "type": "string",
+      "format": "",
+      "description": "Transformation IDs used in this dashboard's panels",
       "priority": 0
     },
     {
@@ -194,9 +215,12 @@
         ],
         "zzz",
         null,
-        null,
+        0,
         null,
         "repo",
+        null,
+        null,
+        null,
         null,
         null,
         null,
@@ -234,14 +258,17 @@
         ],
         "xxx",
         null,
-        null,
+        0,
         11,
         "repo",
+        null,
         null,
         null,
         [
           "timeseries"
         ],
+        null,
+        null,
         40,
         null,
         null,
@@ -277,15 +304,18 @@
         ],
         "xxx",
         null,
-        null,
+        0,
         10,
         "repo",
+        null,
         null,
         null,
         [
           "timeseries",
           "table"
         ],
+        null,
+        null,
         25,
         null,
         null,

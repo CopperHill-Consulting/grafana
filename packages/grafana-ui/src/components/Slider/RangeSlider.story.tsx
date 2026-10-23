@@ -1,16 +1,18 @@
-import { Meta, StoryFn } from '@storybook/react';
+import { type Meta, type StoryFn } from '@storybook/react-webpack5';
 
 import { RangeSlider } from './RangeSlider';
+import mdx from './RangeSlider.mdx';
 
 const meta: Meta<typeof RangeSlider> = {
   title: 'Inputs/RangeSlider',
   component: RangeSlider,
   parameters: {
+    docs: {
+      page: mdx,
+    },
     controls: {
       exclude: ['tooltipAlwaysVisible'],
     },
-    // TODO fix a11y issue in story and remove this
-    a11y: { test: 'off' },
   },
   argTypes: {
     orientation: { control: { type: 'select', options: ['horizontal', 'vertical'] } },

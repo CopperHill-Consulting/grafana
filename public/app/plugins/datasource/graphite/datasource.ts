@@ -1,56 +1,57 @@
 import { map as _map, each, indexOf, isArray, isString } from 'lodash';
-import moment from 'moment';
-import { lastValueFrom, merge, Observable, of, OperatorFunction, pipe, throwError } from 'rxjs';
+import { lastValueFrom, merge, Observable, of, type OperatorFunction, pipe, throwError } from 'rxjs';
 import { catchError, map } from 'rxjs/operators';
 import { coerce, gte, SemVer, valid } from 'semver';
 
 import {
-  AbstractLabelMatcher,
+  type AbstractLabelMatcher,
   AbstractLabelOperator,
-  AbstractQuery,
-  DataFrame,
-  DataQueryRequest,
-  DataQueryResponse,
-  DataSourceWithQueryExportSupport,
+  type AbstractQuery,
+  type DataFrame,
+  type DataQueryRequest,
+  type DataQueryResponse,
+  type DataSourceWithQueryExportSupport,
   dateMath,
-  DateTime,
+  type DateTime,
   dateTime,
+  dateTimeAsMoment,
+  getFieldDisplayName,
   getSearchFilterScopedVar,
-  MetricFindValue,
-  QueryResultMetaStat,
-  ScopedVars,
-  TimeRange,
+  type MetricFindValue,
+  type QueryResultMetaStat,
+  type ScopedVars,
+  type TimeRange,
   toDataFrame,
 } from '@grafana/data';
 import {
-  BackendSrvRequest,
+  type BackendSrvRequest,
   config,
   DataSourceWithBackend,
-  FetchResponse,
+  type FetchResponse,
   getBackendSrv,
   getTemplateSrv,
-  TemplateSrv,
+  type TemplateSrv,
 } from '@grafana/runtime';
-import { TimeZone } from '@grafana/schema';
+import { type TimeZone } from '@grafana/schema';
 
 import { AnnotationEditor } from './components/AnnotationsEditor';
 import { convertToGraphiteQueryObject } from './components/helpers';
-import gfunc, { FuncDef, FuncDefs, FuncInstance } from './gfunc';
+import gfunc, { type FuncDef, type FuncDefs, type FuncInstance } from './gfunc';
 import GraphiteQueryModel from './graphite_query';
 import { getRollupNotice, getRuntimeConsolidationNotice } from './meta';
 import { prepareAnnotation } from './migrations';
 // Types
 import {
-  GraphiteEvents,
-  GraphiteLokiMapping,
-  GraphiteMetricLokiMatcher,
-  GraphiteOptions,
-  GraphiteQuery,
-  GraphiteQueryImportConfiguration,
+  type GraphiteEvents,
+  type GraphiteLokiMapping,
+  type GraphiteMetricLokiMatcher,
+  type GraphiteOptions,
+  type GraphiteQuery,
+  type GraphiteQueryImportConfiguration,
   GraphiteQueryType,
   GraphiteType,
-  MetricTankRequestMeta,
-  MetricTankSeriesMeta,
+  type MetricTankRequestMeta,
+  type MetricTankSeriesMeta,
 } from './types';
 import { reduceError } from './utils';
 import { DEFAULT_GRAPHITE_VERSION } from './versions';
@@ -175,7 +176,7 @@ export class GraphiteDatasource
 
         matchers.every((matcher: GraphiteMetricLokiMatcher, index: number) => {
           if (matcher.labelName) {
-            let value = (targetNodes[index] as string)!;
+            let value = String(targetNodes[index]);
 
             if (value === '*') {
               return true;
@@ -268,7 +269,7 @@ export class GraphiteDatasource
   ): GraphiteQuery[] {
     const referenceTargets: Record<string, string> = {};
     const finalTargets: GraphiteQuery[] = [];
-    let target: GraphiteQuery, targetValue, i;
+    let target: GraphiteQuery, targetValue, i, targetFullValue;
 
     for (i = 0; i < options.targets.length; i++) {
       target = options.targets[i];
@@ -306,8 +307,13 @@ export class GraphiteDatasource
         referenceTargets[target.refId].replace(seriesReferenceRegex, nestedSeriesRegexReplacer),
         options.scopedVars
       );
+      targetFullValue = this.templateSrv.replace(
+        referenceTargets[target.refId].replace(seriesReferenceRegex, nestedSeriesRegexReplacer),
+        options.scopedVars
+      );
 
       targetClone.target = targetValue;
+      targetClone.targetFull = targetFullValue;
       if (this.isMetricTank) {
         targetClone.isMetricTank = true;
       }
@@ -418,6 +424,24 @@ export class GraphiteDatasource
         // refID should always be the last element
         refId = splitTarget.pop() || '';
         s.target = splitTarget.join(' ');
+
+        // When aliasSub wrapping is applied, Metrictank sets tags['name'] to the
+        // full internal series key (e.g. "BytesReceived;host=web01;cluster=md1b;...").
+        // Restore it to just the base metric name (the portion before the first ';'),
+        // which is what standard graphite-web returns and what transformations like
+        // joinByLabels(value:'name') expect. Also strip the refID suffix in case
+        // Metrictank reflected it into tags['name'].
+        if (typeof s.tags?.['name'] === 'string') {
+          let tagName = s.tags['name'];
+          if (tagName.endsWith(` ${refId}`)) {
+            tagName = tagName.slice(0, -(refId.length + 1));
+          }
+          const semicolonIdx = tagName.indexOf(';');
+          if (semicolonIdx !== -1) {
+            tagName = tagName.slice(0, semicolonIdx);
+          }
+          s.tags['name'] = tagName;
+        }
       }
       // Disables Grafana own series naming
       s.title = s.target;
@@ -509,12 +533,18 @@ export class GraphiteDatasource
     if (target.target) {
       // Graphite query as target as annotation
       const targetAnnotation = this.templateSrv.replace(target.target, {}, 'glob');
-      const graphiteQuery = {
+      const graphiteQuery: DataQueryRequest<GraphiteQuery> = {
+        requestId: '',
+        interval: '',
+        intervalMs: 0,
         range: range,
+        scopedVars: {},
         targets: [{ target: targetAnnotation, refId: target.refId }],
-        format: 'json',
+        timezone: 'browser',
+        app: 'graphite',
+        startTime: Date.now(),
         maxDataPoints: 100,
-      } as unknown as DataQueryRequest<GraphiteQuery>;
+      };
 
       return lastValueFrom(
         this.query(graphiteQuery).pipe(
@@ -523,6 +553,9 @@ export class GraphiteDatasource
 
             for (let i = 0; i < result.data.length; i++) {
               const target = result.data[i];
+              // backend mode builds frames with an empty name and carries the series name in
+              // the value field's displayNameFromDS instead, so fall back to the field display name
+              const title = target.name || getFieldDisplayName(target.fields[1], target);
 
               for (let y = 0; y < target.length; y++) {
                 const time = target.fields[0].values[y];
@@ -535,7 +568,7 @@ export class GraphiteDatasource
                 list.push({
                   annotation: target,
                   time,
-                  title: target.name,
+                  title,
                 });
               }
             }
@@ -624,9 +657,9 @@ export class GraphiteDatasource
           return date;
         }
 
-        return moment(parsedDate.toDate());
+        return dateTimeAsMoment(parsedDate.toDate());
       } else {
-        return moment(date.toDate());
+        return dateTimeAsMoment(date.toDate());
       }
     };
 
@@ -763,11 +796,19 @@ export class GraphiteDatasource
           expandable: false,
         }));
     } else if (queryType === GraphiteQueryType.MetricName) {
-      result = data.data.map((series) => ({
-        text: series.name,
-        value: series.name,
-        expandable: false,
-      }));
+      if (config.featureToggles.graphiteBackendMode) {
+        result = data.data.map((series: DataFrame) => {
+          const valueField = series.fields.find((f) => f.name === 'value');
+          const name = valueField?.config.displayNameFromDS || '';
+          return { text: name, value: name, expandable: false };
+        });
+      } else {
+        result = data.data.map((series) => ({
+          text: series.name,
+          value: series.name,
+          expandable: false,
+        }));
+      }
     } else {
       result = [];
     }
@@ -1029,9 +1070,15 @@ export class GraphiteDatasource
     };
 
     if (config.featureToggles.graphiteBackendMode) {
-      const functions = await this.getResource<string>('functions');
-      this.funcDefs = gfunc.parseFuncDefs(functions);
-      return this.funcDefs;
+      try {
+        const functions = await this.getResource<string>('functions');
+        this.funcDefs = gfunc.parseFuncDefs(functions);
+        return this.funcDefs;
+      } catch (error) {
+        console.error('Fetching graphite functions error', error);
+        this.funcDefs = gfunc.getFuncDefs(this.graphiteVersion);
+        return this.funcDefs;
+      }
     }
 
     return lastValueFrom(

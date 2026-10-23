@@ -4,8 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/aws/smithy-go"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
@@ -14,11 +12,13 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi"
 	resourcegroupstaggingapitypes "github.com/aws/aws-sdk-go-v2/service/resourcegroupstaggingapi/types"
+	"github.com/aws/smithy-go"
+	"github.com/stretchr/testify/mock"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/config"
 	"github.com/grafana/grafana-plugin-sdk-go/experimental/featuretoggles"
 	"github.com/grafana/grafana/pkg/tsdb/cloudwatch/models"
-	"github.com/stretchr/testify/mock"
 )
 
 type fakeCWLogsClient struct {
@@ -29,12 +29,15 @@ type fakeCWLogsClient struct {
 	queryResults   cloudwatchlogs.GetQueryResultsOutput
 
 	logGroupsIndex int
+
+	anomalies []cloudwatchlogstypes.Anomaly
 }
 
 type logsQueryCalls struct {
 	startQuery        []*cloudwatchlogs.StartQueryInput
 	getEvents         []*cloudwatchlogs.GetLogEventsInput
 	describeLogGroups []*cloudwatchlogs.DescribeLogGroupsInput
+	listAnomalies     []*cloudwatchlogs.ListAnomaliesInput
 }
 
 func (m *fakeCWLogsClient) GetQueryResults(_ context.Context, _ *cloudwatchlogs.GetQueryResultsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.GetQueryResultsOutput, error) {
@@ -52,6 +55,14 @@ func (m *fakeCWLogsClient) StartQuery(_ context.Context, input *cloudwatchlogs.S
 func (m *fakeCWLogsClient) StopQuery(_ context.Context, _ *cloudwatchlogs.StopQueryInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.StopQueryOutput, error) {
 	return &cloudwatchlogs.StopQueryOutput{
 		Success: true,
+	}, nil
+}
+
+func (m *fakeCWLogsClient) ListAnomalies(_ context.Context, input *cloudwatchlogs.ListAnomaliesInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.ListAnomaliesOutput, error) {
+	m.calls.listAnomalies = append(m.calls.listAnomalies, input)
+
+	return &cloudwatchlogs.ListAnomaliesOutput{
+		Anomalies: m.anomalies,
 	}, nil
 }
 
@@ -78,6 +89,11 @@ func (m *mockLogsSyncClient) GetQueryResults(ctx context.Context, input *cloudwa
 func (m *mockLogsSyncClient) StartQuery(ctx context.Context, input *cloudwatchlogs.StartQueryInput, optFns ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.StartQueryOutput, error) {
 	args := m.Called(ctx, input, optFns)
 	return args.Get(0).(*cloudwatchlogs.StartQueryOutput), args.Error(1)
+}
+
+func (m *mockLogsSyncClient) ListAnomalies(ctx context.Context, input *cloudwatchlogs.ListAnomaliesInput, optFns ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.ListAnomaliesOutput, error) {
+	args := m.Called(ctx, input, optFns)
+	return args.Get(0).(*cloudwatchlogs.ListAnomaliesOutput), args.Error(1)
 }
 
 func (m *fakeCWLogsClient) DescribeLogGroups(_ context.Context, input *cloudwatchlogs.DescribeLogGroupsInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.DescribeLogGroupsOutput, error) {
@@ -142,7 +158,7 @@ type oldEC2Client struct {
 }
 
 func (c oldEC2Client) DescribeRegions(_ context.Context, _ *ec2.DescribeRegionsInput, _ ...func(*ec2.Options)) (*ec2.DescribeRegionsOutput, error) {
-	regions := []ec2types.Region{}
+	regions := make([]ec2types.Region, 0, len(c.regions))
 	for _, region := range c.regions {
 		regions = append(regions, ec2types.Region{
 			RegionName: aws.String(region),
@@ -154,7 +170,7 @@ func (c oldEC2Client) DescribeRegions(_ context.Context, _ *ec2.DescribeRegionsI
 }
 
 func (c oldEC2Client) DescribeInstances(_ context.Context, in *ec2.DescribeInstancesInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstancesOutput, error) {
-	reservations := []ec2types.Reservation{}
+	reservations := make([]ec2types.Reservation, 0, len(c.reservations))
 	for _, r := range c.reservations {
 		instances := []ec2types.Instance{}
 		for _, inst := range r.Instances {
@@ -212,6 +228,10 @@ func (c fakeCheckHealthClient) GetLogGroupFields(_ context.Context, _ *cloudwatc
 	return nil, nil
 }
 
+func (c fakeCheckHealthClient) ListAggregateLogGroupSummaries(_ context.Context, _ *cloudwatchlogs.ListAggregateLogGroupSummariesInput, _ ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.ListAggregateLogGroupSummariesOutput, error) {
+	return &cloudwatchlogs.ListAggregateLogGroupSummariesOutput{}, nil
+}
+
 type FakeCredentialsProvider struct {
 }
 
@@ -251,6 +271,6 @@ func (f fakeSmithyError) ErrorFault() smithy.ErrorFault {
 
 func contextWithFeaturesEnabled(enabled ...string) context.Context {
 	featureString := strings.Join(enabled, ",")
-	cfg := backend.NewGrafanaCfg(map[string]string{featuretoggles.EnabledFeatures: featureString})
-	return backend.WithGrafanaConfig(context.Background(), cfg)
+	cfg := config.NewGrafanaCfg(map[string]string{featuretoggles.EnabledFeatures: featureString})
+	return config.WithGrafanaConfig(context.Background(), cfg)
 }

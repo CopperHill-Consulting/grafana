@@ -3,68 +3,83 @@ package provisioning
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
-	"slices"
 	"strings"
 	"time"
 
+	"github.com/open-feature/go-sdk/openfeature"
 	"github.com/prometheus/client_golang/prometheus"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apiserver/pkg/admission"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
-	"k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/rest"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	clientrest "k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/cache"
 	"k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/spec3"
 	"k8s.io/kube-openapi/pkg/validation/spec"
 
 	authlib "github.com/grafana/authlib/types"
 	"github.com/grafana/grafana-app-sdk/logging"
-
-	dashboard "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
-	folders "github.com/grafana/grafana/apps/folder/pkg/apis/folder/v1beta1"
+	appadmission "github.com/grafana/grafana/apps/provisioning/pkg/apis/admission"
+	"github.com/grafana/grafana/apps/provisioning/pkg/apis/auth"
 	provisioning "github.com/grafana/grafana/apps/provisioning/pkg/apis/provisioning/v0alpha1"
+	"github.com/grafana/grafana/apps/provisioning/pkg/connection"
 	appcontroller "github.com/grafana/grafana/apps/provisioning/pkg/controller"
 	clientset "github.com/grafana/grafana/apps/provisioning/pkg/generated/clientset/versioned"
 	client "github.com/grafana/grafana/apps/provisioning/pkg/generated/clientset/versioned/typed/provisioning/v0alpha1"
-	informers "github.com/grafana/grafana/apps/provisioning/pkg/generated/informers/externalversions"
+	appjobs "github.com/grafana/grafana/apps/provisioning/pkg/jobs"
 	"github.com/grafana/grafana/apps/provisioning/pkg/loki"
+	"github.com/grafana/grafana/apps/provisioning/pkg/quotas"
 	"github.com/grafana/grafana/apps/provisioning/pkg/repository"
+	repogithub "github.com/grafana/grafana/apps/provisioning/pkg/repository/github"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	apiutils "github.com/grafana/grafana/pkg/apimachinery/utils"
+	"github.com/grafana/grafana/pkg/apiserver/auditing"
 	grafanaregistry "github.com/grafana/grafana/pkg/apiserver/registry/generic"
 	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
+	"github.com/grafana/grafana/pkg/infra/nats"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/infra/usagestats"
-	"github.com/grafana/grafana/pkg/registry/apis/dashboard/legacy"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/controller"
+	informer "github.com/grafana/grafana/pkg/registry/apis/provisioning/informer"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs"
 	deletepkg "github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/delete"
+	deleteresourcespkg "github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/deleteresources"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/export"
+	"github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/fixfoldermetadata"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/migrate"
 	movepkg "github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/move"
+	"github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/perftest"
+	releaseresourcespkg "github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/releaseresources"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/jobs/sync"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/resources"
-	"github.com/grafana/grafana/pkg/registry/apis/provisioning/resources/signature"
 	"github.com/grafana/grafana/pkg/registry/apis/provisioning/usage"
 	"github.com/grafana/grafana/pkg/services/apiserver"
 	"github.com/grafana/grafana/pkg/services/apiserver/builder"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/legacysql/dualwrite"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
 )
 
 const repoControllerWorkers = 1
+
+// jobClaimExpiry is how long a job claim is considered valid before it is
+// treated as abandoned. It governs both claim staleness in the job store and
+// the cleanup controller that reaps expired jobs, so the two must use the same
+// value. The lease renewal interval is derived as a fraction of this so a
+// worker renews several times before its claim goes stale; otherwise a single
+// delayed renewal can let a running job be reaped and re-run by another worker.
+const jobClaimExpiry = 60 * time.Second
 
 var (
 	_ builder.APIGroupBuilder               = (*APIBuilder)(nil)
@@ -75,25 +90,43 @@ var (
 	_ builder.OpenAPIPostProcessor          = (*APIBuilder)(nil)
 )
 
+// ErrRepositoryParentFolderConflict and ErrRepositoryDuplicatePath are deprecated.
+// Use repository.ErrRepositoryParentFolderConflict and repository.ErrRepositoryDuplicatePath instead.
+var (
+	ErrRepositoryParentFolderConflict = repository.ErrRepositoryParentFolderConflict
+	ErrRepositoryDuplicatePath        = repository.ErrRepositoryDuplicatePath
+)
+
 // JobHistoryConfig holds configuration for job history backends
 type JobHistoryConfig struct {
 	Loki *loki.Config `json:"loki,omitempty"`
 }
 
 type APIBuilder struct {
+	gv schema.GroupVersion
+
 	// onlyApiServer used to disable starting controllers for the standalone API server.
 	// HACK:This will be removed once we have proper wire providers for the controllers.
 	// TODO: Set this up in the standalone API server
-	onlyApiServer bool
+	onlyApiServer                       bool
+	isPreferredVersion                  bool
+	useExclusivelyAccessCheckerForAuthz bool
 
 	allowedTargets      []provisioning.SyncTargetType
+	supportedResources  []resources.SupportedResource
 	allowImageRendering bool
+	minSyncInterval     time.Duration
 
-	features   featuremgmt.FeatureToggles
-	usageStats usagestats.Service
+	features             featuremgmt.FeatureToggles
+	usageStats           usagestats.Service
+	usageNamespaceLister usage.NamespaceLister
 
 	tracer              tracing.Tracer
-	store               grafanarest.Storage
+	repoStore           grafanarest.Storage
+	repoLister          repository.RepositoryByConnectionLister
+	repoValidator       repository.Validator
+	repoValidatorOpts   []repository.ValidatorOption
+	connectionStore     grafanarest.Storage
 	parsers             resources.ParserFactory
 	repositoryResources resources.RepositoryResourcesFactory
 	clients             resources.ClientFactory
@@ -101,35 +134,77 @@ type APIBuilder struct {
 		jobs.Queue
 		jobs.Store
 	}
-	jobHistoryConfig *JobHistoryConfig
-	jobHistoryLoki   *jobs.LokiJobHistory
-	resourceLister   resources.ResourceLister
-	legacyMigrator   legacy.LegacyMigrator
-	storageStatus    dualwrite.Service
-	unified          resource.ResourceClient
-	repoFactory      repository.Factory
-	client           client.ProvisioningV0alpha1Interface
-	access           authlib.AccessChecker
-	statusPatcher    *appcontroller.RepositoryStatusPatcher
-	healthChecker    *controller.HealthChecker
+	jobHistoryConfig  *JobHistoryConfig
+	jobHistoryLoki    *jobs.LokiJobHistory
+	resourceLister    resources.ResourceLister
+	unified           resource.ResourceClient
+	repoFactory       repository.Factory
+	connectionFactory connection.Factory
+	client            client.ProvisioningV0alpha1Interface
+	access            auth.AccessChecker
+	accessWithAdmin   auth.AccessChecker
+	accessWithEditor  auth.AccessChecker
+	accessWithViewer  auth.AccessChecker
+	statusPatcher     *appcontroller.RepositoryStatusPatcher
+	healthChecker     *controller.RepositoryHealthChecker
+	admissionHandler  *appadmission.Handler
 	// Extras provides additional functionality to the API.
 	extras       []Extra
 	extraWorkers []jobs.Worker
 
-	restConfigGetter func(context.Context) (*clientrest.Config, error)
-	registry         prometheus.Registerer
+	restConfigGetter              func(context.Context) (*clientrest.Config, error)
+	registry                      prometheus.Registerer
+	quotaGetter                   quotas.QuotaGetter
+	folderMetadataEnabled         bool
+	maxFileSize                   int64
+	syncResourceTimeout           time.Duration
+	incrementalPolicy             repository.IncrementalSyncPolicy
+	webhookSecretRotationInterval time.Duration
+	// controllerResyncInterval is the informer re-list interval for the
+	// repository and connection controllers; historyExpiration is both the
+	// HistoricJob retention and the historic-job informer's resync;
+	// jobPollInterval is the jobs informer's resync — the job driver's recovery
+	// cadence for unclaimed jobs missed by live events. All fall back to their
+	// defaults when <=0 (see the controller post-start hook).
+	controllerResyncInterval time.Duration
+	historyExpiration        time.Duration
+	jobPollInterval          time.Duration
+
+	// natsSubscriber feeds the controllers' event handlers when NATS is enabled.
+	// Instead of an apiserver-backed informer, each controller's handler is driven
+	// by a NATS-backed informer (see pkg/storage/unified/informer) that signals the
+	// handler on each notification; the controllers re-fetch from the API in their
+	// reconcile. Otherwise the controllers use the apiserver informer.
+	natsSubscriber nats.Subscriber
 }
 
-// NewAPIBuilder creates an API builder.
+// NewAPIBuilder creates an API builder for the provisioning API.
+//
+// This function supports registering multiple API versions (e.g., v0alpha1, v1beta1) by creating
+// separate API builders for each version. The same types are served under different versions using
+// OpenAPI schema transformation.
+//
+// Key parameters for multi-version support:
+//   - gv: The GroupVersion (group + version) this builder serves. This determines which API version
+//     the builder registers (e.g., "provisioning.grafana.app/v0alpha1" or "provisioning.grafana.app/v1beta1").
+//     The version is used to generate the correct API paths (/apis/{group}/{version}/...) and to
+//     transform OpenAPI schemas to match the version.
+//   - isPreferredVersion: Indicates whether this version is the preferred/default version for the API group.
+//     Only ONE version should be marked as preferred. The preferred version is used by kubectl and other
+//     clients when they query the API without specifying a version. It also controls which version runs
+//     the controllers and background workers (only the preferred version starts these to avoid duplicates).
+//
 // It avoids anything that is core to Grafana, such that it can be used in a multi-tenant service down the line.
 // This means there are no hidden dependencies, and no use of e.g. *settings.Cfg.
 func NewAPIBuilder(
+	gv schema.GroupVersion,
+	isPreferredVersion bool,
 	onlyApiServer bool,
 	repoFactory repository.Factory,
+	connectionFactory connection.Factory,
 	features featuremgmt.FeatureToggles,
 	unified resource.ResourceClient,
 	configProvider apiserver.RestConfigProvider,
-	legacyMigrator legacy.LegacyMigrator,
 	storageStatus dualwrite.Service,
 	usageStats usagestats.Service,
 	access authlib.AccessChecker,
@@ -138,47 +213,78 @@ func NewAPIBuilder(
 	extraWorkers []jobs.Worker,
 	jobHistoryConfig *JobHistoryConfig,
 	allowedTargets []provisioning.SyncTargetType,
+	supportedResources []resources.SupportedResource,
 	restConfigGetter func(context.Context) (*clientrest.Config, error),
 	allowImageRendering bool,
+	minSyncInterval time.Duration,
 	registry prometheus.Registerer,
-	newStandaloneClientFactoryFunc func(loopbackConfigProvider apiserver.RestConfigProvider) resources.ClientFactory, // optional, only used for standalone apiserver
-) *APIBuilder {
+	newStandaloneClientFactoryFunc func(loopbackConfigProvider apiserver.RestConfigProvider) resources.ClientFactory,
+	useExclusivelyAccessCheckerForAuthz bool,
+	quotaGetter quotas.QuotaGetter,
+	folderMetadataEnabled bool,
+	incrementalPolicy repository.IncrementalSyncPolicy,
+	maxFileSize int64,
+) (*APIBuilder, error) {
 	var clients resources.ClientFactory
 	if newStandaloneClientFactoryFunc != nil {
 		clients = newStandaloneClientFactoryFunc(configProvider)
 	} else {
-		clients = resources.NewClientFactory(configProvider)
+		clients = resources.NewClientFactory(configProvider, supportedResources...)
 	}
-	parsers := resources.NewParserFactory(clients)
-	resourceLister := resources.NewResourceListerForMigrations(unified, legacyMigrator, storageStatus)
+	if gv.Version == "" {
+		return nil, fmt.Errorf("invalid provisioning group/version")
+	}
+
+	parsers := resources.NewParserFactory(clients, folderMetadataEnabled)
+	resourceLister := resources.NewResourceListerForMigrations(unified)
+
+	// Create access checker based on mode
+	var accessChecker auth.AccessChecker
+	if useExclusivelyAccessCheckerForAuthz {
+		accessChecker = auth.NewTokenAccessChecker(access)
+	} else {
+		accessChecker = auth.NewSessionAccessChecker(access)
+	}
 
 	b := &APIBuilder{
-		onlyApiServer:       onlyApiServer,
-		tracer:              tracer,
-		usageStats:          usageStats,
-		features:            features,
-		repoFactory:         repoFactory,
-		clients:             clients,
-		parsers:             parsers,
-		repositoryResources: resources.NewRepositoryResourcesFactory(parsers, clients, resourceLister),
-		resourceLister:      resourceLister,
-		legacyMigrator:      legacyMigrator,
-		storageStatus:       storageStatus,
-		unified:             unified,
-		access:              access,
-		jobHistoryConfig:    jobHistoryConfig,
-		extraWorkers:        extraWorkers,
-		allowedTargets:      allowedTargets,
-		restConfigGetter:    restConfigGetter,
-		allowImageRendering: allowImageRendering,
-		registry:            registry,
+		gv:                                  gv,
+		onlyApiServer:                       onlyApiServer,
+		isPreferredVersion:                  isPreferredVersion,
+		minSyncInterval:                     minSyncInterval,
+		tracer:                              tracer,
+		usageStats:                          usageStats,
+		features:                            features,
+		repoFactory:                         repoFactory,
+		connectionFactory:                   connectionFactory,
+		clients:                             clients,
+		supportedResources:                  supportedResources,
+		parsers:                             parsers,
+		repositoryResources:                 resources.NewRepositoryResourcesFactory(parsers, clients, resourceLister, features.IsEnabledGlobally(featuremgmt.FlagProvisioningFolderMetadata)), //nolint:staticcheck
+		resourceLister:                      resourceLister,
+		unified:                             unified,
+		access:                              accessChecker,
+		accessWithAdmin:                     accessChecker.WithFallbackRole(identity.RoleAdmin),
+		accessWithEditor:                    accessChecker.WithFallbackRole(identity.RoleEditor),
+		accessWithViewer:                    accessChecker.WithFallbackRole(identity.RoleViewer),
+		jobHistoryConfig:                    jobHistoryConfig,
+		extraWorkers:                        extraWorkers,
+		restConfigGetter:                    restConfigGetter,
+		allowedTargets:                      allowedTargets,
+		allowImageRendering:                 allowImageRendering,
+		registry:                            registry,
+		useExclusivelyAccessCheckerForAuthz: useExclusivelyAccessCheckerForAuthz,
+		quotaGetter:                         quotaGetter,
+		folderMetadataEnabled:               folderMetadataEnabled,
+		incrementalPolicy:                   incrementalPolicy,
+		// Per-file cap for the files API. Non-positive (<=0) disables the cap.
+		maxFileSize: maxFileSize,
 	}
 
 	for _, builder := range extraBuilders {
 		b.extras = append(b.extras, builder(b))
 	}
 
-	return b
+	return b, nil
 }
 
 // createJobHistoryConfigFromSettings creates JobHistoryConfig from Grafana settings
@@ -224,43 +330,140 @@ func RegisterAPIService(
 	client resource.ResourceClient, // implements resource.RepositoryClient
 	configProvider apiserver.RestConfigProvider,
 	access authlib.AccessClient,
-	legacyMigrator legacy.LegacyMigrator,
 	storageStatus dualwrite.Service,
 	usageStats usagestats.Service,
+	orgSvc org.Service,
 	tracer tracing.Tracer,
 	extraBuilders []ExtraBuilder,
 	extraWorkers []jobs.Worker,
 	repoFactory repository.Factory,
+	connectionFactory connection.Factory,
+	quotaGetter quotas.QuotaGetter,
+	natsSubscriber nats.Subscriber,
 ) (*APIBuilder, error) {
-	if !features.IsEnabledGlobally(featuremgmt.FlagProvisioning) {
+	if !cfg.ProvisioningEnabled {
 		return nil, nil
 	}
 
-	allowedTargets := []provisioning.SyncTargetType{}
+	allowedTargets := make([]provisioning.SyncTargetType, 0, len(cfg.ProvisioningAllowedTargets))
 	for _, target := range cfg.ProvisioningAllowedTargets {
 		allowedTargets = append(allowedTargets, provisioning.SyncTargetType(target))
 	}
 
-	builder := NewAPIBuilder(
-		cfg.ProvisioningDisableControllers,
+	supportedResources, err := resources.ParseSupportedResources(cfg.ProvisioningResources)
+	if err != nil {
+		return nil, fmt.Errorf("invalid [provisioning] resources configuration: %w", err)
+	}
+
+	jobHistoryConfig := createJobHistoryConfigFromSettings(cfg)
+	folderMetadataEnabled := features.IsEnabledGlobally(featuremgmt.FlagProvisioningFolderMetadata) //nolint:staticcheck
+	maxFileSize := cfg.ProvisioningMaxFileSize
+	incrementalPolicy := repository.NewIncrementalSyncPolicy(folderMetadataEnabled, cfg.ProvisioningMaxIncrementalChanges)
+	provisioningSec := cfg.SectionWithEnvOverrides("provisioning")
+
+	// allowed_git_urls contain an allowlist of Git URLs that are allowed to be used for Git repositories.
+	// It should contain enpoints that otherwise would be blocked by the URL validator.
+	allowListConfig := provisioningSec.Key("allowed_git_urls").Strings(",")
+	allowlist, err := repository.NewAllowlist(allowListConfig)
+	if err != nil {
+		return nil, fmt.Errorf("invalid allowed_git_urls configuration: %w", err)
+	}
+	urlValidator := repository.NewURLValidator(allowlist, net.DefaultResolver.LookupIPAddr)
+	repoValidatorOpts := []repository.ValidatorOption{repository.WithURLValidator(urlValidator)}
+
+	// Register v0alpha1 (preferred version)
+	builder, err := NewAPIBuilder(
+		schema.GroupVersion{
+			Group:   provisioning.GROUP,
+			Version: provisioning.VERSION, // v0alpha1
+		},
+		true,                   // isPreferredVersion
+		cfg.DisableControllers, // onlyApiServer
 		repoFactory,
+		connectionFactory,
 		features,
 		client,
 		configProvider,
-		legacyMigrator, storageStatus,
+		storageStatus,
 		usageStats,
 		access,
 		tracer,
 		extraBuilders,
 		extraWorkers,
-		createJobHistoryConfigFromSettings(cfg),
+		jobHistoryConfig,
 		allowedTargets,
-		nil, // will use loopback instead
+		supportedResources,
+		nil, // restConfigGetter - will use loopback instead
 		cfg.ProvisioningAllowImageRendering,
+		cfg.ProvisioningMinSyncInterval,
 		reg,
-		nil,
+		nil,   // newStandaloneClientFactoryFunc
+		false, // useExclusivelyAccessCheckerForAuthz - TODO: first, test this on the MT side before we enable it by default in ST as well
+		quotaGetter,
+		folderMetadataEnabled,
+		incrementalPolicy,
+		maxFileSize,
 	)
+	if err != nil {
+		return nil, err
+	}
+	builder.repoValidatorOpts = repoValidatorOpts
+	builder.webhookSecretRotationInterval = cfg.ProvisioningWebhookSecretRotationInterval
+	builder.syncResourceTimeout = cfg.ProvisioningSyncResourceTimeout
+	builder.controllerResyncInterval = cfg.ProvisioningControllerResyncInterval
+	builder.historyExpiration = cfg.ProvisioningHistoryExpiration
+	builder.jobPollInterval = cfg.ProvisioningJobPollInterval
+	builder.usageNamespaceLister = usage.UsageNamespaceLister(cfg, orgSvc)
+	builder.natsSubscriber = natsSubscriber
 	apiregistration.RegisterAPI(builder)
+
+	// Register v1beta1
+	v1beta1Builder, err := NewAPIBuilder(
+		schema.GroupVersion{
+			Group:   provisioning.GROUP,
+			Version: "v1beta1",
+		},
+		false, // isPreferredVersion
+		true,  // onlyApiServer
+		repoFactory,
+		connectionFactory,
+		features,
+		client,
+		configProvider,
+		storageStatus,
+		usageStats,
+		access,
+		tracer,
+		extraBuilders,
+		extraWorkers,
+		jobHistoryConfig,
+		allowedTargets,
+		supportedResources,
+		nil, // restConfigGetter
+		cfg.ProvisioningAllowImageRendering,
+		cfg.ProvisioningMinSyncInterval,
+		reg,
+		nil,   // newStandaloneClientFactoryFunc
+		false, // useExclusivelyAccessCheckerForAuthz
+		quotaGetter,
+		folderMetadataEnabled,
+		incrementalPolicy,
+		maxFileSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	v1beta1Builder.repoValidatorOpts = repoValidatorOpts
+	v1beta1Builder.webhookSecretRotationInterval = cfg.ProvisioningWebhookSecretRotationInterval
+	v1beta1Builder.syncResourceTimeout = cfg.ProvisioningSyncResourceTimeout
+	v1beta1Builder.controllerResyncInterval = cfg.ProvisioningControllerResyncInterval
+	v1beta1Builder.historyExpiration = cfg.ProvisioningHistoryExpiration
+	v1beta1Builder.jobPollInterval = cfg.ProvisioningJobPollInterval
+	v1beta1Builder.usageNamespaceLister = usage.UsageNamespaceLister(cfg, orgSvc)
+	v1beta1Builder.natsSubscriber = natsSubscriber
+	apiregistration.RegisterAPI(v1beta1Builder)
+
+	// Return the preferred (v0alpha1) builder since it runs controllers/workers
 	return builder, nil
 }
 
@@ -274,44 +477,9 @@ func (b *APIBuilder) GetAuthorizer() authorizer.Authorizer {
 				return authorizer.DecisionAllow, "", nil
 			}
 
-			info, ok := authlib.AuthInfoFrom(ctx)
-			if ok && authlib.IsIdentityType(info.GetIdentityType(), authlib.TypeAccessPolicy) {
-				res, err := b.access.Check(ctx, info, authlib.CheckRequest{
-					Verb:        a.GetVerb(),
-					Group:       a.GetAPIGroup(),
-					Resource:    a.GetResource(),
-					Name:        a.GetName(),
-					Namespace:   a.GetNamespace(),
-					Subresource: a.GetSubresource(),
-				})
-				if err != nil {
-					return authorizer.DecisionDeny, "failed to perform authorization", err
-				}
-
-				if !res.Allowed {
-					return authorizer.DecisionDeny, "permission denied", nil
-				}
-
-				return authorizer.DecisionAllow, "", nil
-			}
-			// Different routes may need different permissions.
-			// * Reading and modifying a repository's configuration requires administrator privileges.
-			// * Reading a repository's limited configuration (/stats & /settings) requires viewer privileges.
-			// * Reading a repository's files requires viewer privileges.
-			// * Reading a repository's refs requires viewer privileges.
-			// * Editing a repository's files requires editor privileges.
-			// * Syncing a repository requires editor privileges.
-			// * Exporting a repository requires administrator privileges.
-			// * Migrating a repository requires administrator privileges.
-			// * Testing a repository configuration requires administrator privileges.
-			// * Viewing a repository's history requires editor privileges.
-
-			id, err := identity.GetRequester(ctx)
-			if err != nil {
-				return authorizer.DecisionDeny, "failed to find requester", err
-			}
-
 			// Check if any extra authorizer has a decision.
+			// Since the move to access checker when useExclusivelyAccessCheckerForAuthz=true, extra authorizers
+			// need to run first because access checker is not aware of the extras logic
 			for _, extra := range b.extras {
 				decision, reason, err := extra.Authorize(ctx, a)
 				if decision != authorizer.DecisionNoOpinion {
@@ -319,77 +487,266 @@ func (b *APIBuilder) GetAuthorizer() authorizer.Authorizer {
 				}
 			}
 
-			switch a.GetResource() {
-			case provisioning.RepositoryResourceInfo.GetName():
-				// TODO: Support more fine-grained permissions than the basic roles. Especially on Enterprise.
-				switch a.GetSubresource() {
-				case "", "test", "jobs":
-					// Doing something with the repository itself.
-					if id.GetOrgRole().Includes(identity.RoleAdmin) {
-						return authorizer.DecisionAllow, "", nil
-					}
-					return authorizer.DecisionDeny, "admin role is required", nil
-
-				case "refs":
-					// This is strictly a read operation. It is handy on the frontend for viewers.
-					if id.GetOrgRole().Includes(identity.RoleViewer) {
-						return authorizer.DecisionAllow, "", nil
-					}
-					return authorizer.DecisionDeny, "viewer role is required", nil
-				case "files":
-					// Access to files is controlled by the AccessClient
-					return authorizer.DecisionAllow, "", nil
-
-				case "resources", "sync", "history":
-					// These are strictly read operations.
-					// Sync can also be somewhat destructive, but it's expected to be fine to import changes.
-					if id.GetOrgRole().Includes(identity.RoleEditor) {
-						return authorizer.DecisionAllow, "", nil
-					} else {
-						return authorizer.DecisionDeny, "editor role is required", nil
-					}
-
-				default:
-					if id.GetIsGrafanaAdmin() {
-						return authorizer.DecisionAllow, "", nil
-					}
-					return authorizer.DecisionDeny, "unmapped subresource defaults to no access", nil
-				}
-
-			case "stats":
-				// This can leak information one shouldn't necessarily have access to.
-				if id.GetOrgRole().Includes(identity.RoleAdmin) {
-					return authorizer.DecisionAllow, "", nil
-				}
-				return authorizer.DecisionDeny, "admin role is required", nil
-
-			case "settings":
-				// This is strictly a read operation. It is handy on the frontend for viewers.
-				if id.GetOrgRole().Includes(identity.RoleViewer) {
-					return authorizer.DecisionAllow, "", nil
-				}
-				return authorizer.DecisionDeny, "viewer role is required", nil
-
-			case provisioning.JobResourceInfo.GetName(),
-				provisioning.HistoricJobResourceInfo.GetName():
-				// Jobs are shown on the configuration page.
-				if id.GetOrgRole().Includes(identity.RoleAdmin) {
-					return authorizer.DecisionAllow, "", nil
-				}
-				return authorizer.DecisionDeny, "admin role is required", nil
-
-			default:
-				// We haven't bothered with this kind yet.
-				if id.GetIsGrafanaAdmin() {
-					return authorizer.DecisionAllow, "", nil
-				}
-				return authorizer.DecisionDeny, "unmapped kind defaults to no access", nil
-			}
+			return b.authorizeResource(ctx, a)
 		})
 }
 
+// authorizeResource handles authorization for different resources.
+// Uses fine-grained permissions defined in accesscontrol.go:
+//
+// Repositories:
+//   - CRUD: repositories:create/read/write/delete
+//   - Subresources: files (any auth), refs (editor), resources/history/status (admin)
+//   - Test: repositories:write
+//   - Jobs subresource: jobs:create/read
+//
+// Connections:
+//   - CRUD: connections:create/read/write/delete
+//   - Status: connections:read/write
+//
+// Jobs:
+//   - CRUD: jobs:create/read/write/delete
+//
+// Historic Jobs:
+//   - Read-only: historicjobs:read
+//
+// Settings:
+//   - settings:read - granted to Viewer (all logged-in users)
+//
+// Stats:
+//   - stats:read - granted to Admin only
+func (b *APIBuilder) authorizeResource(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
+	switch a.GetResource() {
+	case provisioning.RepositoryResourceInfo.GetName():
+		return b.authorizeRepositorySubresource(ctx, a)
+	case provisioning.ConnectionResourceInfo.GetName():
+		return b.authorizeConnectionSubresource(ctx, a)
+	case provisioning.JobResourceInfo.GetName():
+		return toAuthorizerDecision(b.accessWithEditor.Check(ctx, authlib.CheckRequest{
+			Verb:      a.GetVerb(),
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.JobResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+	case provisioning.HistoricJobResourceInfo.GetName():
+		// Historic jobs are read-only and admin-only (not editor)
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      a.GetVerb(),
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.HistoricJobResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+	case "settings":
+		// Settings are read-only and accessible by all logged-in users (Viewer role)
+		return toAuthorizerDecision(b.accessWithViewer.Check(ctx, authlib.CheckRequest{
+			Verb:      a.GetVerb(),
+			Group:     provisioning.GROUP,
+			Resource:  "settings",
+			Namespace: a.GetNamespace(),
+		}, ""))
+	case "stats":
+		// Stats are read-only and admin-only
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      a.GetVerb(),
+			Group:     provisioning.GROUP,
+			Resource:  "stats",
+			Namespace: a.GetNamespace(),
+		}, ""))
+	default:
+		return b.authorizeDefault(ctx)
+	}
+}
+
+// authorizeRepositorySubresource handles authorization for repository subresources.
+// Uses the access checker with verb-based authorization.
+func (b *APIBuilder) authorizeRepositorySubresource(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
+	switch a.GetSubresource() {
+	// Repository CRUD - viewers can read, admins can write
+	case "":
+		verb := a.GetVerb()
+		// Read operations (get, list, watch) are allowed for viewers
+		// Write operations (create, update, patch, delete) require admin
+		accessChecker := b.accessWithAdmin
+		if verb == "get" || verb == "list" || verb == "watch" {
+			accessChecker = b.accessWithViewer
+		}
+		return toAuthorizerDecision(accessChecker.Check(ctx, authlib.CheckRequest{
+			Verb:      verb,
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.RepositoryResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	// Test requires write permission (testing before save)
+	case "test":
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      apiutils.VerbUpdate,
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.RepositoryResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	// Files subresource: allow any authenticated user at route level.
+	// Directory listing checks repositories:read in the connector.
+	// Individual file operations are authorized by DualReadWriter based on the actual resource.
+	case "files":
+		return authorizer.DecisionAllow, "", nil
+
+	// refs subresource - lists the branches/commits of the repository.
+	//
+	// Two distinct flows legitimately need refs, and the repositories resource has no
+	// Editor tier to express both (repositories:read is granted to Viewer, write/create/
+	// delete to Admin), so we authorize with an OR of two semantically-correct checks:
+	//   1. Admins / repository owners setting up or editing a repository pick a target
+	//      branch -> repositories:write (VerbUpdate), scoped to this repository.
+	//   2. Editors saving changes or opening a PR via the files/push-job flow need the
+	//      branch list -> jobs:create (VerbCreate), namespace-scoped (as authorizeAdminJob).
+	// Viewers satisfy neither and are denied, which is the intended tightening. Each check
+	// uses its own correct resource, so this stays coherent under future per-repository
+	// scoping (unlike borrowing the jobs resource with the repository name).
+	case "refs":
+		if err := b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      apiutils.VerbUpdate,
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.RepositoryResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""); err == nil {
+			return authorizer.DecisionAllow, "", nil
+		}
+		return toAuthorizerDecision(b.accessWithEditor.Check(ctx, authlib.CheckRequest{
+			Verb:      apiutils.VerbCreate,
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.JobResourceInfo.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	// Read-only subresources: resources, history, status (admin only).
+	//
+	// These expose repository management/inspection views and must be admin-only. We gate
+	// on repositories:write (VerbUpdate) - an admin-only action - rather than
+	// repositories:read, which is granted to Viewer and would expose these views to
+	// viewers/editors. There is no admin-only *read* action on the repositories resource,
+	// so write is the honest gate ("you can inspect a repository's management views if you
+	// can manage it"). We keep the repositories resource with the repository Name rather
+	// than proxying through an unrelated resource (e.g. stats), so this remains correct if
+	// access is later scoped to individual repositories.
+	case "resources", "history", "status":
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      apiutils.VerbUpdate,
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.RepositoryResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	// Jobs subresource - check jobs permissions with the verb (editors can manage jobs)
+	case "jobs":
+		return toAuthorizerDecision(b.accessWithEditor.Check(ctx, authlib.CheckRequest{
+			Verb:      a.GetVerb(),
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.JobResourceInfo.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	default:
+		id, err := identity.GetRequester(ctx)
+		if err != nil {
+			return authorizer.DecisionDeny, "failed to find requester", err
+		}
+		if id.GetIsGrafanaAdmin() {
+			return authorizer.DecisionAllow, "", nil
+		}
+		return authorizer.DecisionDeny, "unmapped subresource defaults to no access", nil
+	}
+}
+
+// authorizeConnectionSubresource handles authorization for connection subresources.
+// Uses the access checker with verb-based authorization.
+func (b *APIBuilder) authorizeConnectionSubresource(ctx context.Context, a authorizer.Attributes) (authorizer.Decision, string, error) {
+	switch a.GetSubresource() {
+	// Connection CRUD - use access checker with the actual verb
+	case "":
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      a.GetVerb(),
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.ConnectionResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	case "status":
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      a.GetVerb(),
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.ConnectionResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	// Repositories is read-only
+	case "repositories":
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      apiutils.VerbGet,
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.ConnectionResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	// Authorize mutates the connection secrets, so it requires write access
+	case "authorize":
+		return toAuthorizerDecision(b.accessWithAdmin.Check(ctx, authlib.CheckRequest{
+			Verb:      apiutils.VerbUpdate,
+			Group:     provisioning.GROUP,
+			Resource:  provisioning.ConnectionResourceInfo.GetName(),
+			Name:      a.GetName(),
+			Namespace: a.GetNamespace(),
+		}, ""))
+
+	default:
+		id, err := identity.GetRequester(ctx)
+		if err != nil {
+			return authorizer.DecisionDeny, "failed to find requester", err
+		}
+		if id.GetIsGrafanaAdmin() {
+			return authorizer.DecisionAllow, "", nil
+		}
+		return authorizer.DecisionDeny, "unmapped subresource defaults to no access", nil
+	}
+}
+
+// ----------------------------------------------------------------------------
+// Authorization helpers
+// ----------------------------------------------------------------------------
+
+// toAuthorizerDecision converts an access check error to an authorizer decision tuple.
+func toAuthorizerDecision(err error) (authorizer.Decision, string, error) {
+	if err != nil {
+		return authorizer.DecisionDeny, err.Error(), nil
+	}
+	return authorizer.DecisionAllow, "", nil
+}
+
+// authorizeDefault handles authorization for unmapped resources.
+func (b *APIBuilder) authorizeDefault(ctx context.Context) (authorizer.Decision, string, error) {
+	id, err := identity.GetRequester(ctx)
+	if err != nil {
+		return authorizer.DecisionDeny, "failed to find requester", err
+	}
+	// We haven't bothered with this kind yet.
+	if id.GetIsGrafanaAdmin() {
+		return authorizer.DecisionAllow, "", nil
+	}
+	return authorizer.DecisionDeny, "unmapped kind defaults to no access", nil
+}
+
 func (b *APIBuilder) GetGroupVersion() schema.GroupVersion {
-	return provisioning.SchemeGroupVersion
+	return b.gv
 }
 
 func (b *APIBuilder) GetClient() client.ProvisioningV0alpha1Interface {
@@ -404,12 +761,16 @@ func (b *APIBuilder) GetStatusPatcher() *appcontroller.RepositoryStatusPatcher {
 	return b.statusPatcher
 }
 
-func (b *APIBuilder) GetHealthChecker() *controller.HealthChecker {
+func (b *APIBuilder) GetIncrementalPolicy() repository.IncrementalSyncPolicy {
+	return b.incrementalPolicy
+}
+
+func (b *APIBuilder) GetHealthChecker() *controller.RepositoryHealthChecker {
 	return b.healthChecker
 }
 
 func (b *APIBuilder) InstallSchema(scheme *runtime.Scheme) error {
-	err := provisioning.AddToScheme(scheme)
+	err := provisioning.AddKnownTypes(b.gv, scheme)
 	if err != nil {
 		return err
 	}
@@ -420,9 +781,28 @@ func (b *APIBuilder) InstallSchema(scheme *runtime.Scheme) error {
 		return err
 	}
 
-	metav1.AddToGroupVersion(scheme, provisioning.SchemeGroupVersion)
-	// Only 1 version (for now?)
-	return scheme.SetVersionPriority(provisioning.SchemeGroupVersion)
+	// Register custom field label conversion for Repository to enable field selectors like spec.connection.name
+	err = scheme.AddFieldLabelConversionFunc(
+		b.gv.WithKind("Repository"),
+		func(label, value string) (string, string, error) {
+			switch label {
+			case "metadata.name", "metadata.namespace", "spec.connection.name":
+				return label, value, nil
+			default:
+				return "", "", fmt.Errorf("field label not supported for Repository: %s", label)
+			}
+		},
+	)
+	if err != nil {
+		return err
+	}
+
+	metav1.AddToGroupVersion(scheme, b.gv)
+
+	if b.isPreferredVersion {
+		return scheme.SetVersionPriority(b.gv)
+	}
+	return nil
 }
 
 func (b *APIBuilder) AllowedV0Alpha1Resources() []string {
@@ -430,12 +810,53 @@ func (b *APIBuilder) AllowedV0Alpha1Resources() []string {
 }
 
 func (b *APIBuilder) UpdateAPIGroupInfo(apiGroupInfo *genericapiserver.APIGroupInfo, opts builder.APIGroupOptions) error {
-	repositoryStorage, err := grafanaregistry.NewRegistryStore(opts.Scheme, provisioning.RepositoryResourceInfo, opts.OptsGetter)
+	// Create repository storage with custom field selectors (e.g., spec.connection.name)
+	repositoryStorage, err := grafanaregistry.NewRegistryStoreWithSelectableFields(
+		opts.Scheme,
+		provisioning.RepositoryResourceInfo,
+		opts.OptsGetter,
+		grafanaregistry.SelectableFieldsOptions{
+			GetAttrs: RepositoryGetAttrs,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("failed to create repository storage: %w", err)
 	}
+
 	repositoryStatusStorage := grafanaregistry.NewRegistryStatusStore(opts.Scheme, repositoryStorage)
-	b.store = repositoryStorage
+	b.repoLister = repository.NewStorageLister(repositoryStorage)
+
+	// Create admission handler and register mutators/validators
+	b.admissionHandler = appadmission.NewHandler()
+
+	// Repository mutator and validator
+	b.repoValidator = repository.NewValidator(b.allowImageRendering, b.repoFactory, b.repoValidatorOpts...)
+
+	existingReposValidator := repository.NewVerifyAgainstExistingRepositoriesValidator(b.repoLister, b.quotaGetter)
+	connWebhookValidator := repogithub.NewConnectionWebhookValidator(b)
+	repoAdmissionValidator := repository.NewAdmissionValidator(b.allowedTargets, b.repoValidator, existingReposValidator, connWebhookValidator)
+	b.admissionHandler.RegisterMutator(provisioning.RepositoryResourceInfo.GetName(), repository.NewAdmissionMutator(b.repoFactory, b.minSyncInterval))
+	b.admissionHandler.RegisterValidator(provisioning.RepositoryResourceInfo.GetName(), repoAdmissionValidator)
+	// Connection mutator and validator
+	connAdmissionValidator := connection.NewAdmissionValidator(b.connectionFactory)
+	connDeleteValidator := connection.NewReferencedByRepositoriesValidator(b.repoLister)
+	connCombinedValidator := appadmission.NewCombinedValidator(connAdmissionValidator, connDeleteValidator)
+	b.admissionHandler.RegisterMutator(provisioning.ConnectionResourceInfo.GetName(), connection.NewAdmissionMutator(b.connectionFactory))
+	b.admissionHandler.RegisterValidator(provisioning.ConnectionResourceInfo.GetName(), connCombinedValidator)
+	// Jobs mutator and validator. The mutator attributes each job to the acting
+	// user at creation time (gated by the provisioning.userAttribution flag) and
+	// the validator enforces that the recorded author is immutable.
+	jobSupportedResources := make([]provisioning.SupportedResource, 0, len(b.supportedResources))
+	for _, r := range b.supportedResources {
+		jobSupportedResources = append(jobSupportedResources, provisioning.SupportedResource{
+			Group:    r.Group,
+			Kind:     r.Kind,
+			Disabled: !r.IsActive(),
+		})
+	}
+	b.admissionHandler.RegisterMutator(provisioning.JobResourceInfo.GetName(), appjobs.NewAdmissionMutator(userAttributionEnabled))
+	b.admissionHandler.RegisterValidator(provisioning.JobResourceInfo.GetName(), appjobs.NewAdmissionValidator(jobSupportedResources, performanceEnabled))
+	b.admissionHandler.RegisterValidator(provisioning.HistoricJobResourceInfo.GetName(), appjobs.NewHistoricJobAdmissionValidator())
 
 	jobStore, err := grafanaregistry.NewCompleteRegistryStore(opts.Scheme, provisioning.JobResourceInfo, opts.OptsGetter)
 	if err != nil {
@@ -459,25 +880,58 @@ func (b *APIBuilder) UpdateAPIGroupInfo(apiGroupInfo *genericapiserver.APIGroupI
 		if err != nil {
 			return fmt.Errorf("create historic job wrapper: %w", err)
 		}
-		storage[provisioning.HistoricJobResourceInfo.StoragePath()] = historicJobStore
+		storage[provisioning.HistoricJobResourceInfo.StoragePath()] = &historicJobStorage{Store: historicJobStore}
 	}
 
-	storage[provisioning.JobResourceInfo.StoragePath()] = jobStore
-	storage[provisioning.RepositoryResourceInfo.StoragePath()] = repositoryStorage
+	connectionsStore, err := grafanaregistry.NewRegistryStore(opts.Scheme, provisioning.ConnectionResourceInfo, opts.OptsGetter)
+	if err != nil {
+		return fmt.Errorf("failed to create connection storage: %w", err)
+	}
+	connectionStatusStorage := grafanaregistry.NewRegistryStatusStore(opts.Scheme, connectionsStore)
+
+	// When serving a non-storage version (e.g. v1beta1), wrap the CRUD stores
+	// so that List re-stamps each item's apiVersion to match the served version.
+	// See grafanaregistry.VersionedStore for details on why this is necessary.
+	if b.gv.Version != provisioning.VERSION {
+		storage[provisioning.RepositoryResourceInfo.StoragePath()] = grafanaregistry.NewVersionedStore(repositoryStorage, b.gv)
+		storage[provisioning.ConnectionResourceInfo.StoragePath()] = grafanaregistry.NewVersionedStore(connectionsStore, b.gv)
+		storage[provisioning.JobResourceInfo.StoragePath()] = grafanaregistry.NewVersionedStore(jobStore, b.gv)
+		b.repoStore = grafanaregistry.NewVersionedStore(repositoryStorage, b.gv)
+		b.connectionStore = grafanaregistry.NewVersionedStore(connectionsStore, b.gv)
+	} else {
+		storage[provisioning.RepositoryResourceInfo.StoragePath()] = repositoryStorage
+		storage[provisioning.ConnectionResourceInfo.StoragePath()] = connectionsStore
+		storage[provisioning.JobResourceInfo.StoragePath()] = jobStore
+		b.repoStore = repositoryStorage
+		b.connectionStore = connectionsStore
+	}
 	storage[provisioning.RepositoryResourceInfo.StoragePath("status")] = repositoryStatusStorage
 
+	storage[provisioning.ConnectionResourceInfo.StoragePath("status")] = connectionStatusStorage
+	storage[provisioning.ConnectionResourceInfo.StoragePath("repositories")] = WithTimeout(NewConnectionRepositoriesConnector(b), 30*time.Second)
+	storage[provisioning.ConnectionResourceInfo.StoragePath("authorize")] = WithTimeout(NewConnectionAuthorizeConnector(b), 30*time.Second)
+
 	// TODO: Add some logic so that the connectors can registered themselves and we don't have logic all over the place
-	storage[provisioning.RepositoryResourceInfo.StoragePath("test")] = NewTestConnector(b, b.repoFactory, b)
-	storage[provisioning.RepositoryResourceInfo.StoragePath("files")] = NewFilesConnector(b, b.parsers, b.clients, b.access)
-	storage[provisioning.RepositoryResourceInfo.StoragePath("refs")] = NewRefsConnector(b)
-	storage[provisioning.RepositoryResourceInfo.StoragePath("resources")] = &listConnector{
-		getter: b,
-		lister: b.resourceLister,
-	}
-	storage[provisioning.RepositoryResourceInfo.StoragePath("history")] = &historySubresource{
-		repoGetter: b,
-	}
-	storage[provisioning.RepositoryResourceInfo.StoragePath("jobs")] = NewJobsConnector(b, b, jobHistory)
+	testTester := repository.NewTester(b.repoValidator, existingReposValidator)
+
+	// TODO: Remove this connector when we deprecate the test endpoint
+	// We should use fieldErrors from status instead.
+	storage[provisioning.RepositoryResourceInfo.StoragePath("test")] = WithTimeout(NewTestConnector(b, testTester), 30*time.Second)
+	// The files subresource handles GET/POST/PUT/DELETE in a single connector
+	// and the appropriate role fallback differs per verb: reads should fall
+	// back to Viewer, writes to Editor. A static accessWithEditor would over-
+	// restrict reads when the inner authz denies; a static accessWithViewer
+	// would over-permit writes. Compose a verb-aware checker so each operation
+	// gets the right fallback. Per-resource authz still happens inside the
+	// connector via ProvisioningAuthorizer.AuthorizeResource, and repository-
+	// level operations remain Admin-gated by authorizeRepositorySubresource.
+	filesAccess := auth.NewVerbAwareAccessChecker(b.accessWithViewer, b.accessWithEditor)
+	storage[provisioning.RepositoryResourceInfo.StoragePath("files")] = WithTimeout(NewFilesConnector(b, b.parsers, b.clients, filesAccess, b.folderMetadataEnabled, b.maxFileSize), 30*time.Second)
+	storage[provisioning.RepositoryResourceInfo.StoragePath("refs")] = WithTimeout(NewRefsConnector(b), 30*time.Second)
+	storage[provisioning.RepositoryResourceInfo.StoragePath("resources")] = WithTimeout(NewListConnector(b, b.resourceLister), 30*time.Second)
+	storage[provisioning.RepositoryResourceInfo.StoragePath("history")] = WithTimeout(NewHistorySubresource(b), 30*time.Second)
+	exportEnabled := b.features.IsEnabledGlobally(featuremgmt.FlagProvisioningExport) //nolint:staticcheck
+	storage[provisioning.RepositoryResourceInfo.StoragePath("jobs")] = WithTimeout(NewJobsConnector(b, b, b, jobHistory, b.access, b.clients, b.folderMetadataEnabled, performanceEnabled, exportEnabled), 30*time.Second)
 
 	// Add any extra storage
 	for _, extra := range b.extras {
@@ -486,11 +940,25 @@ func (b *APIBuilder) UpdateAPIGroupInfo(apiGroupInfo *genericapiserver.APIGroupI
 		}
 	}
 
-	apiGroupInfo.VersionedResourcesStorageMap[provisioning.VERSION] = storage
+	apiGroupInfo.VersionedResourcesStorageMap[b.gv.Version] = storage
 	return nil
 }
 
-// TODO: Move this to a more appropriate place. Probably controller/mutation.go
+// userAttributionEnabled reports whether Git Sync commits should be attributed
+// to the acting user. It lives here (rather than in apps/provisioning) because
+// the feature flag machinery is only available in the main Grafana module.
+func userAttributionEnabled(ctx context.Context) bool {
+	return openfeature.NewDefaultClient().Boolean(ctx, featuremgmt.FlagProvisioningUserAttribution, false, openfeature.TransactionContext(ctx))
+}
+
+// performanceEnabled reports whether the synthetic "test" job type is enabled.
+// It is evaluated per request via OpenFeature (rather than captured once at
+// startup) so the flag behaves consistently with the other provisioning flags.
+func performanceEnabled(ctx context.Context) bool {
+	return openfeature.NewDefaultClient().Boolean(ctx, featuremgmt.FlagProvisioningPerformance, false, openfeature.TransactionContext(ctx))
+}
+
+// Mutate delegates to the admission handler for resource-specific mutation
 func (b *APIBuilder) Mutate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) error {
 	obj := a.GetObject()
 
@@ -498,196 +966,19 @@ func (b *APIBuilder) Mutate(ctx context.Context, a admission.Attributes, o admis
 		return nil // This is normal for sub-resource
 	}
 
-	// FIXME: Do nothing for HistoryJobs for now
-	_, ok := obj.(*provisioning.HistoricJob)
-	if ok {
-		return nil
-	}
-	// FIXME: Do nothing for Jobs for now
-	_, ok = obj.(*provisioning.Job)
-	if ok {
-		return nil
-	}
-
-	r, ok := obj.(*provisioning.Repository)
-	if !ok {
-		return fmt.Errorf("expected repository configuration")
-	}
-
-	// This is called on every update, so be careful to only add the finalizer for create
-	if len(r.Finalizers) == 0 && a.GetOperation() == admission.Create {
-		r.Finalizers = []string{
-			repository.RemoveOrphanResourcesFinalizer,
-			repository.CleanFinalizer,
-		}
-	}
-
-	if r.Spec.Sync.IntervalSeconds == 0 {
-		r.Spec.Sync.IntervalSeconds = 60
-	}
-
-	if r.Spec.Workflows == nil {
-		r.Spec.Workflows = []provisioning.Workflow{}
-	}
-
-	// Extra mutators
-	if err := b.repoFactory.Mutate(ctx, r); err != nil {
-		return fmt.Errorf("failed to mutate repository: %w", err)
-	}
-
-	return nil
+	return b.admissionHandler.Mutate(ctx, a, o)
 }
 
-// TODO: move logic to a more appropriate place. Probably controller/validation.go
+// Validate delegates to the admission handler for resource-specific validation
 func (b *APIBuilder) Validate(ctx context.Context, a admission.Attributes, o admission.ObjectInterfaces) (err error) {
-	obj := a.GetObject()
-	if obj == nil || a.GetOperation() == admission.Connect || a.GetOperation() == admission.Delete {
-		return nil // This is normal for sub-resource
-	}
-
-	// Do not validate objects we are trying to delete
-	meta, _ := apiutils.MetaAccessor(obj)
-	if meta.GetDeletionTimestamp() != nil {
-		return nil
-	}
-
-	// FIXME: Do nothing for HistoryJobs for now
-	_, ok := obj.(*provisioning.HistoricJob)
-	if ok {
-		return nil
-	}
-
-	// FIXME: Do nothing for Jobs for now
-	_, ok = obj.(*provisioning.Job)
-	if ok {
-		return nil
-	}
-
-	repo, err := b.asRepository(ctx, obj, a.GetOldObject())
-	if err != nil {
-		return err
-	}
-
-	list := repository.ValidateRepository(repo)
-	cfg := repo.Config()
-
-	if !slices.Contains(b.allowedTargets, cfg.Spec.Sync.Target) {
-		list = append(list,
-			field.Invalid(
-				field.NewPath("spec", "target"),
-				cfg.Spec.Sync.Target,
-				"sync target is not supported"))
-	}
-
-	if !b.allowImageRendering && cfg.Spec.GitHub != nil && cfg.Spec.GitHub.GenerateDashboardPreviews {
-		list = append(list,
-			field.Invalid(field.NewPath("spec", "generateDashboardPreviews"),
-				cfg.Spec.GitHub.GenerateDashboardPreviews,
-				"image rendering is not enabled"))
-	}
-
-	if a.GetOperation() == admission.Update {
-		oldRepo, err := b.asRepository(ctx, a.GetOldObject(), nil)
-		if err != nil {
-			return fmt.Errorf("get old repository for update: %w", err)
-		}
-		oldCfg := oldRepo.Config()
-
-		if cfg.Spec.Type != oldCfg.Spec.Type {
-			list = append(list, field.Forbidden(field.NewPath("spec", "type"),
-				"Changing repository type is not supported"))
-		}
-
-		// Do not allow changing the sync target once anything has synced successfully
-		if cfg.Spec.Sync.Target != oldCfg.Spec.Sync.Target && len(cfg.Status.Stats) > 0 {
-			list = append(list, field.Forbidden(field.NewPath("spec", "sync", "target"),
-				"Changing sync target after running sync is not supported"))
-		}
-	}
-
-	// Early exit to avoid more expensive checks if we have already found errors
-	if len(list) > 0 {
-		return invalidRepositoryError(a.GetName(), list)
-	}
-
-	// Exit early if we have already found errors
-	targetError := b.verifyAgainstExistingRepositories(cfg)
-	if targetError != nil {
-		return invalidRepositoryError(a.GetName(), field.ErrorList{targetError})
-	}
-
-	return nil
-}
-
-func invalidRepositoryError(name string, list field.ErrorList) error {
-	return apierrors.NewInvalid(
-		provisioning.RepositoryResourceInfo.GroupVersionKind().GroupKind(),
-		name, list)
-}
-
-func (b *APIBuilder) getRepositoriesInNamespace(ctx context.Context) ([]provisioning.Repository, error) {
-	obj, err := b.store.List(ctx, &internalversion.ListOptions{
-		Limit: 100,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	all, ok := obj.(*provisioning.RepositoryList)
-	if !ok {
-		return nil, fmt.Errorf("expected repository list")
-	}
-	return all.Items, nil
-}
-
-// TODO: move this to a more appropriate place. Probably controller/validation.go
-func (b *APIBuilder) verifyAgainstExistingRepositories(cfg *provisioning.Repository) *field.Error {
-	ctx, _, err := identity.WithProvisioningIdentity(context.Background(), cfg.Namespace)
-	if err != nil {
-		return &field.Error{Type: field.ErrorTypeInternal, Detail: err.Error()}
-	}
-	all, err := b.getRepositoriesInNamespace(request.WithNamespace(ctx, cfg.Namespace))
-	if err != nil {
-		return field.Forbidden(field.NewPath("spec"),
-			"Unable to verify root target: "+err.Error())
-	}
-
-	if cfg.Spec.Sync.Target == provisioning.SyncTargetTypeInstance {
-		// Instance sync can only be created if NO other repositories exist
-		for _, v := range all {
-			if v.Name != cfg.Name {
-				return field.Forbidden(field.NewPath("spec", "sync", "target"),
-					"Instance repository can only be created when no other repositories exist. Found: "+v.Name)
-			}
-		}
-	} else {
-		// Folder sync cannot be created if an instance repository exists
-		for _, v := range all {
-			if v.Spec.Sync.Target == provisioning.SyncTargetTypeInstance && v.Name != cfg.Name {
-				return field.Forbidden(field.NewPath("spec", "sync", "target"),
-					"Cannot create folder repository when instance repository exists: "+v.Name)
-			}
-		}
-	}
-
-	// Count repositories excluding the current one being created/updated
-	count := 0
-	for _, v := range all {
-		if v.Name != cfg.Name {
-			count++
-		}
-	}
-	if count >= 10 {
-		return field.Forbidden(field.NewPath("spec"),
-			"Maximum number of 10 repositories reached")
-	}
-
-	return nil
+	return b.admissionHandler.Validate(ctx, a, o)
 }
 
 func (b *APIBuilder) GetPostStartHooks() (map[string]genericapiserver.PostStartHookFunc, error) {
+	// Use version-specific hook name to avoid conflicts when multiple versions are registered
+	hookName := fmt.Sprintf("grafana-provisioning-%s", b.gv.Version)
 	postStartHooks := map[string]genericapiserver.PostStartHookFunc{
-		"grafana-provisioning": func(postStartHookCtx genericapiserver.PostStartHookContext) error {
+		hookName: func(postStartHookCtx genericapiserver.PostStartHookContext) error {
 			var config *clientrest.Config
 			var err error
 			if b.restConfigGetter == nil {
@@ -703,106 +994,114 @@ func (b *APIBuilder) GetPostStartHooks() (map[string]genericapiserver.PostStartH
 				return err
 			}
 
-			// Informer with resync interval used for health check and reconciliation
-			sharedInformerFactory := informers.NewSharedInformerFactory(c, 60*time.Second)
-			repoInformer := sharedInformerFactory.Provisioning().V0alpha1().Repositories()
-			jobInformer := sharedInformerFactory.Provisioning().V0alpha1().Jobs()
-
 			b.client = c.ProvisioningV0alpha1()
 
 			// Initialize the API client-based job store
-			b.jobs, err = jobs.NewJobStore(b.client, 30*time.Second, b.registry)
+			b.jobs, err = jobs.NewJobStore(b.client, jobClaimExpiry, b.registry)
 			if err != nil {
 				return fmt.Errorf("create API client job store: %w", err)
 			}
 
 			b.statusPatcher = appcontroller.NewRepositoryStatusPatcher(b.GetClient())
-			b.healthChecker = controller.NewHealthChecker(b.statusPatcher, b.registry)
+			healthMetricsRecorder := controller.NewHealthMetricsRecorder(b.registry)
+			// FIXME: Health checker uses basic validation only - no additional validators needed
+			// since the repository already passed admission validation when it was created/updated.
+			// but that leads to possible race conditions when the repository is created/updated and violating some rules.
+			b.healthChecker = controller.NewRepositoryHealthChecker(b.statusPatcher, repository.NewTester(b.repoValidator), healthMetricsRecorder)
 
-			// if running solely CRUD, skip the rest of the setup
-			if b.onlyApiServer {
+			// if running solely CRUD or not the preferred version, skip controllers/workers setup
+			if b.onlyApiServer || !b.isPreferredVersion {
 				return nil
 			}
 
-			go repoInformer.Informer().Run(postStartHookCtx.Done())
-			go jobInformer.Informer().Run(postStartHookCtx.Done())
-
-			// When starting with an empty instance -- swith to "mode 4+"
-			err = b.tryRunningOnlyUnifiedStorage()
-			if err != nil {
-				return err
+			// Informer resync interval used for health check and reconciliation of
+			// the repository and connection controllers (the jobs informer uses
+			// job_poll_interval, below). Configurable via [provisioning]
+			// resync_interval; <=0 falls back to the default.
+			informerFactoryResyncInterval := b.controllerResyncInterval
+			if informerFactoryResyncInterval <= 0 {
+				informerFactoryResyncInterval = setting.ProvisioningControllerResyncIntervalDefault
 			}
-
-			// Create the repository resources factory
-			usageMetricCollector := usage.MetricCollector(b.tracer, b.getRepositoriesInNamespace, b.unified)
+			if nats.Enabled(b.natsSubscriber) {
+				logging.DefaultLogger.Info("provisioning controllers using NATS-backed informer")
+			}
+			usageMetricCollector := usage.MetricCollector(b.tracer, b.usageNamespaceLister, b.repoLister.List, b.unified)
 			b.usageStats.RegisterMetricsFunc(usageMetricCollector)
 
 			metrics := jobs.RegisterJobMetrics(b.registry)
 
 			stageIfPossible := repository.WrapWithStageAndPushIfPossible
+
+			exportEnabled := b.features.IsEnabled(postStartHookCtx.Context, featuremgmt.FlagProvisioningExport) //nolint:staticcheck
+
+			// Standalone export generates new UIDs so exported files don't
+			// reference existing resource identifiers.
 			exportWorker := export.NewExportWorker(
 				b.clients,
 				b.repositoryResources,
-				export.ExportAll,
+				b.resourceLister,
+				export.ExportAllWithNewUIDs,
 				stageIfPossible,
 				metrics,
+				exportEnabled,
 			)
 
-			syncer := sync.NewSyncer(sync.Compare, sync.FullSync, sync.IncrementalSync, b.tracer)
+			syncer := sync.NewSyncer(sync.Compare, sync.FullSync, sync.IncrementalSync, b.tracer, 10, metrics, b.folderMetadataEnabled, b.syncResourceTimeout) //nolint:staticcheck
 			syncWorker := sync.NewSyncWorker(
 				b.clients,
 				b.repositoryResources,
-				b.storageStatus,
 				b.statusPatcher.Patch,
 				syncer,
 				metrics,
 				b.tracer,
-			)
-			signerFactory := signature.NewSignerFactory(b.clients)
-			legacyResources := migrate.NewLegacyResourcesMigrator(
-				b.repositoryResources,
-				b.parsers,
-				b.legacyMigrator,
-				signerFactory,
-				b.clients,
-				export.ExportAll,
-			)
-			storageSwapper := migrate.NewStorageSwapper(b.unified, b.storageStatus)
-			legacyMigrator := migrate.NewLegacyMigrator(
-				legacyResources,
-				storageSwapper,
-				syncWorker,
-				stageIfPossible,
+				10,
+				b.maxFileSize,
 			)
 
+			// Migration export preserves original names so the takeover
+			// allowlist can correlate resources during the sync phase.
+			migrateExportWorker := export.NewExportWorker(
+				b.clients,
+				b.repositoryResources,
+				b.resourceLister,
+				export.ExportAll,
+				stageIfPossible,
+				metrics,
+				exportEnabled,
+			)
 			cleaner := migrate.NewNamespaceCleaner(b.clients)
 			unifiedStorageMigrator := migrate.NewUnifiedStorageMigrator(
 				cleaner,
-				exportWorker,
+				migrateExportWorker,
 				syncWorker,
 			)
-
 			migrationWorker := migrate.NewMigrationWorker(
-				legacyMigrator,
 				unifiedStorageMigrator,
-				b.storageStatus,
+				b.features.IsEnabled(postStartHookCtx.Context, featuremgmt.FlagProvisioningExport), //nolint:staticcheck
 			)
 
 			deleteWorker := deletepkg.NewWorker(syncWorker, stageIfPossible, b.repositoryResources, metrics)
 			moveWorker := movepkg.NewWorker(syncWorker, stageIfPossible, b.repositoryResources, metrics)
-			workers := []jobs.Worker{
+			fixMetadataWorker := fixfoldermetadata.NewWorker(b.clients)
+			releaseResourcesWorker := releaseresourcespkg.NewWorker(b.resourceLister, b.clients, 10)
+			deleteResourcesWorker := deleteresourcespkg.NewWorker(b.resourceLister, b.clients, 10)
+
+			// Synthetic load-testing worker; a no-op unless provisioning.performance is enabled.
+			perfTestWorker := perftest.NewWorker(performanceEnabled)
+
+			// All workers registered - export/migrate/perftest check their feature flag at runtime
+			workers := make([]jobs.Worker, 0, 9+len(b.extraWorkers))
+			workers = append(workers,
+				deleteResourcesWorker,
 				deleteWorker,
 				exportWorker,
+				fixMetadataWorker,
 				migrationWorker,
 				moveWorker,
+				perfTestWorker,
+				releaseResourcesWorker,
 				syncWorker,
-			}
-
-			// Create JobController to handle job create notifications
-			jobController, err := appcontroller.NewJobController(jobInformer)
-			if err != nil {
-				return err
-			}
+			)
 
 			// Add any extra workers
 			workers = append(workers, b.extraWorkers...)
@@ -815,21 +1114,59 @@ func (b *APIBuilder) GetPostStartHooks() (map[string]genericapiserver.PostStartH
 			}
 
 			repoGetter := resources.NewRepositoryGetter(b.repoFactory, b.client)
+
+			// Create job cleanup controller
+			jobCleanupController := jobs.NewJobCleanupController(
+				b.jobs,
+				jobHistoryWriter,
+				jobClaimExpiry,
+			)
+
+			// Renew the lease well before it expires. Using jobClaimExpiry as
+			// the renewal interval would schedule the single renewal at the
+			// exact moment the claim goes stale, so any delay (GC pause,
+			// apiserver blip) lets the cleanup controller reap a job that is
+			// still running and risks duplicate execution. A third of the
+			// expiry gives three renewal attempts before the claim is
+			// considered abandoned.
+			leaseRenewalInterval := jobClaimExpiry / 3
+
+			// The jobs informer resyncs on job_poll_interval (default 30s) rather
+			// than the controllers' resync_interval, preserving the job pickup
+			// cadence (and config key) of the polling design this replaced. The
+			// driver gets the same value so its post-claim cooldown tracks the
+			// configured recovery cadence.
+			jobPollInterval := b.jobPollInterval
+			if jobPollInterval <= 0 {
+				jobPollInterval = setting.ProvisioningJobPollIntervalDefault
+			}
+
 			// This is basically our own JobQueue system
 			driver, err := jobs.NewConcurrentJobDriver(
-				3,              // 3 drivers for now
-				20*time.Minute, // Max time for each job
-				time.Minute,    // Cleanup jobs
-				30*time.Second, // Periodically look for new jobs
-				30*time.Second, // Lease renewal interval
+				3,                    // 3 drivers for now
+				20*time.Minute,       // Max time for each job
+				jobPollInterval,      // Jobs informer resync = post-claim cooldown
+				leaseRenewalInterval, // Lease renewal interval
 				b.jobs, repoGetter, jobHistoryWriter,
-				jobController.InsertNotifications(),
 				b.registry,
+				&metrics,
+				nats.Enabled(b.natsSubscriber),
 				workers...,
 			)
 			if err != nil {
 				return err
 			}
+
+			// Feed the driver's work queue from the jobs informer: live create
+			// events plus the periodic resync/re-list, which re-delivers unclaimed
+			// jobs and is the driver's only recovery path. The handler must be
+			// registered before the informer runs: the NATS-backed source has no
+			// cache to replay for late handlers.
+			jobSource := informer.NewJobDeltaSource(b.natsSubscriber, c, jobPollInterval, b.registry)
+			if _, err := jobSource.AddEventHandler(driver.EventHandler()); err != nil {
+				return fmt.Errorf("add job event handler: %w", err)
+			}
+			go jobSource.Run(postStartHookCtx.Done())
 
 			go func() {
 				if err := driver.Run(postStartHookCtx.Context); err != nil {
@@ -837,41 +1174,108 @@ func (b *APIBuilder) GetPostStartHooks() (map[string]genericapiserver.PostStartH
 				}
 			}()
 
-			repoController, err := controller.NewRepositoryController(
+			go func() {
+				if err := jobCleanupController.Run(postStartHookCtx.Context); err != nil {
+					logging.FromContext(postStartHookCtx.Context).Error("job cleanup controller failed", "error", err)
+				}
+			}()
+
+			webhookSecretRotationInterval := b.webhookSecretRotationInterval
+			if webhookSecretRotationInterval <= 0 {
+				// If webhookSecretRotationInterval is not set, use the default value
+				webhookSecretRotationInterval = 30 * 24 * time.Hour
+			}
+
+			// The repository delta source and the getter it backs.
+			repoSource, reconcileRepoGetter := informer.NewRepositoryDeltaSource(b.natsSubscriber, c, informerFactoryResyncInterval)
+			repoController := controller.NewRepositoryController(
 				b.GetClient(),
-				repoInformer,
+				reconcileRepoGetter,
 				b.repoFactory,
+				b.connectionFactory,
 				b.resourceLister,
 				b.clients,
 				b.jobs,
-				b.storageStatus,
 				b.GetHealthChecker(),
 				b.statusPatcher,
 				b.registry,
 				b.tracer,
+				10,
+				informerFactoryResyncInterval,
+				b.minSyncInterval,
+				30*time.Second,
+				b.quotaGetter,
+				controller.NewRepositoryQuotaChecker(reconcileRepoGetter),
+				b.incrementalPolicy,
+				webhookSecretRotationInterval,
+				nats.Enabled(b.natsSubscriber),
 			)
+			repoReg, err := repoSource.AddEventHandler(repoController.EventHandler())
 			if err != nil {
-				return err
+				return fmt.Errorf("add repository controller event handler: %w", err)
 			}
+			go repoSource.Run(postStartHookCtx.Done())
 
-			go repoController.Run(postStartHookCtx.Context, repoControllerWorkers)
+			// Wait for the cache to sync off the hot path so we don't block
+			// apiserver startup; the controller only starts its workers once
+			// its handler has processed the initial list.
+			go func() {
+				if !cache.WaitForCacheSync(postStartHookCtx.Done(), repoReg.HasSynced) {
+					return
+				}
+				repoController.Run(postStartHookCtx.Context, repoControllerWorkers, func() {}, func() {})
+			}()
+
+			// Create and run connection controller
+			connStatusPatcher := appcontroller.NewConnectionStatusPatcher(b.GetClient())
+			connTester := connection.NewSimpleConnectionTester(b.connectionFactory)
+			connHealthChecker := controller.NewConnectionHealthChecker(connTester, healthMetricsRecorder)
+			connSource, connGetter := informer.NewConnectionDeltaSource(b.natsSubscriber, c, informerFactoryResyncInterval)
+			connController := controller.NewConnectionController(
+				connGetter,
+				connStatusPatcher,
+				connHealthChecker,
+				b.connectionFactory,
+				informerFactoryResyncInterval,
+				30*time.Second,
+				b.registry,
+				nats.Enabled(b.natsSubscriber),
+			)
+			connReg, err := connSource.AddEventHandler(connController.EventHandler())
+			if err != nil {
+				return fmt.Errorf("add connection controller event handler: %w", err)
+			}
+			go connSource.Run(postStartHookCtx.Done())
+
+			// Same as the repository controller above: wait for cache sync off
+			// the hot path so apiserver startup isn't blocked.
+			go func() {
+				if !cache.WaitForCacheSync(postStartHookCtx.Done(), connReg.HasSynced) {
+					return
+				}
+				connController.Run(postStartHookCtx.Context, repoControllerWorkers, func() {}, func() {})
+			}()
 
 			// If Loki not used, initialize the API client-based history writer and start the controller for history jobs
 			if b.jobHistoryLoki == nil {
-				// Create HistoryJobController for cleanup of old job history entries
-				// Separate informer factory for HistoryJob cleanup with resync interval
-				historyJobExpiration := 30 * time.Second
-				historyJobInformerFactory := informers.NewSharedInformerFactory(c, historyJobExpiration)
-				historyJobInformer := historyJobInformerFactory.Provisioning().V0alpha1().HistoricJobs()
-				go historyJobInformer.Informer().Run(postStartHookCtx.Done())
-				_, err = appcontroller.NewHistoryJobController(
+				// Periodically clean up expired historic jobs. Cleanup is age-based and
+				// needs no live events: with NATS off the source is an apiserver
+				// informer (watch-fed cache replayed on resync), with NATS on it is a
+				// cron-style periodic re-list. Configurable via [provisioning]
+				// history_expiration; <=0 falls back to the default.
+				historyJobExpiration := b.historyExpiration
+				if historyJobExpiration <= 0 {
+					historyJobExpiration = setting.ProvisioningHistoryExpirationDefault
+				}
+				historyJobController := appcontroller.NewHistoryJobController(
 					b.GetClient(),
-					historyJobInformer,
 					historyJobExpiration,
 				)
-				if err != nil {
-					return fmt.Errorf("create history job controller: %w", err)
+				historySource := informer.NewHistoricJobDeltaSource(nats.Enabled(b.natsSubscriber), c, historyJobExpiration)
+				if _, err := historySource.AddEventHandler(historyJobController.EventHandler()); err != nil {
+					return fmt.Errorf("add history job controller event handler: %w", err)
 				}
+				go historySource.Run(postStartHookCtx.Done())
 			}
 
 			return nil
@@ -882,6 +1286,12 @@ func (b *APIBuilder) GetPostStartHooks() (map[string]genericapiserver.PostStartH
 }
 
 func (b *APIBuilder) GetOpenAPIDefinitions() common.GetOpenAPIDefinitions {
+	if b.gv.Version == "v1beta1" {
+		return func(rc common.ReferenceCallback) map[string]common.OpenAPIDefinition {
+			defs := provisioning.GetOpenAPIDefinitions(rc)
+			return ReplaceOpenAPIVersion(defs, "provisioning", "v0alpha1", "v1beta1")
+		}
+	}
 	return provisioning.GetOpenAPIDefinitions
 }
 
@@ -901,13 +1311,21 @@ func (b *APIBuilder) PostProcessOpenAPI(oas *spec3.OpenAPI) (*spec3.OpenAPI, err
 
 	repoprefix := root + "namespaces/{namespace}/repositories/{name}"
 	defs := b.GetOpenAPIDefinitions()(func(path string) spec.Ref { return spec.Ref{} })
-	defsBase := "github.com/grafana/grafana/apps/provisioning/pkg/apis/provisioning/v0alpha1."
-	refsBase := "com.github.grafana.grafana.apps.provisioning.pkg.apis.provisioning.v0alpha1."
+	refsBase := provisioning.OpenAPIPrefix
+	compBase := refsBase
 
+	// For v1beta1, update the component base to use the correct version
+	if b.gv.Version == "v1beta1" {
+		compBase = strings.Replace(compBase, ".v0alpha1.", ".v1beta1.", 1)
+	}
+
+	// TODO: Remove this endpoint when we deprecate the test endpoint
+	// We should use fieldErrors from status instead.
 	sub := oas.Paths.Paths[repoprefix+"/test"]
 	if sub != nil {
-		repoSchema := defs[defsBase+"Repository"].Schema
-		sub.Post.Description = "Check if the configuration is valid"
+		repoSchema := defs[compBase+"Repository"].Schema
+		sub.Post.Description = "Check if the configuration is valid. Deprecated: this will go away in favour of fieldErrors from status"
+		sub.Post.Deprecated = true
 		sub.Post.RequestBody = &spec3.RequestBody{
 			RequestBodyProps: spec3.RequestBodyProps{
 				Required: false,
@@ -976,7 +1394,7 @@ func (b *APIBuilder) PostProcessOpenAPI(oas *spec3.OpenAPI) (*spec3.OpenAPI, err
 
 		// Replace the content type for this response
 		mt := sub.Get.Responses.StatusCodeResponses[200].Content
-		s := defs[defsBase+"RefList"].Schema
+		s := defs[compBase+"RefList"].Schema
 		mt["*/*"].Schema = &s
 	}
 
@@ -994,7 +1412,7 @@ func (b *APIBuilder) PostProcessOpenAPI(oas *spec3.OpenAPI) (*spec3.OpenAPI, err
 
 		// Replace the content type for this response
 		mt := sub.Get.Responses.StatusCodeResponses[200].Content
-		s := defs[defsBase+"FileList"].Schema
+		s := defs[compBase+"FileList"].Schema
 		mt["*/*"].Schema = &s
 	}
 
@@ -1078,7 +1496,7 @@ func (b *APIBuilder) PostProcessOpenAPI(oas *spec3.OpenAPI) (*spec3.OpenAPI, err
 							Examples: map[string]*spec3.Example{
 								"dashboard": {
 									ExampleProps: spec3.ExampleProps{
-										Value: `apiVersion: dashboards.grafana.app/v0alpha1
+										Value: `apiVersion: dashboard.grafana.app/v0alpha1
 kind: Dashboard
 spec:
   title: Sample dashboard
@@ -1175,6 +1593,43 @@ spec:
 		oas.Paths.Paths[repoprefix+"/jobs/{uid}"] = sub
 	}
 
+	// Document connection authorize endpoint
+	connectionprefix := root + "namespaces/{namespace}/connections/{name}"
+	sub = oas.Paths.Paths[connectionprefix+"/authorize"]
+	if sub != nil {
+		authorizeSchema := defs[compBase+"ConnectionAuthorizeRequest"].Schema
+		sub.Post.Description = "Complete the OAuth authorization of this connection by exchanging an authorization code"
+		sub.Post.RequestBody = &spec3.RequestBody{
+			RequestBodyProps: spec3.RequestBodyProps{
+				Required: true,
+				Content: map[string]*spec3.MediaType{
+					"application/json": {
+						MediaTypeProps: spec3.MediaTypeProps{
+							Schema: &authorizeSchema,
+						},
+					},
+				},
+			},
+		}
+		sub.Post.Responses = getJSONResponse("#/components/schemas/" + refsBase + "ConnectionAuthorizeRequest")
+	}
+
+	// Document connection repositories endpoint
+	sub = oas.Paths.Paths[connectionprefix+"/repositories"]
+	if sub != nil {
+		sub.Get.Description = "List repositories available from the external git provider through this connection"
+		sub.Get.Summary = "List external repositories"
+		sub.Get.Parameters = []*spec3.Parameter{}
+		sub.Post = nil
+		sub.Put = nil
+		sub.Delete = nil
+
+		// Replace the content type for this response
+		mt := sub.Get.Responses.StatusCodeResponses[200].Content
+		s := defs[compBase+"ExternalRepositoryList"].Schema
+		mt["*/*"].Schema = &s
+	}
+
 	// Run all extra post-processors.
 	for _, extra := range b.extras {
 		if err := extra.PostProcessOpenAPI(oas); err != nil {
@@ -1185,12 +1640,10 @@ spec:
 	// Add any missing definitions
 	//-----------------------------
 	for k, v := range defs {
-		clean := strings.Replace(k, defsBase, "com.github.grafana.grafana.apps.provisioning.pkg.apis.provisioning.v0alpha1.", 1)
-		if oas.Components.Schemas[clean] == nil {
-			oas.Components.Schemas[clean] = &v.Schema
+		if oas.Components.Schemas[k] == nil {
+			oas.Components.Schemas[k] = &v.Schema
 		}
 	}
-	compBase := "com.github.grafana.grafana.apps.provisioning.pkg.apis.provisioning.v0alpha1."
 	schema := oas.Components.Schemas[compBase+"RepositoryViewList"].Properties["items"]
 	schema.Items = &spec.SchemaOrArray{
 		Schema: &spec.Schema{
@@ -1207,13 +1660,67 @@ spec:
 	}
 	oas.Components.Schemas[compBase+"RepositoryViewList"].Properties["items"] = schema
 
+	// availableResources is an array of SupportedResource; its $ref is stripped by the
+	// defs loop above (empty ReferenceCallback) and has to be re-attached (same pattern
+	// as RepositoryViewList.items).
+	availableResources := oas.Components.Schemas[compBase+"RepositoryViewList"].Properties["availableResources"]
+	availableResources.Items = &spec.SchemaOrArray{
+		Schema: &spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				AllOf: []spec.Schema{
+					{
+						SchemaProps: spec.SchemaProps{
+							Ref: spec.MustCreateRef("#/components/schemas/" + compBase + "SupportedResource"),
+						},
+					},
+				},
+			},
+		},
+	}
+	oas.Components.Schemas[compBase+"RepositoryViewList"].Properties["availableResources"] = availableResources
+
+	// Fix up the RepositoryView.commit ref. Schemas added via the defs loop above
+	// use an empty ReferenceCallback, so non-primitive fields like commit lose
+	// their $ref and have to be re-attached here (same pattern as RepositoryViewList.items).
+	commitSchema := oas.Components.Schemas[compBase+"RepositoryView"].Properties["commit"]
+	commitSchema.AllOf = []spec.Schema{
+		{
+			SchemaProps: spec.SchemaProps{
+				Ref: spec.MustCreateRef("#/components/schemas/" + compBase + "CommitOptions"),
+			},
+		},
+	}
+	oas.Components.Schemas[compBase+"RepositoryView"].Properties["commit"] = commitSchema
+
+	// Re-attach the RepositoryView.branchOptions ref for the same reason as commit above.
+	branchOptionsSchema := oas.Components.Schemas[compBase+"RepositoryView"].Properties["branchOptions"]
+	branchOptionsSchema.AllOf = []spec.Schema{
+		{
+			SchemaProps: spec.SchemaProps{
+				Ref: spec.MustCreateRef("#/components/schemas/" + compBase + "BranchOptions"),
+			},
+		},
+	}
+	oas.Components.Schemas[compBase+"RepositoryView"].Properties["branchOptions"] = branchOptionsSchema
+
+	// Re-attach the RepositoryView.pullRequest ref for the same reason as commit above.
+	pullRequestSchema := oas.Components.Schemas[compBase+"RepositoryView"].Properties["pullRequest"]
+	pullRequestSchema.AllOf = []spec.Schema{
+		{
+			SchemaProps: spec.SchemaProps{
+				Ref: spec.MustCreateRef("#/components/schemas/" + compBase + "PullRequestOptions"),
+			},
+		},
+	}
+	oas.Components.Schemas[compBase+"RepositoryView"].Properties["pullRequest"] = pullRequestSchema
+
 	countSpec := &spec.SchemaOrArray{
 		Schema: &spec.Schema{
 			SchemaProps: spec.SchemaProps{
 				AllOf: []spec.Schema{
 					{
 						SchemaProps: spec.SchemaProps{
-							Ref: spec.MustCreateRef("#/components/schemas/" + compBase + "ResourceCount"),
+							Ref: spec.MustCreateRef("#/components/schemas/" + refsBase + "ResourceCount"),
 						},
 					},
 				},
@@ -1249,76 +1756,54 @@ spec:
 	schema.Items = countSpec
 	oas.Components.Schemas[compBase+"ManagerStats"].Properties["stats"] = schema
 
+	// Clean up version-specific schemas and metadata
+	switch b.gv.Version {
+	case "v1beta1":
+		// For v1beta1, replace all v0alpha1 references with v1beta1 and remove old schemas
+		ReplaceOpenAPISpecVersion(oas, "provisioning", "v0alpha1", "v1beta1")
+		// Ensure GVK extensions are present for top-level resources
+		ensureGVKForVersion(oas, "provisioning.grafana.app", "v1beta1")
+	case "v0alpha1":
+		// For v0alpha1, remove any v1beta1 schemas and filter GVK metadata
+		ReplaceOpenAPISpecVersion(oas, "provisioning", "v1beta1", "v0alpha1")
+	}
+
 	return oas, nil
-}
-
-// FIXME: This logic does not belong in provisioning! (but required for now)
-// When starting an empty instance, we shift so that we never reference legacy storage
-// This should run somewhere else at startup by default (dual writer? dashboards?)
-func (b *APIBuilder) tryRunningOnlyUnifiedStorage() error {
-	ctx := context.Background()
-
-	if !b.storageStatus.ShouldManage(dashboard.DashboardResourceInfo.GroupResource()) {
-		return nil // not enabled
-	}
-
-	if !dualwrite.IsReadingLegacyDashboardsAndFolders(ctx, b.storageStatus) {
-		return nil
-	}
-
-	// Count how many things exist
-	rsp, err := b.legacyMigrator.Migrate(ctx, legacy.MigrateOptions{
-		Namespace: "default", // FIXME! this works for single org, but need to check multi-org
-		Resources: []schema.GroupResource{{
-			Group: dashboard.GROUP, Resource: dashboard.DASHBOARD_RESOURCE,
-		}, {
-			Group: folders.GROUP, Resource: folders.RESOURCE,
-		}},
-		OnlyCount: true,
-	})
-	if err != nil {
-		return fmt.Errorf("error getting legacy count %w", err)
-	}
-	for _, stats := range rsp.Summary {
-		if stats.Count > 0 {
-			return nil // something exists we can not just switch
-		}
-	}
-
-	logger := logging.DefaultLogger.With("logger", "provisioning startup")
-	mode5 := func(gr schema.GroupResource) error {
-		status, _ := b.storageStatus.Status(ctx, gr)
-		if !status.ReadUnified {
-			status.ReadUnified = true
-			status.WriteLegacy = false
-			status.WriteUnified = true
-			status.Runtime = false
-			status.Migrated = time.Now().UnixMilli()
-			_, err = b.storageStatus.Update(ctx, status)
-			logger.Info("set unified storage access", "group", gr.Group, "resource", gr.Resource)
-			return err
-		}
-		return nil // already reading unified
-	}
-
-	if err = mode5(dashboard.DashboardResourceInfo.GroupResource()); err != nil {
-		return err
-	}
-	if err = mode5(folders.FolderResourceInfo.GroupResource()); err != nil {
-		return err
-	}
-	return nil
 }
 
 // Helpers for fetching valid Repository objects
 // TODO: where should the helpers live?
 
 func (b *APIBuilder) GetRepository(ctx context.Context, name string) (repository.Repository, error) {
-	obj, err := b.store.Get(ctx, name, &metav1.GetOptions{})
+	obj, err := b.repoStore.Get(ctx, name, &metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
 	return b.asRepository(ctx, obj, nil)
+}
+
+func (b *APIBuilder) GetConnection(ctx context.Context, name string) (connection.Connection, error) {
+	obj, err := b.connectionStore.Get(ctx, name, &metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return b.asConnection(ctx, obj, nil)
+}
+
+func (b *APIBuilder) GetConnectionSpec(ctx context.Context, name string) (*provisioning.Connection, error) {
+	obj, err := b.connectionStore.Get(ctx, name, &metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	c, ok := obj.(*provisioning.Connection)
+	if !ok {
+		return nil, fmt.Errorf("unexpected connection type %T", obj)
+	}
+	return c, nil
+}
+
+func (b *APIBuilder) GetRepoFactory() repository.Factory {
+	return b.repoFactory
 }
 
 func (b *APIBuilder) GetHealthyRepository(ctx context.Context, name string) (repository.Repository, error) {
@@ -1338,6 +1823,11 @@ func (b *APIBuilder) GetHealthyRepository(ctx context.Context, name string) (rep
 	return repo, err
 }
 
+// GetPolicyRuleEvaluator defines the rules for logging auditing events from the API server.
+func (b *APIBuilder) GetPolicyRuleEvaluator() auditing.PolicyRuleEvaluator {
+	return auditing.NewDefaultGrafanaPolicyRuleEvaluator()
+}
+
 func (b *APIBuilder) asRepository(ctx context.Context, obj runtime.Object, old runtime.Object) (repository.Repository, error) {
 	if obj == nil {
 		return nil, fmt.Errorf("missing repository object")
@@ -1350,18 +1840,32 @@ func (b *APIBuilder) asRepository(ctx context.Context, obj runtime.Object, old r
 
 	// Copy previous values if they exist
 	if old != nil {
-		o, ok := old.(*provisioning.Repository)
-		if ok && !o.Secure.IsZero() {
-			if r.Secure.Token.IsZero() {
-				r.Secure.Token = o.Secure.Token
-			}
-			if r.Secure.WebhookSecret.IsZero() {
-				r.Secure.WebhookSecret = o.Secure.WebhookSecret
-			}
+		if oldRepo, ok := old.(*provisioning.Repository); ok {
+			repository.CopySecureValues(r, oldRepo)
 		}
 	}
 
 	return b.repoFactory.Build(ctx, r)
+}
+
+func (b *APIBuilder) asConnection(ctx context.Context, obj runtime.Object, old runtime.Object) (connection.Connection, error) {
+	if obj == nil {
+		return nil, fmt.Errorf("missing connection object")
+	}
+
+	c, ok := obj.(*provisioning.Connection)
+	if !ok {
+		return nil, fmt.Errorf("expected connection object")
+	}
+
+	// Copy previous values if they exist
+	if old != nil {
+		if oldConn, ok := old.(*provisioning.Connection); ok {
+			connection.CopySecureValues(c, oldConn)
+		}
+	}
+
+	return b.connectionFactory.Build(ctx, c)
 }
 
 func getJSONResponse(ref string) *spec3.Responses {

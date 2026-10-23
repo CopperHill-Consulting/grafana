@@ -22,17 +22,6 @@ labels:
 title: Manage notification templates
 menuTitle: Manage templates
 weight: 101
-refs:
-  notification-template-reference:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/reference/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/template-notifications/reference/
-  notification-template-examples:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/examples/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/template-notifications/examples/
 ---
 
 # Manage notification templates
@@ -62,6 +51,8 @@ To add an existing notification template to your contact point, complete the fol
 
 1. Click **Save contact point**.
 
+You can create custom notification templates using the **Enter custom message** tab. For reusable and consistent notifications, a best practice is to custom notification templates as described in the following section.
+
 ## Create a notification template and notification template group
 
 Create notification templates to customize notification messages and reuse them in contact points.
@@ -73,7 +64,7 @@ Your notification template name (`{{define "<NAME>"}}`) must be unique. You cann
 To create a notification template in Grafana, complete the following steps.
 
 1. Click **Alerts & IRM** -> **Contact points**.
-1. Click the **Notification Templates** tab and then **+ Add notification template group**.
+1. Click the **Notification Templates** tab and then **+ New notification template**.
 
 1. Enter a name for the notification template group.
 
@@ -85,7 +76,7 @@ To create a notification template in Grafana, complete the following steps.
 
 To create a notification template group that contains more than one notification template, complete the following steps.
 
-1. Click **+ Add notification template group**.
+1. Click **+ New notification template**.
 
 1. Enter a name for the notification template group.
 
@@ -93,7 +84,7 @@ To create a notification template group that contains more than one notification
 
 1. Save your changes.
 
-For more details on how to write notification templates, refer to the [template reference](ref:notification-template-reference) and [examples](ref:notification-template-examples).
+For more details on how to write notification templates, refer to the [template reference](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/reference/) and [examples](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/examples/).
 
 ## Preview a notification template
 
@@ -105,8 +96,8 @@ Notification template preview is only for Grafana Alertmanager.
 
 To preview your notification templates:
 
-1. Navigate to **Alerts&IRM** -> **Alerting** -> **Contact points** -> **Notification Templates**.
-1. Click **+ Add notification template group** or edit an existing template group.
+1. Navigate to **Alerts & IRM** -> **Alerting** -> **Notification configuration**, then select the **Templates** tab.
+1. Click **+ New notification template** or edit an existing template group.
 1. Add or update your template content.
 
    Default data is provided and you can add or edit alert data to it as well as alert instances. You can add alert data directly in the Payload data window itself or click **Select alert instances** or **Add custom alerts**.

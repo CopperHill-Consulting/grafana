@@ -1,11 +1,11 @@
-import { sceneGraph, SceneObject } from '@grafana/scenes';
+import { sceneGraph, type SceneObject } from '@grafana/scenes';
 
 import { ConditionalRenderingGroup } from '../group/ConditionalRenderingGroup';
-import { extractObjectType, ObjectsWithConditionalRendering } from '../object';
+import { extractObjectType, type ObjectsWithConditionalRendering } from '../object';
 
-import { ConditionalRenderingConditions } from './types';
+import { type ConditionalRenderingConditions } from './types';
 
-export function getGroup(condition: ConditionalRenderingConditions): ConditionalRenderingGroup {
+function getGroup(condition: ConditionalRenderingConditions): ConditionalRenderingGroup {
   if (condition.parent instanceof ConditionalRenderingGroup) {
     return condition.parent;
   }
@@ -14,6 +14,13 @@ export function getGroup(condition: ConditionalRenderingConditions): Conditional
 }
 
 export function getObject(condition: ConditionalRenderingConditions): SceneObject | undefined {
+  const group = getGroup(condition);
+  const groupTarget = group.getTarget();
+
+  if (groupTarget) {
+    return groupTarget;
+  }
+
   return getGroup(condition).parent;
 }
 

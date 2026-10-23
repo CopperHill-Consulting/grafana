@@ -16,111 +16,123 @@ labels:
     - enterprise
     - oss
 menuTitle: Microsoft SQL Server
+review_date: 2026-08-10
 title: Microsoft SQL Server data source
 weight: 900
-refs:
-  data-source-management:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/
-  add-template-variables-interval-ms:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/add-template-variables/#__interval_ms
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/add-template-variables/#__interval_ms
-  build-dashboards:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/
-  add-template-variables-interval:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/add-template-variables/#__interval
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/add-template-variables/#__interval
-  explore:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/explore/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/explore/
-  provisioning-data-sources:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/#data-sources
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/provisioning/#data-sources
-  transformations:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/transform-data/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/visualizations/panels-visualizations/query-transform-data/transform-data/
-  alerting:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/
-  visualizations:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/visualizations/panels-visualizations/visualizations/
-  variables:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/variables/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/visualizations/dashboards/variables/
-  annotate-visualizations:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/dashboards/build-dashboards/annotate-visualizations/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/visualizations/dashboards/build-dashboards/annotate-visualizations/
-  set-up-grafana-monitoring:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/set-up-grafana-monitoring/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/setup-grafana/set-up-grafana-monitoring/
-  configure-mssql-data-source:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/mssql/configure
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/mssql/configure
-  mssql-query-editor:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/mssql/query-editor/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/mssql/query-editor/
-  mssql-template-variables:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/mssql/template-variables/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/datasources/mssql/template-variables/
-  query-caching:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/#query-and-resource-caching
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/#query-and-resource-caching
 ---
 
-# Microsoft SQL Server (MSSQL) data source
+# Microsoft SQL Server data source
 
-Grafana ships with built-in support for Microsoft SQL Server (MSSQL).
-You can query and visualize data from any Microsoft SQL Server 2005 or newer, including the Microsoft Azure SQL Database.
+Microsoft SQL Server (MSSQL) is one of the most widely used relational databases for business applications, analytics, and operational workloads. The MSSQL data source lets you query your existing SQL Server instance directly from Grafana, with no data migration required.
 
-Use this data source to create dashboards, explore SQL data, and monitor MSSQL-based workloads in real time.
+The data source ships with Grafana out of the box. It's preinstalled in both Grafana OSS and Grafana Enterprise, so there's nothing for you to install. Starting with Grafana 13.2, it's packaged as a standalone plugin that updates independently of Grafana releases. Refer to [Plugin updates](#plugin-updates) for details.
 
-The following documentation helps you get started working with the Microsoft SQL Server (MSSQL) data source:
+You can connect to Microsoft SQL Server 2012 or newer, Azure SQL Database, and Azure SQL Managed Instance.
 
-- [Configure the Microsoft SQL Server data source](ref:configure-mssql-data-source)
-- [Microsoft SQL Server query editor](ref:mssql-query-editor)
-- [Microsoft SQL Server template variables](ref:mssql-template-variables)
+## Supported features
 
-## Get the most out of the data source
+| Feature     | Supported |
+| ----------- | --------- |
+| Metrics     | Yes       |
+| Alerting    | Yes       |
+| Annotations | Yes       |
 
-After installing and configuring the Microsoft SQL Server data source, you can:
+## Supported versions
 
-- Create a wide variety of [visualizations](ref:visualizations)
-- Configure and use [templates and variables](ref:variables)
-- Add [transformations](ref:transformations)
-- Add [annotations](ref:annotate-visualizations)
-- Set up [alerting](ref:alerting)
-- Optimize performance with [query caching](ref:query-caching)
+| Version                    | Supported |
+| -------------------------- | --------- |
+| Microsoft SQL Server 2012+ | Yes       |
+| Azure SQL Database         | Yes       |
+| Azure SQL Managed Instance | Yes       |
+
+Grafana recommends using the latest available service pack for optimal compatibility.
+
+## Authentication methods
+
+The Microsoft SQL Server data source supports the following authentication methods:
+
+<!-- vale Grafana.Spelling = NO -->
+
+| Method                                       | Best for                                 | Grafana Cloud | Self-managed | Supports alerting |
+| -------------------------------------------- | ---------------------------------------- | ------------- | ------------ | ----------------- |
+| SQL Server Authentication                    | Any deployment                           | Yes           | Yes          | Yes               |
+| Windows Authentication (Integrated Security) | On-premises with Windows SSO             | No            | Yes          | Yes               |
+| Windows AD (Kerberos)                        | Enterprise Active Directory environments | No            | Yes          | Yes               |
+| Azure Entra ID (App Registration)            | Azure SQL with service principal         | Yes           | Yes          | Yes               |
+| Azure Entra ID (Managed Identity)            | Grafana hosted in Azure                  | No            | Yes          | Yes               |
+| Azure Entra ID (Current User)                | User-level access control with Azure SQL | Yes           | Yes          | No                |
+
+<!-- vale Grafana.Spelling = YES -->
+
+{{< admonition type="note" >}}
+Azure Entra ID (Current User) authentication doesn't support alerting, reporting, or recorded queries because these features run on the backend without a user session.
+{{< /admonition >}}
+
+For configuration details, refer to [Configure the Microsoft SQL Server data source](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mssql/configure/).
+
+## Get started
+
+The following documentation helps you set up and use the Microsoft SQL Server data source:
+
+- [Configure the data source](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mssql/configure/)
+- [Query editor](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mssql/query-editor/)
+- [Template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mssql/template-variables/)
+- [Annotations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mssql/annotations/)
+- [Alerting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mssql/alerting/)
+- [Troubleshooting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mssql/troubleshooting/)
+
+## Plugin updates
+
+Starting with Grafana 13.2, the Microsoft SQL Server data source is a standalone plugin, preinstalled in both Grafana OSS and Grafana Enterprise. This enables more frequent updates independent of Grafana releases. Grafana automatically checks the plugin catalog and installs the latest version on each server restart.
+
+To adjust this behavior:
+
+- **Opt out of auto-updates:** Set `preinstall_auto_update` to `false` in your [configuration file](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/).
+- **Update manually:** Update at any time from the **Administration > Plugins** page without restarting Grafana.
+
+The standalone plugin requires Grafana 12.3.0 or later. The Microsoft SQL Server data source bundled with Grafana 13.1 and earlier continues to work as before. These versions are unaffected by the change.
+
+Users running Grafana 12.3.x through 13.1.x can install the standalone plugin from the plugin catalog if they want the latest features before upgrading to Grafana 13.2. To use the standalone plugin with Grafana 12.3.x through 13.1.x, add the following to your [configuration file](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/):
+
+```ini
+[plugin.mssql]
+as_external = true
+
+[plugins]
+; Install the latest version on startup:
+preinstall_sync = mssql
+; Or install a specific version:
+; preinstall_sync = mssql@<version>
+```
+
+## Additional features
+
+After you configure the data source, you can:
+
+- Use [Explore](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/explore/) to query data without building a dashboard
+- Create [visualizations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/) including time series, tables, and gauges
+- Add [transformations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/transform-data/) to manipulate query results
+- Optimize performance with [query caching](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/administration/data-source-management/#query-and-resource-caching) (Grafana Enterprise and Cloud)
+
+{{< docs/shared source="grafana" lookup="datasources/query-with-gcx.md" version="<GRAFANA_VERSION>" >}}
+
+For example, to explore and query your Microsoft SQL Server data source, use the `gcx datasources mssql` commands:
+
+```sh
+# List tables and views, or filter to a single schema
+gcx datasources mssql list-tables -d <DATASOURCE_UID>
+gcx datasources mssql list-tables -d <DATASOURCE_UID> --schema dbo
+
+# Show the columns of a table
+gcx datasources mssql describe-table dbo.WORLD_DATA -d <DATASOURCE_UID>
+
+# Run a SQL query (server-side macros like $__timeFilter are supported)
+gcx datasources mssql query -d <DATASOURCE_UID> 'SELECT * FROM events WHERE $__timeFilter(created_at)' --since 1h
+```
+
+Replace _`<DATASOURCE_UID>`_ with the UID of your Microsoft SQL Server data source. You can omit the `-d` flag when `datasources.mssql` is configured in your `gcx` context. The `query` command supports Grafana server-side macros such as `$__timeFilter` and `$__timeGroup`, and because T-SQL has no `LIMIT`, results are capped with an injected `TOP (n)` clause, which you can disable with `--limit 0`. The `list-tables` and `describe-table` commands read `INFORMATION_SCHEMA` for the data source's configured database.
+
+## Related data sources
+
+- [PostgreSQL](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/postgres/)
+- [MySQL](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/mysql/)

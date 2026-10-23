@@ -3,7 +3,7 @@ package client
 import (
 	"context"
 
-	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1"
+	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/datasource/v0alpha1"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/registry/apis/query/clientapi"
@@ -50,6 +50,10 @@ func (s *singleTenantInstanceProvider) GetInstance(_ context.Context, logger log
 		instanceConf: s.instanceConf,
 		logger:       logger,
 	}, nil
+}
+
+func (s *singleTenantInstanceProvider) GetMode() string {
+	return "st"
 }
 
 func (s *singleTenantInstance) GetSettings() clientapi.InstanceConfigurationSettings {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana/pkg/registry/apis/iam/common"
+	"github.com/grafana/grafana/pkg/services/team"
 	"github.com/grafana/grafana/pkg/storage/legacysql"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate/mocks"
@@ -60,8 +61,20 @@ func TestIdentityQueries(t *testing.T) {
 		return &v
 	}
 
+	updateTeam := func(cmd *UpdateTeamCommand) sqltemplate.SQLTemplate {
+		v := newUpdateTeam(nodb, cmd)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
 	listTeams := func(q *ListTeamQuery) sqltemplate.SQLTemplate {
 		v := newListTeams(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	createTeamMember := func(cmd *CreateTeamMemberCommand) sqltemplate.SQLTemplate {
+		v := newCreateTeamMember(nodb, cmd)
 		v.SQLTemplate = mocks.NewTestingSQLTemplate()
 		return &v
 	}
@@ -72,8 +85,44 @@ func TestIdentityQueries(t *testing.T) {
 		return &v
 	}
 
+	updateTeamMember := func(cmd *UpdateTeamMemberCommand) sqltemplate.SQLTemplate {
+		v := newUpdateTeamMember(nodb, cmd)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
 	listTeamMembers := func(q *ListTeamMembersQuery) sqltemplate.SQLTemplate {
 		v := newListTeamMembers(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	deleteTeamMember := func(q *DeleteTeamMemberCommand) sqltemplate.SQLTemplate {
+		v := newDeleteTeamMember(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	deleteTeamMembersBulk := func(q *DeleteTeamMembersBulkCommand) sqltemplate.SQLTemplate {
+		v := newDeleteTeamMembersBulk(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	deleteTeamMembersByTeam := func(q *DeleteTeamMembersByTeamCommand) sqltemplate.SQLTemplate {
+		v := newDeleteTeamMembersByTeam(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	createTeamMembersBulk := func(q *CreateTeamMembersBulkCommand) sqltemplate.SQLTemplate {
+		v := newCreateTeamMembersBulk(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	deleteTeam := func(q *DeleteTeamCommand) sqltemplate.SQLTemplate {
+		v := newDeleteTeam(nodb, q)
 		v.SQLTemplate = mocks.NewTestingSQLTemplate()
 		return &v
 	}
@@ -98,6 +147,54 @@ func TestIdentityQueries(t *testing.T) {
 
 	listServiceAccountTokens := func(q *ListServiceAccountTokenQuery) sqltemplate.SQLTemplate {
 		v := newListServiceAccountTokens(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	updateUser := func(cmd *UpdateUserCommand) sqltemplate.SQLTemplate {
+		v := newUpdateUser(nodb, cmd)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	updateOrgUser := func(cmd *UpdateOrgUserCommand) sqltemplate.SQLTemplate {
+		v := newUpdateOrgUser(nodb, cmd)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	getTeamUIDByID := func(q *GetTeamUIDByIDQuery) sqltemplate.SQLTemplate {
+		v := newGetTeamUIDByID(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	updateUserLastSeenAt := func(cmd *UpdateUserLastSeenAtCommand) sqltemplate.SQLTemplate {
+		v := newUpdateUserLastSeenAt(nodb, cmd)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	getUserUIDByID := func(q *GetUserUIDByIDQuery) sqltemplate.SQLTemplate {
+		v := newGetUserUIDByID(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	getServiceAccountToken := func(q *GetServiceAccountTokenQuery) sqltemplate.SQLTemplate {
+		v := newGetServiceAccountToken(nodb, q)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	createServiceAccountToken := func(cmd *CreateServiceAccountTokenCommand) sqltemplate.SQLTemplate {
+		v := newCreateServiceAccountToken(nodb, cmd)
+		v.SQLTemplate = mocks.NewTestingSQLTemplate()
+		return &v
+	}
+
+	deleteServiceAccountToken := func(cmd *DeleteServiceAccountTokenCommand) sqltemplate.SQLTemplate {
+		v := newDeleteServiceAccountToken(nodb, cmd)
 		v.SQLTemplate = mocks.NewTestingSQLTemplate()
 		return &v
 	}
@@ -129,12 +226,26 @@ func TestIdentityQueries(t *testing.T) {
 						},
 					}),
 				},
+				{
+					Name: "teams_id",
+					Data: listTeams(&ListTeamQuery{
+						ID:         42,
+						Pagination: common.Pagination{Limit: 1},
+					}),
+				},
 			},
 			sqlQueryUsersTemplate: {
 				{
 					Name: "users_uid",
 					Data: listUsers(&ListUserQuery{
 						UID:        "abc",
+						Pagination: common.Pagination{Limit: 1},
+					}),
+				},
+				{
+					Name: "users_id",
+					Data: listUsers(&ListUserQuery{
+						ID:         123,
 						Pagination: common.Pagination{Limit: 1},
 					}),
 				},
@@ -151,6 +262,20 @@ func TestIdentityQueries(t *testing.T) {
 							Limit:    1,
 							Continue: 2,
 						},
+					}),
+				},
+				{
+					Name: "users_email",
+					Data: listUsers(&ListUserQuery{
+						Email:      "test@example.com",
+						Pagination: common.Pagination{Limit: 5},
+					}),
+				},
+				{
+					Name: "users_login",
+					Data: listUsers(&ListUserQuery{
+						Login:      "testuser",
+						Pagination: common.Pagination{Limit: 5},
 					}),
 				},
 			},
@@ -178,12 +303,36 @@ func TestIdentityQueries(t *testing.T) {
 					}),
 				},
 			},
+			sqlCreateTeamMemberQuery: {
+				{
+					Name: "create_team_member",
+					Data: createTeamMember(&CreateTeamMemberCommand{
+						TeamID:     1,
+						UserID:     1,
+						Created:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						External:   false,
+						Permission: team.PermissionTypeMember,
+					}),
+				},
+				{
+					Name: "create_team_member_admin",
+					Data: createTeamMember(&CreateTeamMemberCommand{
+						TeamID:     1,
+						UserID:     1,
+						Created:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						External:   false,
+						Permission: team.PermissionTypeAdmin,
+					}),
+				},
+			},
 			sqlQueryTeamBindingsTemplate: {
 				{
-					Name: "team_1_bindings",
+					Name: "team_bindings_uid",
 					Data: listTeamBindings(&ListTeamBindingsQuery{
 						OrgID:      1,
-						UID:        "team-1",
+						UID:        "tm-1",
 						Pagination: common.Pagination{Limit: 1},
 					}),
 				},
@@ -204,6 +353,35 @@ func TestIdentityQueries(t *testing.T) {
 						},
 					}),
 				},
+				{
+					Name: "team_bindings_external_true",
+					Data: listTeamBindings(&ListTeamBindingsQuery{
+						OrgID: 1,
+						Pagination: common.Pagination{
+							Limit:    1,
+							Continue: 2,
+						},
+						External: new(true),
+					}),
+				},
+				{
+					Name: "team_bindings_team_uids",
+					Data: listTeamBindings(&ListTeamBindingsQuery{
+						OrgID:      1,
+						TeamUIDs:   []string{"team-1", "team-2"},
+						Pagination: common.Pagination{Limit: 1},
+					}),
+				},
+			},
+			sqlUpdateTeamMemberQuery: {
+				{
+					Name: "update_team_member_basic",
+					Data: updateTeamMember(&UpdateTeamMemberCommand{
+						UID:        "team-member-1",
+						Permission: team.PermissionTypeAdmin,
+						Updated:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+					}),
+				},
 			},
 			sqlQueryTeamMembersTemplate: {
 				{
@@ -220,6 +398,91 @@ func TestIdentityQueries(t *testing.T) {
 						UID:        "team-1",
 						OrgID:      1,
 						Pagination: common.Pagination{Limit: 1, Continue: 2},
+					}),
+				},
+			},
+			sqlDeleteTeamMemberQuery: {
+				{
+					Name: "delete_team_member_basic",
+					Data: deleteTeamMember(&DeleteTeamMemberCommand{
+						UID: "team-member-1",
+					}),
+				},
+			},
+			sqlDeleteTeamMembersBulkQuery: {
+				{
+					Name: "delete_team_members_bulk_single",
+					Data: deleteTeamMembersBulk(&DeleteTeamMembersBulkCommand{
+						OrgID: 1,
+						UIDs:  []string{"team-member-1"},
+					}),
+				},
+				{
+					Name: "delete_team_members_bulk_many",
+					Data: deleteTeamMembersBulk(&DeleteTeamMembersBulkCommand{
+						OrgID: 1,
+						UIDs:  []string{"team-member-1", "team-member-2", "team-member-3"},
+					}),
+				},
+			},
+			sqlDeleteTeamMembersByTeamQuery: {
+				{
+					Name: "delete_team_members_by_team",
+					Data: deleteTeamMembersByTeam(&DeleteTeamMembersByTeamCommand{
+						OrgID:  1,
+						TeamID: 1,
+					}),
+				},
+			},
+			sqlCreateTeamMembersBulkQuery: {
+				{
+					Name: "create_team_members_bulk_single",
+					Data: createTeamMembersBulk(&CreateTeamMembersBulkCommand{
+						Members: []CreateTeamMemberCommand{
+							{
+								UID:        "team-member-1",
+								TeamID:     1,
+								TeamUID:    "team-1",
+								UserID:     10,
+								UserUID:    "user-10",
+								OrgID:      1,
+								Created:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+								Updated:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+								External:   false,
+								Permission: 0,
+							},
+						},
+					}),
+				},
+				{
+					Name: "create_team_members_bulk_many",
+					Data: createTeamMembersBulk(&CreateTeamMembersBulkCommand{
+						Members: []CreateTeamMemberCommand{
+							{
+								UID:        "team-member-1",
+								TeamID:     1,
+								TeamUID:    "team-1",
+								UserID:     10,
+								UserUID:    "user-10",
+								OrgID:      1,
+								Created:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+								Updated:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+								External:   false,
+								Permission: 0,
+							},
+							{
+								UID:        "team-member-2",
+								TeamID:     1,
+								TeamUID:    "team-1",
+								UserID:     11,
+								UserUID:    "user-11",
+								OrgID:      1,
+								Created:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+								Updated:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+								External:   true,
+								Permission: 4,
+							},
+						},
 					}),
 				},
 			},
@@ -321,6 +584,7 @@ func TestIdentityQueries(t *testing.T) {
 				{
 					Name: "service_account_tokens_page_1",
 					Data: listServiceAccountTokens(&ListServiceAccountTokenQuery{
+						UID:        "sa-1",
 						OrgID:      1,
 						Pagination: common.Pagination{Limit: 5},
 					}),
@@ -328,6 +592,7 @@ func TestIdentityQueries(t *testing.T) {
 				{
 					Name: "service_accounts_tokens_page_2",
 					Data: listServiceAccountTokens(&ListServiceAccountTokenQuery{
+						UID:   "sa-1",
 						OrgID: 1,
 						Pagination: common.Pagination{
 							Limit:    1,
@@ -369,8 +634,8 @@ func TestIdentityQueries(t *testing.T) {
 						Email:         "team1@example.com",
 						IsProvisioned: false,
 						OrgID:         1,
-						Created:       NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
-						Updated:       NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Created:       legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated:       legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
 					}),
 				},
 				{
@@ -382,8 +647,29 @@ func TestIdentityQueries(t *testing.T) {
 						IsProvisioned: true,
 						ExternalUID:   "team-2-uid",
 						OrgID:         1,
-						Created:       NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
-						Updated:       NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Created:       legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated:       legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+					}),
+				},
+			},
+			sqlUpdateTeamTemplate: {
+				{
+					Name: "update_team_basic",
+					Data: updateTeam(&UpdateTeamCommand{
+						UID:           "team-1",
+						Name:          "Team 1",
+						Email:         "team1@example.com",
+						IsProvisioned: true,
+						ExternalUID:   "team-1-uid",
+						Updated:       legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+					}),
+				},
+			},
+			sqlDeleteTeamTemplate: {
+				{
+					Name: "delete_team_basic",
+					Data: deleteTeam(&DeleteTeamCommand{
+						UID: "team-1",
 					}),
 				},
 			},
@@ -394,8 +680,8 @@ func TestIdentityQueries(t *testing.T) {
 						OrgID:   1,
 						UserID:  123,
 						Role:    "Viewer",
-						Created: NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
-						Updated: NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Created: legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated: legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
 					}),
 				},
 				{
@@ -404,8 +690,8 @@ func TestIdentityQueries(t *testing.T) {
 						OrgID:   2,
 						UserID:  456,
 						Role:    "Admin",
-						Created: NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
-						Updated: NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
+						Created: legacysql.NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
+						Updated: legacysql.NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
 					}),
 				},
 			},
@@ -424,9 +710,9 @@ func TestIdentityQueries(t *testing.T) {
 						IsProvisioned: false,
 						Salt:          "randomsalt",
 						Rands:         "randomrands",
-						Created:       NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
-						Updated:       NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
-						LastSeenAt:    NewDBTime(time.Date(2013, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Created:       legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated:       legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						LastSeenAt:    legacysql.NewDBTime(time.Date(2013, 1, 1, 12, 0, 0, 0, time.UTC)),
 						Role:          "Viewer",
 					}),
 				},
@@ -444,9 +730,9 @@ func TestIdentityQueries(t *testing.T) {
 						IsProvisioned: true,
 						Salt:          "adminsalt",
 						Rands:         "adminrands",
-						Created:       NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
-						Updated:       NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
-						LastSeenAt:    NewDBTime(time.Date(2013, 2, 1, 10, 30, 0, 0, time.UTC)),
+						Created:       legacysql.NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
+						Updated:       legacysql.NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
+						LastSeenAt:    legacysql.NewDBTime(time.Date(2013, 2, 1, 10, 30, 0, 0, time.UTC)),
 						Role:          "Admin",
 					}),
 				},
@@ -461,8 +747,8 @@ func TestIdentityQueries(t *testing.T) {
 						Login:      "sa-1-service-account-1",
 						IsDisabled: false,
 						OrgID:      1,
-						Created:    NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
-						Updated:    NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Created:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated:    legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
 						LastSeenAt: time.Date(2013, 1, 1, 12, 0, 0, 0, time.UTC),
 					}),
 				},
@@ -475,9 +761,124 @@ func TestIdentityQueries(t *testing.T) {
 						Login:      "sa-2-disabled-service-account",
 						IsDisabled: true,
 						OrgID:      2,
-						Created:    NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
-						Updated:    NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
+						Created:    legacysql.NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
+						Updated:    legacysql.NewDBTime(time.Date(2023, 2, 1, 10, 30, 0, 0, time.UTC)),
 						LastSeenAt: time.Date(2013, 2, 1, 10, 30, 0, 0, time.UTC),
+					}),
+				},
+			},
+			sqlUpdateUserTemplate: {
+				{
+					Name: "update_user_basic",
+					Data: updateUser(&UpdateUserCommand{
+						UID:           "user-1",
+						Login:         "newuser1",
+						Email:         "newuser1@example.com",
+						Name:          "New User One",
+						IsAdmin:       true,
+						IsDisabled:    true,
+						EmailVerified: false,
+						Role:          "Editor",
+						Updated:       legacysql.NewDBTime(time.Date(2023, 1, 1, 13, 0, 0, 0, time.UTC)),
+					}),
+				},
+			},
+			sqlUpdateOrgUserTemplate: {
+				{
+					Name: "update_org_user_basic",
+					Data: updateOrgUser(&UpdateOrgUserCommand{
+						OrgID:   1,
+						UserID:  123,
+						Role:    "Admin",
+						Updated: legacysql.NewDBTime(time.Date(2023, 1, 1, 14, 0, 0, 0, time.UTC)),
+					}),
+				},
+			},
+			sqlUpdateUserLastSeenAtTemplate: {
+				{
+					Name: "update_user_last_seen_at_basic",
+					Data: updateUserLastSeenAt(&UpdateUserLastSeenAtCommand{
+						UID:        "user-1",
+						LastSeenAt: legacysql.NewDBTime(time.Date(2023, 6, 15, 10, 30, 0, 0, time.UTC)),
+					}),
+				},
+			},
+			sqlQueryTeamUIDByIDTemplate: {
+				{
+					Name: "team_uid_by_id",
+					Data: getTeamUIDByID(&GetTeamUIDByIDQuery{
+						OrgID: 1,
+						ID:    42,
+					}),
+				},
+			},
+			sqlQueryUserUIDByIDTemplate: {
+				{
+					Name: "user_uid_by_id",
+					Data: getUserUIDByID(&GetUserUIDByIDQuery{
+						OrgID:            1,
+						ID:               99,
+						IsServiceAccount: false,
+					}),
+				},
+				{
+					Name: "service_account_uid_by_id",
+					Data: getUserUIDByID(&GetUserUIDByIDQuery{
+						OrgID:            1,
+						ID:               55,
+						IsServiceAccount: true,
+					}),
+				},
+			},
+			sqlQueryServiceAccountTokenGetTemplate: {
+				{
+					Name: "get_token_by_name_and_sa",
+					Data: getServiceAccountToken(&GetServiceAccountTokenQuery{
+						Name:              "my-token",
+						ServiceAccountUID: "sa-1",
+						OrgID:             1,
+					}),
+				},
+			},
+			sqlCreateServiceAccountTokenTemplate: {
+				{
+					Name: "create_token_basic",
+					Data: createServiceAccountToken(&CreateServiceAccountTokenCommand{
+						Name:             "my-token",
+						HashedKey:        "hashed123",
+						Role:             "Viewer",
+						OrgID:            1,
+						ServiceAccountID: 42,
+						IsRevoked:        false,
+						Created:          legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						Updated:          legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+					}),
+				},
+				{
+					Name: "create_token_with_expires",
+					Data: func() sqltemplate.SQLTemplate {
+						exp := int64(1704110400) // 2024-01-01 12:00:00 UTC
+						return createServiceAccountToken(&CreateServiceAccountTokenCommand{
+							Name:             "my-token",
+							HashedKey:        "hashed123",
+							Role:             "Viewer",
+							OrgID:            1,
+							ServiceAccountID: 42,
+							Expires:          &exp,
+							IsRevoked:        false,
+							Created:          legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+							Updated:          legacysql.NewDBTime(time.Date(2023, 1, 1, 12, 0, 0, 0, time.UTC)),
+						})
+					}(),
+				},
+			},
+			sqlDeleteServiceAccountTokenTemplate: {
+				{
+					Name: "delete_token_basic",
+					Data: deleteServiceAccountToken(&DeleteServiceAccountTokenCommand{
+						Name:             "my-token",
+						OrgID:            1,
+						ServiceAccountID: 42,
 					}),
 				},
 			},

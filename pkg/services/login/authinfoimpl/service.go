@@ -19,7 +19,7 @@ type Service struct {
 	authInfoStore login.Store
 	logger        log.Logger
 	remoteCache   remotecache.CacheStorage
-	secretService secrets.Service
+	secretService secrets.Service //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
 }
 
 const remoteCachePrefix = "authinfo-"
@@ -29,7 +29,8 @@ var errMissingParameters = errutil.NewBase(errutil.StatusBadRequest, "auth-missi
 
 func ProvideService(authInfoStore login.Store,
 	remoteCache remotecache.CacheStorage,
-	secretService secrets.Service) *Service {
+	secretService secrets.Service, //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
+) *Service {
 	s := &Service{
 		authInfoStore: authInfoStore,
 		logger:        log.New("login.authinfo"),
@@ -45,9 +46,11 @@ func (s *Service) GetAuthInfo(ctx context.Context, query *login.GetAuthInfoQuery
 		return nil, user.ErrUserNotFound
 	}
 
+	logger := s.logger.FromContext(ctx)
+
 	authInfo, err := s.getAuthInfoFromCache(ctx, query)
 	if err != nil && !errors.Is(err, remotecache.ErrCacheItemNotFound) {
-		s.logger.Warn("failed to retrieve auth info from cache", "error", err)
+		logger.Warn("failed to retrieve auth info from cache", "error", err)
 	} else if authInfo != nil {
 		return authInfo, nil
 	}
@@ -59,19 +62,36 @@ func (s *Service) GetAuthInfo(ctx context.Context, query *login.GetAuthInfoQuery
 
 	err = s.setAuthInfoInCache(ctx, query, authInfo)
 	if err != nil {
-		s.logger.Warn("failed to set auth info in cache", "error", err)
+		logger.Warn("failed to set auth info in cache", "error", err)
 	} else {
-		s.logger.Debug("auth info set in cache", "cacheKey", generateCacheKey(query))
+		logger.Debug("auth info set in cache", "cacheKey", generateCacheKey(query))
 	}
 
 	return authInfo, nil
 }
 
-func (s *Service) GetUserLabels(ctx context.Context, query login.GetUserLabelsQuery) (map[int64]string, error) {
+// GetUserAuthModuleLabels returns all auth modules for a user ordered by most recent first.
+func (s *Service) GetUserAuthModuleLabels(ctx context.Context, userID int64) ([]string, error) {
+	modules, err := s.authInfoStore.GetUserAuthModules(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]string, 0, len(modules))
+	// modules should be unique and should not contain empty strings
+	for _, m := range modules {
+		label := login.GetAuthProviderLabel(m)
+		result = append(result, label)
+	}
+
+	return result, nil
+}
+
+func (s *Service) GetUsersRecentlyUsedLabel(ctx context.Context, query login.GetUserLabelsQuery) (map[int64]string, error) {
 	if len(query.UserIDs) == 0 {
 		return map[int64]string{}, nil
 	}
-	return s.authInfoStore.GetUserLabels(ctx, query)
+	return s.authInfoStore.GetUsersRecentlyUsedLabel(ctx, query)
 }
 
 func (s *Service) setAuthInfoInCache(ctx context.Context, query *login.GetAuthInfoQuery, info *login.UserAuth) error {
@@ -107,7 +127,7 @@ func (s *Service) getAuthInfoFromCache(ctx context.Context, query *login.GetAuth
 		return nil, err
 	}
 
-	s.logger.Debug("auth info retrieved from cache", "cacheKey", cacheKey)
+	s.logger.FromContext(ctx).Debug("auth info retrieved from cache", "cacheKey", cacheKey)
 
 	return info, nil
 }
@@ -138,8 +158,8 @@ func (s *Service) UpdateAuthInfo(ctx context.Context, cmd *login.UpdateAuthInfoC
 }
 
 func (s *Service) SetAuthInfo(ctx context.Context, cmd *login.SetAuthInfoCommand) error {
-	// Only set auth info if we have an (user id + auth module)
-	if cmd.UserId == 0 || cmd.AuthModule == "" {
+	// Only set auth info if we have an (user id + user uid + auth module)
+	if cmd.UserId == 0 || cmd.UserUID == "" || cmd.AuthModule == "" {
 		return errMissingParameters.Errorf("missing parameters for auth info %v", cmd)
 	}
 
@@ -166,20 +186,22 @@ func (s *Service) DeleteUserAuthInfo(ctx context.Context, userID int64) error {
 		UserId: userID,
 	}))
 	if err != nil {
-		s.logger.Error("failed to delete auth info from cache", "error", err)
+		s.logger.FromContext(ctx).Error("failed to delete auth info from cache", "error", err)
 	}
 
 	return nil
 }
 
 func (s *Service) deleteUserAuthInfoInCache(ctx context.Context, query *login.GetAuthInfoQuery) {
+	logger := s.logger.FromContext(ctx)
+
 	if query.AuthId != "" {
 		err := s.remoteCache.Delete(ctx, generateCacheKey(&login.GetAuthInfoQuery{
 			AuthModule: query.AuthModule,
 			AuthId:     query.AuthId,
 		}))
 		if err != nil {
-			s.logger.Warn("failed to delete auth info from cache", "error", err)
+			logger.Warn("failed to delete auth info from cache", "error", err)
 		}
 	}
 
@@ -189,7 +211,7 @@ func (s *Service) deleteUserAuthInfoInCache(ctx context.Context, query *login.Ge
 				UserId: query.UserId,
 			}))
 		if errN != nil {
-			s.logger.Warn("failed to delete user auth info from cache", "error", errN)
+			logger.Warn("failed to delete user auth info from cache", "error", errN)
 		}
 
 		errA := s.remoteCache.Delete(ctx, generateCacheKey(
@@ -198,7 +220,7 @@ func (s *Service) deleteUserAuthInfoInCache(ctx context.Context, query *login.Ge
 				AuthModule: query.AuthModule,
 			}))
 		if errA != nil {
-			s.logger.Warn("failed to delete user module auth info from cache", "error", errA)
+			logger.Warn("failed to delete user module auth info from cache", "error", errA)
 		}
 	}
 }

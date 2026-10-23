@@ -1,27 +1,33 @@
-import { Observable, debounce, debounceTime, defer, finalize, first, interval, map, of } from 'rxjs';
+import { type Observable, debounce, debounceTime, defer, filter, finalize, first, interval, map, of } from 'rxjs';
 
 import {
   DataSourceApi,
-  DataQueryRequest,
-  DataQueryResponse,
-  DataSourceInstanceSettings,
-  TestDataSourceResponse,
-  ScopedVar,
+  type DataQueryRequest,
+  type DataQueryResponse,
+  type DataSourceInstanceSettings,
+  type TestDataSourceResponse,
+  type ScopedVar,
   DataTopic,
-  PanelData,
-  DataFrame,
+  type PanelData,
+  type DataFrame,
   LoadingState,
-  Field,
+  type Field,
   FieldType,
-  AdHocVariableFilter,
-  MetricFindValue,
+  type AdHocVariableFilter,
+  type MetricFindValue,
   getValueMatcher,
+  type TimeRange,
   ValueMatcherID,
-  DataSourceGetDrilldownsApplicabilityOptions,
-  DrilldownsApplicability,
+  type DataSourceGetDrilldownsApplicabilityOptions,
+  type DrilldownsApplicability,
 } from '@grafana/data';
-import { config } from '@grafana/runtime';
-import { isSceneObject, SceneDataProvider, SceneDataTransformer, SceneObject } from '@grafana/scenes';
+import {
+  isSceneObject,
+  sceneGraph,
+  type SceneDataProvider,
+  SceneDataTransformer,
+  type SceneObject,
+} from '@grafana/scenes';
 import {
   activateSceneObjectAndParentTree,
   findVizPanelByKey,
@@ -30,7 +36,14 @@ import {
 
 import { MIXED_REQUEST_PREFIX } from '../mixed/MixedDataSource';
 
-import { DashboardQuery } from './types';
+import { type DashboardQuery } from './types';
+
+function isSameRange(a: TimeRange | undefined, b: TimeRange | undefined): boolean {
+  if (!a?.from || !a?.to || !b?.from || !b?.to) {
+    return false;
+  }
+  return a.from.valueOf() === b.from.valueOf() && a.to.valueOf() === b.to.valueOf();
+}
 
 /**
  * This should not really be called
@@ -97,8 +110,37 @@ export class DashboardDatasource extends DataSourceApi<DashboardQuery> {
 
       const activateCleanUp = activateSceneObjectAndParentTree(sourceDataProvider!);
 
+      // Only the Mixed-DS path uses `first(Done || Error)` to complete the
+      // substream, so only that path needs to defend against a stale Done
+      // replayed from the upstream SceneQueryRunner's ReplaySubject after a
+      // time-range change.
+      const isMixedDs = options.requestId.includes(MIXED_REQUEST_PREFIX);
+
       return sourceDataProvider!.getResultsStream!().pipe(
         debounceTime(50),
+        filter((result) => {
+          if (!isMixedDs) {
+            return true;
+          }
+          const state = result.data.state;
+          if (state !== LoadingState.Done && state !== LoadingState.Error) {
+            return true;
+          }
+          const upstreamRange = result.data.request?.range;
+          if (!upstreamRange?.from || !upstreamRange?.to) {
+            return true;
+          }
+          // Drop a terminal emission only when it is stale — i.e. computed for a
+          // range other than the source panel's *current* range. Comparing
+          // against the source's own range (not the chain panel's `options.range`)
+          // is what makes this correct when the source or the chain carries a
+          // `PanelTimeRange` override (`timeFrom`/`timeShift`): such a chain
+          // legitimately observes a range that differs from the chain request,
+          // but the upstream's fresh Done still matches the source's own range,
+          // so we keep it and only drop the genuinely stale replay.
+          const sourceRange = sceneGraph.getTimeRange(sourceDataProvider!).state.value;
+          return isSameRange(upstreamRange, sourceRange);
+        }),
         map((result) => {
           return {
             data: this.getDataFramesForQueryTopic(result.data, query, adHocFilters),
@@ -123,8 +165,9 @@ export class DashboardDatasource extends DataSourceApi<DashboardQuery> {
     query: DashboardQuery,
     filters: AdHocVariableFilter[]
   ): DataFrame[] {
-    const annotations = data.annotations ?? [];
+    // When querying for annotations topic, return the source panel's annotations as series data
     if (query.topic === DataTopic.Annotations) {
+      const annotations = data.annotations ?? [];
       return annotations.map((frame) => ({
         ...frame,
         meta: {
@@ -132,35 +175,34 @@ export class DashboardDatasource extends DataSourceApi<DashboardQuery> {
           dataTopic: DataTopic.Series,
         },
       }));
-    } else {
-      const series = data.series.map((s) => {
-        return {
-          ...s,
-          fields: s.fields.map((field: Field) => ({
-            ...field,
-            config: {
-              ...field.config,
-              // Enable AdHoc filtering for string and numeric fields only when feature toggle and per-panel setting are enabled
-              filterable:
-                config.featureToggles.dashboardDsAdHocFiltering && query.adHocFiltersEnabled
-                  ? field.type === FieldType.string || field.type === FieldType.number
-                  : field.config.filterable,
-            },
-            state: {
-              ...field.state,
-            },
-          })),
-        };
-      });
-
-      if (!config.featureToggles.dashboardDsAdHocFiltering || !query.adHocFiltersEnabled || filters.length === 0) {
-        return [...series, ...annotations];
-      }
-
-      // Apply AdHoc filters to series data
-      const filteredSeries = series.map((frame) => this.applyAdHocFilters(frame, filters));
-      return [...filteredSeries, ...annotations];
     }
+
+    // For regular queries, only return series data
+    const series = data.series.map((s) => {
+      return {
+        ...s,
+        fields: s.fields.map((field: Field) => ({
+          ...field,
+          config: {
+            ...field.config,
+            // Enable AdHoc filtering for string and numeric fields only when per-panel setting is enabled
+            filterable: query.adHocFiltersEnabled
+              ? field.type === FieldType.string || field.type === FieldType.number
+              : field.config.filterable,
+          },
+          state: {
+            ...field.state,
+          },
+        })),
+      };
+    });
+
+    if (!query.adHocFiltersEnabled || filters.length === 0) {
+      return series;
+    }
+
+    // Apply AdHoc filters to series data
+    return series.map((frame) => this.applyAdHocFilters(frame, filters));
   }
 
   /**
@@ -247,11 +289,9 @@ export class DashboardDatasource extends DataSourceApi<DashboardQuery> {
 
     const field = frame.fields[fieldIndex];
 
-    // Only support string and numeric fields when feature toggle is enabled
-    if (config.featureToggles.dashboardDsAdHocFiltering) {
-      if (field.type !== FieldType.string && field.type !== FieldType.number) {
-        return null;
-      }
+    // Only support string and numeric fields
+    if (field.type !== FieldType.string && field.type !== FieldType.number) {
+      return null;
     }
 
     // Map operator to matcher ID
@@ -357,10 +397,6 @@ export class DashboardDatasource extends DataSourceApi<DashboardQuery> {
   async getDrilldownsApplicability(
     options?: DataSourceGetDrilldownsApplicabilityOptions<DashboardQuery>
   ): Promise<DrilldownsApplicability[]> {
-    if (!config.featureToggles.dashboardDsAdHocFiltering) {
-      return [];
-    }
-
     // Check if any query has adhoc filters enabled
     const hasAdHocFiltersEnabled = options?.queries?.some((query) => query.adHocFiltersEnabled);
 

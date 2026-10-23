@@ -9,7 +9,8 @@ import (
 	"github.com/grafana/authlib/types"
 	"github.com/grafana/grafana-app-sdk/resource"
 	advisor "github.com/grafana/grafana/apps/advisor/pkg/apis/advisor/v0alpha1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/grafana/grafana/apps/advisor/pkg/translations"
+	"github.com/grafana/grafana/pkg/services/org"
 )
 
 const (
@@ -22,6 +23,19 @@ const (
 	StatusAnnotationError     = "error"
 	StatusAnnotationProcessed = "processed"
 )
+
+// NewErrorLink builds a failure link whose message and messageKey both derive
+// from the same advisor.link.{slug} entry in the translations source, so the
+// display text and the i18n key can't drift apart. The frontend translates via
+// messageKey and uses message as the English fallback.
+func NewErrorLink(slug string, url string) advisor.CheckErrorLink {
+	key := "advisor.link." + slug
+	return advisor.CheckErrorLink{
+		Message:    translations.EN(key),
+		MessageKey: &key,
+		Url:        url,
+	}
+}
 
 func NewCheckReportFailure(
 	severity advisor.CheckReportFailureSeverity,
@@ -57,15 +71,26 @@ func NewCheckReportFailureWithMoreInfo(
 	}
 }
 
-func GetNamespace(stackID string) (string, error) {
-	if stackID == "" {
-		return metav1.NamespaceDefault, nil
+func GetNamespaces(ctx context.Context, stackID string, orgService org.Service) ([]string, error) {
+	var namespaces []string
+	if stackID != "" {
+		// Single namespace for cloud stack
+		stackId, err := strconv.ParseInt(stackID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid stack id: %s", stackID)
+		}
+		namespaces = []string{types.CloudNamespaceFormatter(stackId)}
+	} else {
+		// Multiple namespaces for each org
+		orgs, err := orgService.Search(ctx, &org.SearchOrgsQuery{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch orgs: %w", err)
+		}
+		for _, o := range orgs {
+			namespaces = append(namespaces, types.OrgNamespaceFormatter(o.ID))
+		}
 	}
-	stackId, err := strconv.ParseInt(stackID, 10, 64)
-	if err != nil {
-		return "", fmt.Errorf("invalid stack id: %s", stackID)
-	}
-	return types.CloudNamespaceFormatter(stackId), nil
+	return namespaces, nil
 }
 
 func GetStatusAnnotation(obj resource.Object) string {

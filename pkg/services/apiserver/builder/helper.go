@@ -10,7 +10,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,26 +17,27 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	discoveryendpoint "k8s.io/apiserver/pkg/endpoints/discovery/aggregated"
 	openapinamer "k8s.io/apiserver/pkg/endpoints/openapi"
-	k8srequest "k8s.io/apiserver/pkg/endpoints/request"
 	"k8s.io/apiserver/pkg/registry/generic"
 	genericapiserver "k8s.io/apiserver/pkg/server"
+	serverstorage "k8s.io/apiserver/pkg/server/storage"
 	"k8s.io/apiserver/pkg/util/openapi"
 	k8sscheme "k8s.io/client-go/kubernetes/scheme"
 	k8stracing "k8s.io/component-base/tracing"
 	"k8s.io/klog/v2"
 	"k8s.io/kube-openapi/pkg/common"
 
+	"github.com/grafana/grafana/pkg/apiserver/auditing"
 	"github.com/grafana/grafana/pkg/apiserver/endpoints/filters"
 	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
-	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
 	"github.com/grafana/grafana/pkg/services/apiserver/options"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/storage/legacysql/dualwrite"
 	"github.com/grafana/grafana/pkg/storage/unified/apistore"
 )
 
-type BuildHandlerChainFuncFromBuilders = func([]APIGroupBuilder) BuildHandlerChainFunc
+type BuildHandlerChainFuncFromBuilders = func([]APIGroupBuilder, prometheus.Registerer) BuildHandlerChainFunc
 type BuildHandlerChainFunc = func(delegateHandler http.Handler, c *genericapiserver.Config) http.Handler
 
 func ProvideDefaultBuildHandlerChainFuncFromBuilders() BuildHandlerChainFuncFromBuilders {
@@ -52,10 +52,29 @@ var PathRewriters = []filters.PathRewriter{
 			return matches[1] + matches[2] + "/name" // connector requires a name
 		},
 	},
-	{
-		Pattern: regexp.MustCompile(`(/apis/query.grafana.app/v0alpha1/namespaces/.*/query$)`),
+	{ // Migrate datasource.grafana.app to query.grafana.app
+		Pattern: regexp.MustCompile(`/apis/datasource.grafana.app/v0alpha1(.*$)`),
 		ReplaceFunc: func(matches []string) string {
-			return matches[1] + "/name" // connector requires a name
+			result := "/apis/query.grafana.app/v0alpha1" + matches[1]
+			if strings.HasSuffix(matches[1], "/sqlschemas") && !strings.Contains(matches[1], "/query/") {
+				result = strings.Replace(result, "/sqlschemas", "/query/sqlschemas", 1)
+			}
+			return result
+		},
+	},
+	{
+		Pattern: regexp.MustCompile(`(/apis/query.grafana.app/v0alpha1/namespaces/.*/)query/name$`),
+		ReplaceFunc: func(matches []string) string {
+			return matches[1] + "query" // redirect from with-name to without-name
+		},
+	},
+	{
+		Pattern: regexp.MustCompile(`(/apis/query.grafana.app/v0alpha1/namespaces/.*/)sqlschemas$`),
+		ReplaceFunc: func(matches []string) string {
+			if strings.HasSuffix(matches[0], "query/sqlschemas") {
+				return matches[0] // already rewritten
+			}
+			return matches[1] + "query/sqlschemas"
 		},
 	},
 	{
@@ -66,18 +85,14 @@ var PathRewriters = []filters.PathRewriter{
 	},
 }
 
-func GetDefaultBuildHandlerChainFunc(builders []APIGroupBuilder) BuildHandlerChainFunc {
+func GetDefaultBuildHandlerChainFunc(builders []APIGroupBuilder, reg prometheus.Registerer) BuildHandlerChainFunc {
 	return func(delegateHandler http.Handler, c *genericapiserver.Config) http.Handler {
-		requestHandler, err := GetCustomRoutesHandler(
-			delegateHandler,
-			c.LoopbackClientConfig,
-			builders)
-		if err != nil {
-			panic(fmt.Sprintf("could not build the request handler for specified API builders: %s", err.Error()))
-		}
+		handler := filters.WithTracingHTTPLoggingAttributes(delegateHandler)
 
-		// Needs to run last in request chain to function as expected, hence we register it first.
-		handler := filters.WithTracingHTTPLoggingAttributes(requestHandler)
+		// auditing.HTTPInjectAuditAnnotationMiddleware extracts the innermost service caller identity from the request
+		// and injects it into the k8s audit event context (used for audit log suppression).
+		// Runs after WithRequester so auth info is available for the first-hop fallback.
+		handler = auditing.HTTPInjectAuditAnnotationMiddleware(handler)
 
 		// filters.WithRequester needs to be after the K8s chain because it depends on the K8s user in context
 		handler = filters.WithRequester(handler)
@@ -86,6 +101,10 @@ func GetDefaultBuildHandlerChainFunc(builders []APIGroupBuilder) BuildHandlerCha
 		// See https://github.com/kubernetes/apiserver/blob/v0.28.0/pkg/server/config.go#L906
 		// DefaultBuildHandlerChain provides many things, notably CORS, HSTS, cache-control, authz and latency tracking
 		handler = genericapiserver.DefaultBuildHandlerChain(handler, c)
+
+		// Must wrap DefaultBuildHandlerChain: it reports a client disconnect as a 504
+		// timeout, and this rewrites that to 499. See filters.WithCanceledRequestStatus.
+		handler = filters.WithCanceledRequestStatus(handler)
 
 		handler = filters.WithAcceptHeader(handler)
 		handler = filters.WithPathRewriters(handler, PathRewriters)
@@ -98,6 +117,8 @@ func GetDefaultBuildHandlerChainFunc(builders []APIGroupBuilder) BuildHandlerCha
 	}
 }
 
+// SetupConfig sets up the server config for the API server
+// specify isAggregator=true, if the chain is being constructed for kube-aggregator
 func SetupConfig(
 	scheme *runtime.Scheme,
 	serverConfig *genericapiserver.RecommendedConfig,
@@ -106,6 +127,9 @@ func SetupConfig(
 	buildHandlerChainFuncFromBuilders BuildHandlerChainFuncFromBuilders,
 	gvs []schema.GroupVersion,
 	additionalOpenAPIDefGetters []common.GetOpenAPIDefinitions,
+	reg prometheus.Registerer,
+	apiResourceConfig *serverstorage.ResourceConfig,
+	extraRoutes ...GroupVersionRoutes,
 ) error {
 	serverConfig.AdmissionControl = NewAdmissionFromBuilders(builders)
 	defsGetter := GetOpenAPIDefinitions(builders, additionalOpenAPIDefGetters...)
@@ -118,7 +142,7 @@ func SetupConfig(
 		openapinamer.NewDefinitionNamer(scheme, k8sscheme.Scheme))
 
 	// Add the custom routes to service discovery
-	serverConfig.OpenAPIV3Config.PostProcessSpec = getOpenAPIPostProcessor(buildVersion, builders, gvs)
+	serverConfig.OpenAPIV3Config.PostProcessSpec = getOpenAPIPostProcessor(buildVersion, builders, gvs, apiResourceConfig, extraRoutes)
 	serverConfig.OpenAPIV3Config.GetOperationIDAndTagsFromRoute = func(r common.Route) (string, []string, error) {
 		meta := r.Metadata()
 		kind := ""
@@ -229,7 +253,7 @@ func SetupConfig(
 	serverConfig.OpenAPIV3Config.Info.Version = buildVersion
 
 	serverConfig.SkipOpenAPIInstallation = false
-	serverConfig.BuildHandlerChainFunc = buildHandlerChainFuncFromBuilders(builders)
+	serverConfig.BuildHandlerChainFunc = buildHandlerChainFuncFromBuilders(builders, reg)
 
 	// set priority for aggregated discovery
 	for i, b := range builders {
@@ -238,9 +262,7 @@ func SetupConfig(
 			return fmt.Errorf("builder did not return any API group versions: %T", b)
 		}
 		pvs := scheme.PrioritizedVersionsForGroup(gvs[0].Group)
-		for j, gv := range pvs {
-			serverConfig.AggregatedDiscoveryGroupManager.SetGroupVersionPriority(metav1.GroupVersion(gv), 15000+i, len(pvs)-j)
-		}
+		SetGroupVersionPriorities(serverConfig.AggregatedDiscoveryGroupManager, discoveryGroupPriorityBase+i, pvs)
 	}
 
 	if err := AddPostStartHooks(serverConfig, builders); err != nil {
@@ -250,17 +272,40 @@ func SetupConfig(
 	return nil
 }
 
-type ServerLockService interface {
-	LockExecuteAndRelease(ctx context.Context, actionName string, maxInterval time.Duration, fn func(ctx context.Context)) error
+// discoveryGroupPriorityBase is the group-priority-minimum base; the builder index is added for stable relative order.
+const discoveryGroupPriorityBase = 15000
+
+// SetGroupVersionPriorities orders a group's versions in aggregated discovery under one group priority; safe at runtime (the manager serializes calls).
+func SetGroupVersionPriorities(mgr discoveryendpoint.ResourceManager, groupPriority int, pvs []schema.GroupVersion) {
+	for j, gv := range pvs {
+		mgr.SetGroupVersionPriority(metav1.GroupVersion(gv), groupPriority, len(pvs)-j)
+	}
 }
 
-func getRequestInfo(gr schema.GroupResource, namespaceMapper request.NamespaceMapper) *k8srequest.RequestInfo {
-	return &k8srequest.RequestInfo{
-		APIGroup:  gr.Group,
-		Resource:  gr.Resource,
-		Name:      "",
-		Namespace: namespaceMapper(int64(1)),
+// BuilderGroupPriorities returns each builder group's discovery priority-minimum, matching startup, so a runtime re-prioritize preserves group order.
+func BuilderGroupPriorities(builders []APIGroupBuilder) map[string]int {
+	priorities := make(map[string]int, len(builders))
+	for i, b := range builders {
+		gvs := GetGroupVersions(b)
+		if len(gvs) == 0 {
+			continue
+		}
+		priorities[gvs[0].Group] = discoveryGroupPriorityBase + i
 	}
+	return priorities
+}
+
+// servedVersionsForResource returns the versions the scheme registers for this resource's
+// kind, falling back to the group's prioritized versions if the kind cannot be resolved.
+func servedVersionsForResource(scheme *runtime.Scheme, gr schema.GroupResource, storage grafanarest.Storage) []schema.GroupVersion {
+	if gvks, _, err := scheme.ObjectKinds(storage.New()); err == nil {
+		for _, gvk := range gvks {
+			if gvk.Group == gr.Group {
+				return scheme.VersionsForGroupKind(gvk.GroupKind())
+			}
+		}
+	}
+	return scheme.PrioritizedVersionsForGroup(gr.Group)
 }
 
 func InstallAPIs(
@@ -271,105 +316,28 @@ func InstallAPIs(
 	builders []APIGroupBuilder,
 	storageOpts *options.StorageOptions,
 	reg prometheus.Registerer,
-	namespaceMapper request.NamespaceMapper,
-	kvStore grafanarest.NamespacedKVStore,
-	serverLock ServerLockService,
 	dualWriteService dualwrite.Service,
 	optsregister apistore.StorageOptionsRegister,
 	features featuremgmt.FeatureToggles,
-	dualWriterMetrics *grafanarest.DualWriterMetrics,
 	builderMetrics *BuilderMetrics,
+	apiResourceConfig *serverstorage.ResourceConfig,
 ) error {
-	// dual writing is only enabled when the storage type is not legacy.
-	// this is needed to support setting a default RESTOptionsGetter for new APIs that don't
-	// support the legacy storage type.
-	var dualWrite grafanarest.DualWriteBuilder
-
-	// nolint:staticcheck
-	if storageOpts.StorageType != options.StorageTypeLegacy {
-		dualWrite = func(gr schema.GroupResource, legacy grafanarest.Storage, storage grafanarest.Storage) (grafanarest.Storage, error) {
-			// Dashboards + Folders may be managed (depends on feature toggles and database state)
-			if dualWriteService != nil && dualWriteService.ShouldManage(gr) {
-				return dualWriteService.NewStorage(gr, legacy, storage) // eventually this can replace this whole function
-			}
-
-			key := gr.String() // ${resource}.{group} eg playlists.playlist.grafana.app
-
-			// Get the option from custom.ini/command line
-			// when missing this will default to mode zero (legacy only)
-			var mode = grafanarest.DualWriterMode(0)
-
-			var (
-				dualWriterPeriodicDataSyncJobEnabled bool
-				dualWriterMigrationDataSyncDisabled  bool
-				dataSyncerInterval                   = time.Hour
-				dataSyncerRecordsLimit               = 1000
-			)
-
-			resourceConfig, resourceExists := storageOpts.UnifiedStorageConfig[key]
-			if resourceExists {
-				mode = resourceConfig.DualWriterMode
-				dualWriterPeriodicDataSyncJobEnabled = resourceConfig.DualWriterPeriodicDataSyncJobEnabled
-				dualWriterMigrationDataSyncDisabled = resourceConfig.DualWriterMigrationDataSyncDisabled
-				dataSyncerInterval = resourceConfig.DataSyncerInterval
-				dataSyncerRecordsLimit = resourceConfig.DataSyncerRecordsLimit
-			}
-
-			// Force using storage only -- regardless of internal synchronization state
-			if mode == grafanarest.Mode5 {
-				builderMetrics.RecordDualWriterModes(gr.Resource, gr.Group, mode, grafanarest.Mode5)
-				return storage, nil
-			}
-
-			// TODO: inherited context from main Grafana process
-			ctx := context.Background()
-
-			// Moving from one version to the next can only happen after the previous step has
-			// successfully synchronized.
-			requestInfo := getRequestInfo(gr, namespaceMapper)
-
-			syncerCfg := &grafanarest.SyncerConfig{
-				Kind:                   key,
-				RequestInfo:            requestInfo,
-				Mode:                   mode,
-				SkipDataSync:           dualWriterMigrationDataSyncDisabled,
-				LegacyStorage:          legacy,
-				Storage:                storage,
-				ServerLockService:      serverLock,
-				DataSyncerInterval:     dataSyncerInterval,
-				DataSyncerRecordsLimit: dataSyncerRecordsLimit,
-			}
-
-			// This also sets the currentMode on the syncer config.
-			currentMode, err := grafanarest.SetDualWritingMode(ctx, kvStore, syncerCfg, dualWriterMetrics)
-			if err != nil {
-				return nil, err
-			}
-
-			builderMetrics.RecordDualWriterModes(gr.Resource, gr.Group, mode, currentMode)
-
-			switch currentMode {
-			case grafanarest.Mode0:
-				return legacy, nil
-			case grafanarest.Mode4, grafanarest.Mode5:
-				return storage, nil
-			default:
-			}
-
-			if dualWriterPeriodicDataSyncJobEnabled {
-				// The mode might have changed in SetDualWritingMode, so apply current mode first.
-				syncerCfg.Mode = currentMode
-				if err := grafanarest.StartPeriodicDataSyncer(ctx, syncerCfg, dualWriterMetrics); err != nil {
-					return nil, err
-				}
-			}
-
-			// when unable to use
-			if currentMode != mode {
-				klog.Warningf("Requested DualWrite mode: %d, but using %d for %+v", mode, currentMode, gr)
-			}
-			return dualwrite.NewDualWriter(gr, currentMode, legacy, storage)
+	dualWrite := func(gr schema.GroupResource, legacy grafanarest.Storage, storage grafanarest.Storage) (grafanarest.Storage, error) {
+		key := gr.String()
+		if resourceConfig, ok := storageOpts.UnifiedStorageConfig[key]; ok {
+			builderMetrics.RecordDualWriterTargetMode(gr.Resource, gr.Group, resourceConfig.DualWriterMode)
 		}
+		// unified must never serve an apiVersion the scheme never registered; with no
+		// legacy fallback there is nothing safe to serve, so refuse to install.
+		served := servedVersionsForResource(scheme, gr, storage)
+		if err := dualWriteService.ValidateServedVersions(context.Background(), gr, served); err != nil {
+			if legacy == nil {
+				return nil, fmt.Errorf("cannot serve %q from unified storage: %w", gr.String(), err)
+			}
+			klog.Warningf("serving legacy storage for %q: %v", gr.String(), err)
+			return legacy, nil
+		}
+		return dualWriteService.NewStorage(gr, legacy, storage)
 	}
 
 	// NOTE: we build a map structure by version only for the purposes of InstallAPIGroup
@@ -389,32 +357,8 @@ func InstallAPIs(
 	for group, buildersForGroup := range buildersGroupMap {
 		g := genericapiserver.NewDefaultAPIGroupInfo(group, scheme, metav1.ParameterCodec, codecs)
 		for _, b := range buildersForGroup {
-			if err := b.UpdateAPIGroupInfo(&g, APIGroupOptions{
-				Scheme:              scheme,
-				OptsGetter:          optsGetter,
-				DualWriteBuilder:    dualWrite,
-				MetricsRegister:     reg,
-				StorageOptsRegister: optsregister,
-				StorageOpts:         storageOpts,
-			}); err != nil {
+			if err := installAPIGroupsForBuilder(&g, group, b, apiResourceConfig, scheme, optsGetter, dualWrite, reg, optsregister, storageOpts, features); err != nil {
 				return err
-			}
-			if len(g.PrioritizedVersions) < 1 {
-				continue
-			}
-
-			// if grafanaAPIServerWithExperimentalAPIs is not enabled, remove v0alpha1 resources unless explicitly allowed
-			if !features.IsEnabledGlobally(featuremgmt.FlagGrafanaAPIServerWithExperimentalAPIs) {
-				if resources, ok := g.VersionedResourcesStorageMap["v0alpha1"]; ok {
-					for name := range resources {
-						if !allowRegisteringResourceByInfo(b.AllowedV0Alpha1Resources(), name) {
-							delete(resources, name)
-						}
-					}
-					if len(resources) == 0 {
-						delete(g.VersionedResourcesStorageMap, "v0alpha1")
-					}
-				}
 			}
 		}
 
@@ -423,9 +367,57 @@ func InstallAPIs(
 			continue
 		}
 
-		err := server.InstallAPIGroup(&g)
-		if err != nil {
+		// overrride the negotiated serializer to exclude protobuf, after the NewDefaultAPIGroupInfo, since it otherwise replaces the codecs
+		g.NegotiatedSerializer = grafanarest.DefaultNoProtobufNegotiatedSerializer(codecs)
+
+		if err := server.InstallAPIGroup(&g); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func installAPIGroupsForBuilder(g *genericapiserver.APIGroupInfo, group string, b APIGroupBuilder, apiResourceConfig *serverstorage.ResourceConfig, scheme *runtime.Scheme,
+	optsGetter generic.RESTOptionsGetter, dualWrite grafanarest.DualWriteBuilder, reg prometheus.Registerer, optsregister apistore.StorageOptionsRegister,
+	storageOpts *options.StorageOptions, features featuremgmt.FeatureToggles) error {
+	if err := b.UpdateAPIGroupInfo(g, APIGroupOptions{
+		Scheme:              scheme,
+		OptsGetter:          optsGetter,
+		DualWriteBuilder:    dualWrite,
+		MetricsRegister:     reg,
+		StorageOptsRegister: optsregister,
+		StorageOpts:         storageOpts,
+	}); err != nil {
+		return err
+	}
+	if len(g.PrioritizedVersions) < 1 {
+		return nil
+	}
+
+	// filter out api groups that are disabled in APIEnablementOptions
+	for version := range g.VersionedResourcesStorageMap {
+		gvr := schema.GroupVersionResource{
+			Group:   group,
+			Version: version,
+		}
+		if apiResourceConfig != nil && !apiResourceConfig.ResourceEnabled(gvr) {
+			klog.InfoS("Skipping storage for disabled resource", "gvr", gvr.String())
+			delete(g.VersionedResourcesStorageMap, version)
+		}
+	}
+
+	// if grafanaAPIServerWithExperimentalAPIs is not enabled, remove v0alpha1 resources unless explicitly allowed
+	//nolint:staticcheck // not yet migrated to OpenFeature
+	if !features.IsEnabledGlobally(featuremgmt.FlagGrafanaAPIServerWithExperimentalAPIs) {
+		if resources, ok := g.VersionedResourcesStorageMap["v0alpha1"]; ok {
+			for name := range resources {
+				if !allowRegisteringResourceByInfo(b.AllowedV0Alpha1Resources(), name) {
+					delete(resources, name)
+				}
+			}
+			if len(resources) == 0 {
+				delete(g.VersionedResourcesStorageMap, "v0alpha1")
+			}
 		}
 	}
 
@@ -453,6 +445,32 @@ func AddPostStartHooks(
 		}
 	}
 	return nil
+}
+
+func EvaluatorPolicyRuleFromBuilders(builders []APIGroupBuilder) auditing.PolicyRuleEvaluators {
+	policyRuleEvaluators := make(auditing.PolicyRuleEvaluators, 0)
+
+	for _, b := range builders {
+		auditor, ok := b.(APIGroupAuditor)
+		if !ok {
+			continue
+		}
+
+		policyRuleEvaluator := auditor.GetPolicyRuleEvaluator()
+		if policyRuleEvaluator == nil {
+			continue
+		}
+
+		for _, gv := range GetGroupVersions(b) {
+			if gv.Empty() {
+				continue
+			}
+
+			policyRuleEvaluators[gv] = policyRuleEvaluator
+		}
+	}
+
+	return policyRuleEvaluators
 }
 
 func allowRegisteringResourceByInfo(allowedResources []string, name string) bool {

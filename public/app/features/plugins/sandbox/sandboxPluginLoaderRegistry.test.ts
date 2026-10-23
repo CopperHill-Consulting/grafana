@@ -1,10 +1,10 @@
-import { PluginMeta, PluginSignatureStatus, PluginSignatureType } from '@grafana/data';
+import { type PluginMeta, PluginSignatureStatus, PluginSignatureType } from '@grafana/data';
 import { config } from '@grafana/runtime';
+import { getPluginSettings } from '@grafana/runtime/unstable';
 import { contextSrv } from 'app/core/services/context_srv';
 
 import { getPluginDetails } from '../admin/api';
-import { CatalogPluginDetails } from '../admin/types';
-import { getPluginSettings } from '../pluginSettings';
+import { type CatalogPluginDetails } from '../admin/types';
 
 import {
   shouldLoadPluginInFrontendSandbox,
@@ -15,13 +15,13 @@ import {
 
 jest.mock('@grafana/runtime', () => ({
   config: {
-    featureToggles: { pluginsFrontendSandbox: true },
     buildInfo: { env: 'production' },
     enableFrontendSandboxForPlugins: [],
   },
 }));
 
-jest.mock('../pluginSettings', () => ({
+jest.mock('@grafana/runtime/unstable', () => ({
+  ...jest.requireActual('@grafana/runtime/unstable'),
   getPluginSettings: jest.fn(),
 }));
 
@@ -53,7 +53,6 @@ describe('Sandbox eligibility checks', () => {
     setSandboxEnabledCheck(isPluginFrontendSandboxEnabled);
 
     config.enableFrontendSandboxForPlugins = [];
-    config.featureToggles.pluginsFrontendSandbox = true;
     process.env.NODE_ENV = 'development';
   });
 
@@ -65,12 +64,6 @@ describe('Sandbox eligibility checks', () => {
     mockContextSrv.isSignedIn = false;
     const isEligible = await isPluginFrontendSandboxEligible({ pluginId: 'test-plugin' });
     expect(isEligible).toBe(false);
-  });
-
-  test('shouldLoadPluginInFrontendSandbox returns false when feature toggle is off', async () => {
-    config.featureToggles.pluginsFrontendSandbox = false;
-    const result = await shouldLoadPluginInFrontendSandbox({ pluginId: 'test-plugin' });
-    expect(result).toBe(false);
   });
 
   test('setSandboxEnabledCheck sets custom check function', async () => {

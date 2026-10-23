@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
 
-import { PanelProps, VizOrientation } from '@grafana/data';
-import { config, PanelDataErrorView } from '@grafana/runtime';
+import { type PanelProps, VizOrientation } from '@grafana/data';
+import { PanelDataErrorView } from '@grafana/runtime';
 import {
-  AdHocFilterItem,
+  type AdHocFilterItem,
+  type AdHocFilterModel,
   TooltipDisplayMode,
   TooltipPlugin2,
   UPLOT_AXIS_FONT_SIZE,
@@ -13,12 +14,13 @@ import {
   usePanelContext,
   useTheme2,
 } from '@grafana/ui';
-import { AdHocFilterModel, FILTER_FOR_OPERATOR, TooltipHoverMode } from '@grafana/ui/internal';
+import { FILTER_FOR_OPERATOR, TooltipHoverMode } from '@grafana/ui/internal';
+import { getAssistantTooltipContext } from 'app/core/components/AssistantTooltip/buildAssistantContext';
 
 import { TimeSeriesTooltip } from '../timeseries/TimeSeriesTooltip';
 
 import { BarChartLegend, hasVisibleLegendSeries } from './BarChartLegend';
-import { Options } from './panelcfg.gen';
+import { type Options } from './panelcfg.gen';
 import { prepConfig, prepSeries } from './utils';
 
 const charWidth = measureText('M', UPLOT_AXIS_FONT_SIZE).width;
@@ -174,11 +176,7 @@ export const BarChartPanel = (props: PanelProps<Options>) => {
                 // Fields may later be marked as not filterable. For example, fields created from Grafana Transforms that
                 // are derived from a data source, but are not present in the data source.
                 // We choose `xField` here because it contains the label-value pair, rather than `field` which is the numeric Value.
-                if (
-                  config.featureToggles.adhocFiltersInTooltips &&
-                  xField.config.filterable &&
-                  onAddAdHocFilter != null
-                ) {
+                if (xField.config.filterable && onAddAdHocFilter != null) {
                   const adHocFilterItem: AdHocFilterItem = {
                     key: xField.name,
                     operator: FILTER_FOR_OPERATOR,
@@ -213,6 +211,7 @@ export const BarChartPanel = (props: PanelProps<Options>) => {
                     adHocFilters={adHocFilters}
                     hideZeros={options.tooltip.hideZeros}
                     canExecuteActions={userCanExecuteActions}
+                    assistantContext={getAssistantTooltipContext(props, info.series)}
                   />
                 );
               }}

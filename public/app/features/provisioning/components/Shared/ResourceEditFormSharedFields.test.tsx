@@ -1,16 +1,35 @@
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { ReactNode } from 'react';
+import { HttpResponse, http } from 'msw';
+import { type ReactNode } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
+import { render, renderHook, screen, waitFor } from 'test/test-utils';
 
-import type { RepositoryView } from 'app/api/clients/provisioning/v0alpha1';
+import { PROVISIONING_API_BASE as BASE } from '@grafana/test-utils/handlers';
+import server from '@grafana/test-utils/server';
+import { type RepositoryView } from 'app/api/clients/provisioning/v0alpha1';
 
-import { ProvisionedDashboardFormData } from '../../types/form';
+import { useBranchDropdownOptions } from '../../hooks/useBranchDropdownOptions';
+import { useGetRepositoryFolders } from '../../hooks/useGetRepositoryFolders';
+import { setupProvisioningMswServer } from '../../mocks/server';
+import { type ProvisionedDashboardFormData } from '../../types/form';
 
 import { ResourceEditFormSharedFields } from './ResourceEditFormSharedFields';
-// Mock RTK Query hook used inside ResourceEditFormSharedFields to avoid requiring a Redux Provider
-jest.mock('app/api/clients/provisioning/v0alpha1', () => ({
-  useGetRepositoryRefsQuery: jest.fn().mockReturnValue({ data: { items: [] }, isLoading: false, error: null }),
+
+setupProvisioningMswServer();
+
+// Mock the new hooks that depend on router context
+jest.mock('../../hooks/usePRBranch', () => ({
+  usePRBranch: jest.fn().mockReturnValue(undefined),
+}));
+
+jest.mock('../../hooks/useLastBranch', () => ({
+  useLastBranch: jest.fn().mockReturnValue({
+    getLastBranch: jest.fn().mockReturnValue(undefined),
+    setLastBranch: jest.fn(),
+  }),
+}));
+
+jest.mock('../../hooks/useGetRepositoryFolders', () => ({
+  useGetRepositoryFolders: jest.fn().mockReturnValue({ options: [], loading: false, error: null }),
 }));
 
 const mockRepo: { github: RepositoryView; local: RepositoryView } = {
@@ -30,35 +49,30 @@ const mockRepo: { github: RepositoryView; local: RepositoryView } = {
   },
 };
 
-// Mock the i18n hook since it's used in the component
-jest.mock('@grafana/i18n', () => ({
-  t: (_: string, defaultValue: string) => defaultValue,
-  Trans: ({ children }: { children: ReactNode }) => children,
-}));
-
 interface SetupOptions {
   formDefaultValues?: Partial<ProvisionedDashboardFormData>;
-  workflowOptions?: Array<{ label: string; value: string }>;
   isNew?: boolean;
   readOnly?: boolean;
   workflow?: 'write' | 'branch';
   repository?: RepositoryView;
+  canPushToConfiguredBranch?: boolean;
+  allowPathEdit?: boolean;
+  lockComment?: boolean;
+  commitMessage?: string;
 }
 
 function setup(options: SetupOptions = {}) {
   const {
     formDefaultValues = {},
-    workflowOptions = [
-      { label: 'Write directly', value: 'write' },
-      { label: 'Create branch', value: 'branch' },
-    ],
+    canPushToConfiguredBranch = true,
     isNew,
     readOnly,
     workflow,
     repository,
+    allowPathEdit,
+    lockComment,
+    commitMessage,
   } = options;
-
-  const user = userEvent.setup();
 
   const defaultFormValues: Partial<ProvisionedDashboardFormData> = {
     path: '',
@@ -77,21 +91,21 @@ function setup(options: SetupOptions = {}) {
   };
 
   const componentProps = {
-    workflowOptions,
+    canPushToConfiguredBranch,
     isNew,
     readOnly,
     workflow,
     repository,
+    allowPathEdit,
+    lockComment,
+    commitMessage,
   };
 
-  return {
-    user,
-    ...render(
-      <FormWrapper>
-        <ResourceEditFormSharedFields {...componentProps} resourceType="dashboard" />
-      </FormWrapper>
-    ),
-  };
+  return render(
+    <FormWrapper>
+      <ResourceEditFormSharedFields {...componentProps} resourceType="dashboard" />
+    </FormWrapper>
+  );
 }
 
 describe('ResourceEditFormSharedFields', () => {
@@ -110,11 +124,9 @@ describe('ResourceEditFormSharedFields', () => {
     });
 
     it('should render workflow fields when repository is true', () => {
-      setup({ repository: mockRepo.github });
+      setup({ repository: mockRepo.github, workflow: 'write', formDefaultValues: { workflow: 'write' } });
 
-      expect(screen.getByRole('radiogroup')).toBeInTheDocument();
-      expect(screen.getByRole('radio', { name: 'Write directly' })).toBeInTheDocument();
-      expect(screen.getByRole('radio', { name: 'Create branch' })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /branch/i })).toBeInTheDocument();
     });
   });
 
@@ -138,33 +150,151 @@ describe('ResourceEditFormSharedFields', () => {
 
       expect(screen.queryByText('Workflow')).not.toBeInTheDocument();
     });
+
+    it('should make comment field readonly but not disabled when lockComment is true', () => {
+      const commitMessage = 'feat(dashboards): update My dashboard';
+      setup({ lockComment: true, commitMessage });
+
+      const commentTextarea = screen.getByRole('textbox', { name: /comment/i });
+      expect(commentTextarea).toHaveValue(commitMessage);
+      expect(commentTextarea).toHaveAttribute('readonly');
+      expect(commentTextarea).toBeEnabled();
+    });
   });
 
   describe('Workflow Fields', () => {
-    it('should not render branch field when workflow is write', () => {
+    it('should render branch field when workflow is write', () => {
       setup({ formDefaultValues: { workflow: 'write' }, repository: mockRepo.github, workflow: 'write' });
 
-      expect(screen.getByText('Workflow')).toBeInTheDocument();
-      expect(screen.queryByRole('textbox', { name: /branch/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /branch/i })).toBeInTheDocument();
     });
 
     it('should render branch field when workflow is branch', () => {
       setup({ formDefaultValues: { workflow: 'branch' }, repository: mockRepo.github, workflow: 'branch' });
 
-      expect(screen.getByText('Workflow')).toBeInTheDocument();
-      expect(screen.getByRole('textbox', { name: /branch/i })).toBeInTheDocument();
-      expect(screen.getByText('Branch name in GitHub')).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /branch/i })).toBeInTheDocument();
+    });
+
+    it('should render a read-only branch input when only configured branch is allowed', () => {
+      const restrictedRepo: RepositoryView = {
+        ...mockRepo.github,
+        workflows: ['write'],
+      };
+
+      setup({
+        formDefaultValues: { workflow: 'write', ref: 'main' },
+        repository: restrictedRepo,
+        workflow: 'write',
+        canPushToConfiguredBranch: true,
+      });
+
+      const branchInput = screen.getByLabelText(/branch/i);
+      expect(branchInput).toHaveAttribute('readonly');
+      expect(screen.queryByRole('combobox', { name: /branch/i })).not.toBeInTheDocument();
+    });
+
+    it('should allow selecting a branch when only non-configured branches are allowed', () => {
+      setup({
+        formDefaultValues: { workflow: 'write' },
+        repository: mockRepo.github,
+        workflow: 'write',
+        canPushToConfiguredBranch: false,
+      });
+
+      expect(screen.getByRole('combobox', { name: /branch/i })).toBeInTheDocument();
+      expect(screen.queryByText('This repository is restricted to the configured branch only')).not.toBeInTheDocument();
+    });
+
+    it('should disable the configured branch option when configured branch pushes are not allowed', () => {
+      const { result } = renderHook(() =>
+        useBranchDropdownOptions({
+          repository: { ...mockRepo.github, branch: 'main' },
+          branchData: { items: [] },
+          canPushToConfiguredBranch: false,
+          canPushToNonConfiguredBranch: true,
+        })
+      );
+
+      const configuredOption = result.current[0];
+      expect(configuredOption.value).toBe('main');
+      expect(configuredOption.infoOption).toBe(true);
+      expect(configuredOption.label).toBe('main (read-only)');
+    });
+
+    it('should add selected custom branch as a new option', () => {
+      const customBranch = 'feature/new-branch';
+
+      const { result } = renderHook(() =>
+        useBranchDropdownOptions({
+          repository: { ...mockRepo.github, branch: 'main' },
+          selectedBranch: customBranch,
+          branchData: { items: [{ name: 'develop' }] },
+          canPushToConfiguredBranch: true,
+          canPushToNonConfiguredBranch: true,
+        })
+      );
+
+      const customOption = result.current.find((option) => option.value === customBranch);
+      expect(customOption).toEqual(
+        expect.objectContaining({
+          label: 'feature/new-branch',
+          description: 'New branch',
+          value: 'feature/new-branch',
+        })
+      );
+    });
+
+    it('should not mark selected branch as new when it already exists in repository refs', () => {
+      const existingBranch = 'feature/existing-branch';
+
+      const { result } = renderHook(() =>
+        useBranchDropdownOptions({
+          repository: { ...mockRepo.github, branch: 'main' },
+          selectedBranch: existingBranch,
+          branchData: { items: [{ name: existingBranch }] },
+          canPushToConfiguredBranch: true,
+          canPushToNonConfiguredBranch: true,
+        })
+      );
+
+      const existingOption = result.current.find((option) => option.value === existingBranch);
+      expect(existingOption).toEqual(
+        expect.objectContaining({
+          label: existingBranch,
+          value: existingBranch,
+        })
+      );
     });
   });
 
   describe('User Interactions', () => {
-    it('should allow typing in path field', async () => {
+    it('should render folder and filename fields for new dashboards', async () => {
       const { user } = setup({ isNew: true });
 
-      const pathInput = screen.getByRole('textbox', { name: /path/i });
-      await user.type(pathInput, 'dashboards/test.json');
+      const filenameInput = screen.getByRole('textbox', { name: /filename/i });
+      expect(screen.getByRole('combobox', { name: /folder/i })).toBeInTheDocument();
 
-      expect(pathInput).toHaveValue('dashboards/test.json');
+      await user.type(filenameInput, 'test.json');
+      expect(filenameInput).toHaveValue('test.json');
+    });
+
+    it('should render folder and filename fields for existing dashboards when allowPathEdit is true', () => {
+      setup({ isNew: false, allowPathEdit: true, formDefaultValues: { path: 'dashboards/my-dashboard.json' } });
+
+      expect(screen.getByRole('combobox', { name: /folder/i })).toBeInTheDocument();
+      expect(screen.getByRole('textbox', { name: /filename/i })).toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /folder/i })).toHaveValue('dashboards');
+      expect(screen.getByRole('textbox', { name: /filename/i })).toHaveValue('my-dashboard.json');
+      expect(screen.queryByRole('textbox', { name: /path/i })).not.toBeInTheDocument();
+    });
+
+    it('should render read-only path field for existing dashboards when allowPathEdit is false', () => {
+      setup({ isNew: false, formDefaultValues: { path: 'dashboards/my-dashboard.json' } });
+
+      const pathInput = screen.getByRole('textbox', { name: /path/i });
+      expect(pathInput).toHaveAttribute('readonly');
+      expect(screen.queryByRole('combobox', { name: /folder/i })).not.toBeInTheDocument();
+      expect(screen.queryByRole('textbox', { name: /filename/i })).not.toBeInTheDocument();
     });
 
     it('should allow typing in comment field', async () => {
@@ -176,13 +306,19 @@ describe('ResourceEditFormSharedFields', () => {
       expect(commentTextarea).toHaveValue('Test comment');
     });
 
-    it('should allow selecting workflow options', async () => {
-      const { user } = setup({ repository: mockRepo.github });
+    it('should allow selecting a branch value', async () => {
+      const { user } = setup({
+        repository: mockRepo.github,
+        workflow: 'write',
+        formDefaultValues: { workflow: 'write' },
+      });
 
-      const branchOption = screen.getByRole('radio', { name: 'Create branch' });
-      await user.click(branchOption);
+      const branchInput = screen.getByRole('combobox', { name: /branch/i });
+      await user.click(branchInput);
+      await user.type(branchInput, 'feature-branch');
+      await user.keyboard('{Enter}');
 
-      expect(branchOption).toBeChecked();
+      expect(branchInput).toHaveValue('feature-branch');
     });
 
     it('should allow typing in branch field when workflow is branch', async () => {
@@ -192,8 +328,10 @@ describe('ResourceEditFormSharedFields', () => {
         workflow: 'branch',
       });
 
-      const branchInput = screen.getByRole('textbox', { name: /branch/i });
+      const branchInput = screen.getByRole('combobox', { name: /branch/i });
+      await user.click(branchInput);
       await user.type(branchInput, 'feature-branch');
+      await user.keyboard('{Enter}');
 
       expect(branchInput).toHaveValue('feature-branch');
     });
@@ -213,29 +351,52 @@ describe('ResourceEditFormSharedFields', () => {
 
         return (
           <FormProvider {...methods}>
-            <ResourceEditFormSharedFields
-              workflowOptions={[
-                { label: 'Write directly', value: 'write' },
-                { label: 'Create branch', value: 'branch' },
-              ]}
-              isNew={true}
-              resourceType="dashboard"
-            />
+            <ResourceEditFormSharedFields canPushToConfiguredBranch={true} isNew={true} resourceType="dashboard" />
           </FormProvider>
         );
       };
 
-      const user = userEvent.setup();
-      render(<TestComponent />);
+      const { user } = render(<TestComponent />);
 
-      const pathInput = screen.getByRole('textbox', { name: /path/i });
+      const filenameInput = screen.getByRole('textbox', { name: /filename/i });
       const commentTextarea = screen.getByRole('textbox', { name: /comment/i });
 
-      await user.type(pathInput, 'test.json');
+      await user.type(filenameInput, 'test.json');
       await user.type(commentTextarea, 'Test comment');
 
       expect(formValues?.path).toBe('test.json');
       expect(formValues?.comment).toBe('Test comment');
+    });
+
+    it('should combine folder and filename into path value', async () => {
+      let formValues: Partial<ProvisionedDashboardFormData> | undefined;
+
+      const TestComponent = () => {
+        const methods = useForm<ProvisionedDashboardFormData>({
+          defaultValues: { path: 'dashboards/test.json', comment: '', ref: '', workflow: 'write' },
+        });
+
+        formValues = methods.watch();
+
+        return (
+          <FormProvider {...methods}>
+            <ResourceEditFormSharedFields canPushToConfiguredBranch={true} isNew={true} resourceType="dashboard" />
+          </FormProvider>
+        );
+      };
+
+      const { user } = render(<TestComponent />);
+
+      // Verify initial split
+      expect(screen.getByRole('combobox', { name: /folder/i })).toHaveValue('dashboards');
+      expect(screen.getByRole('textbox', { name: /filename/i })).toHaveValue('test.json');
+
+      // Change filename and verify combined path
+      const filenameInput = screen.getByRole('textbox', { name: /filename/i });
+      await user.clear(filenameInput);
+      await user.type(filenameInput, 'new-dashboard.json');
+
+      expect(formValues?.path).toBe('dashboards/new-dashboard.json');
     });
   });
 
@@ -247,8 +408,10 @@ describe('ResourceEditFormSharedFields', () => {
         workflow: 'branch',
       });
 
-      const branchInput = screen.getByRole('textbox', { name: /branch/i });
+      const branchInput = screen.getByRole('combobox', { name: /branch/i });
+      await user.click(branchInput);
       await user.type(branchInput, 'invalid//branch'); // Invalid branch name with consecutive slashes
+      await user.keyboard('{Enter}');
 
       // Trigger validation by blurring the field
       await user.tab();
@@ -258,19 +421,150 @@ describe('ResourceEditFormSharedFields', () => {
     });
   });
 
-  describe('Edge Cases', () => {
-    it('should handle empty workflowOptions', () => {
-      setup({ workflowOptions: [], repository: mockRepo.github });
+  describe('Path validation for new dashboards', () => {
+    let validationRequested: boolean;
 
-      expect(screen.getByText('Workflow')).toBeInTheDocument();
-      expect(screen.queryByRole('radio')).not.toBeInTheDocument();
+    beforeEach(() => {
+      validationRequested = false;
+      // Default: file does not exist (404) — prevents MSW "unhandled request" warnings
+      // for tests that render with isNew but don't care about the validation outcome.
+      server.use(
+        http.get(`${BASE}/repositories/:name/files/*`, () => {
+          validationRequested = true;
+          return new HttpResponse(null, { status: 404 });
+        })
+      );
     });
 
-    it('should handle undefined props', () => {
-      setup({ readOnly: undefined, repository: mockRepo.local });
+    it('should show error when file already exists at path', async () => {
+      server.use(
+        http.get(`${BASE}/repositories/:name/files/*`, () => {
+          validationRequested = true;
+          return HttpResponse.json({ path: 'existing.json' });
+        })
+      );
 
-      expect(screen.getByRole('textbox', { name: /Path/ })).toBeInTheDocument();
-      expect(screen.getByRole('textbox', { name: 'Comment' })).toBeInTheDocument();
+      const { user } = setup({
+        isNew: true,
+        repository: mockRepo.github,
+        formDefaultValues: { path: 'dashboards/existing.json' },
+      });
+
+      const filenameInput = screen.getByRole('textbox', { name: /filename/i });
+      await user.clear(filenameInput);
+      await user.type(filenameInput, 'test.json');
+
+      await waitFor(() => {
+        expect(screen.getByText('A file with this name already exists at this path')).toBeInTheDocument();
+      });
+    });
+
+    it('should not show error when file does not exist (404)', async () => {
+      const { user } = setup({
+        isNew: true,
+        repository: mockRepo.github,
+        formDefaultValues: { path: 'dashboards/new-file.json' },
+      });
+
+      const filenameInput = screen.getByRole('textbox', { name: /filename/i });
+      await user.clear(filenameInput);
+      await user.type(filenameInput, 'test.json');
+
+      await waitFor(() => {
+        expect(validationRequested).toBe(true);
+      });
+
+      expect(screen.queryByText('A file with this name already exists at this path')).not.toBeInTheDocument();
+    });
+
+    it('should not validate path when not a new dashboard', () => {
+      setup({
+        isNew: false,
+        repository: mockRepo.github,
+        formDefaultValues: { path: 'dashboards/existing.json' },
+      });
+
+      expect(validationRequested).toBe(false);
+    });
+
+    it('should not validate path when isNew is not set', () => {
+      setup({
+        repository: mockRepo.github,
+        formDefaultValues: { path: 'dashboards/existing.json' },
+      });
+
+      expect(validationRequested).toBe(false);
+    });
+
+    it('should trigger path validation when folder changes', async () => {
+      // File exists at the new path → validation should fire and show error
+      server.use(
+        http.get(`${BASE}/repositories/:name/files/*`, () => {
+          validationRequested = true;
+          return HttpResponse.json({ path: 'existing.json' });
+        })
+      );
+
+      // Provide folder options so the combobox has selectable items
+      jest.mocked(useGetRepositoryFolders).mockReturnValue({
+        hint: null,
+        options: [{ label: 'other-folder', value: 'other-folder' }],
+        loading: false,
+        error: null,
+      });
+
+      const { user } = setup({
+        isNew: true,
+        repository: mockRepo.github,
+        formDefaultValues: { path: 'dashboards/test.json' },
+      });
+
+      validationRequested = false;
+
+      // Change folder via combobox
+      const folderCombobox = screen.getByRole('combobox', { name: /folder/i });
+      await user.clear(folderCombobox);
+      await user.type(folderCombobox, 'other-folder');
+      await user.keyboard('{Enter}');
+
+      // shouldValidate: true means the path validator reruns after folder change
+      await waitFor(() => {
+        expect(validationRequested).toBe(true);
+      });
+    });
+
+    it('should re-trigger path validation when the branch changes', async () => {
+      const refsInRequest: string[] = [];
+      server.use(
+        http.get(`${BASE}/repositories/:name/files/*`, ({ request }) => {
+          const url = new URL(request.url);
+          refsInRequest.push(url.searchParams.get('ref') ?? '');
+          return new HttpResponse(null, { status: 404 });
+        })
+      );
+
+      const { user } = setup({
+        isNew: true,
+        repository: mockRepo.github,
+        formDefaultValues: { path: 'dashboards/test.json', ref: 'main', workflow: 'write' },
+      });
+
+      // Seed the validator by editing the filename so the path field is touched.
+      const filenameInput = screen.getByRole('textbox', { name: /filename/i });
+      await user.clear(filenameInput);
+      await user.type(filenameInput, 'check.json');
+      await waitFor(() => expect(refsInRequest).toContain('main'));
+
+      refsInRequest.length = 0;
+
+      // Change branch → deps on the ref field should re-run validatePath.
+      const branchCombobox = screen.getByRole('combobox', { name: /branch/i });
+      await user.click(branchCombobox);
+      await user.clear(branchCombobox);
+      await user.paste('feature-branch');
+      await user.keyboard('{Enter}');
+
+      await waitFor(() => expect(refsInRequest).toContain('feature-branch'));
     });
   });
 });

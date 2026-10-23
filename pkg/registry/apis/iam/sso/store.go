@@ -7,6 +7,7 @@ import (
 
 	commonv1 "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
+	"go.opentelemetry.io/otel/trace"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/internalversion"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,6 +26,7 @@ var (
 	_ rest.Scoper               = (*LegacyStore)(nil)
 	_ rest.Getter               = (*LegacyStore)(nil)
 	_ rest.Lister               = (*LegacyStore)(nil)
+	_ rest.Creater              = (*LegacyStore)(nil)
 	_ rest.Updater              = (*LegacyStore)(nil)
 	_ rest.SingularNameProvider = (*LegacyStore)(nil)
 	_ rest.GracefulDeleter      = (*LegacyStore)(nil)
@@ -32,12 +34,13 @@ var (
 
 var resource = iamv0.SSOSettingResourceInfo
 
-func NewLegacyStore(service ssosettings.Service) *LegacyStore {
-	return &LegacyStore{service}
+func NewLegacyStore(service ssosettings.Service, tracer trace.Tracer) *LegacyStore {
+	return &LegacyStore{service, tracer}
 }
 
 type LegacyStore struct {
 	service ssosettings.Service
+	tracer  trace.Tracer
 }
 
 // Destroy implements rest.Storage.
@@ -71,6 +74,9 @@ func (s *LegacyStore) NewList() runtime.Object {
 
 // List implements rest.Lister.
 func (s *LegacyStore) List(ctx context.Context, options *internalversion.ListOptions) (runtime.Object, error) {
+	ctx, span := s.tracer.Start(ctx, "sso.List")
+	defer span.End()
+
 	ns, _ := request.NamespaceInfoFrom(ctx, false)
 
 	settings, err := s.service.List(ctx)
@@ -88,6 +94,9 @@ func (s *LegacyStore) List(ctx context.Context, options *internalversion.ListOpt
 
 // Get implements rest.Getter.
 func (s *LegacyStore) Get(ctx context.Context, name string, options *metav1.GetOptions) (runtime.Object, error) {
+	ctx, span := s.tracer.Start(ctx, "sso.Get")
+	defer span.End()
+
 	ns, _ := request.NamespaceInfoFrom(ctx, false)
 
 	setting, err := s.service.GetForProviderWithRedactedSecrets(ctx, name)
@@ -102,6 +111,32 @@ func (s *LegacyStore) Get(ctx context.Context, name string, options *metav1.GetO
 	return &object, nil
 }
 
+// Create implements rest.Creater. SSO settings are upsert-by-provider, so it
+// delegates to the same Upsert as Update; it exists so the kind can ride the
+// dual-writer composite, which requires rest.CreaterUpdater.
+func (s *LegacyStore) Create(ctx context.Context, obj runtime.Object, createValidation rest.ValidateObjectFunc, _ *metav1.CreateOptions) (runtime.Object, error) {
+	ctx, span := s.tracer.Start(ctx, "sso.Create")
+	defer span.End()
+
+	ident, err := identity.GetRequester(ctx)
+	if err != nil {
+		return nil, err
+	}
+	setting, ok := obj.(*iamv0.SSOSetting)
+	if !ok {
+		return nil, errors.New("expected ssosetting on create")
+	}
+	if createValidation != nil {
+		if err := createValidation(ctx, obj); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.service.Upsert(ctx, mapToModel(setting), ident); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, setting.Name, nil)
+}
+
 // Update implements rest.Updater.
 func (s *LegacyStore) Update(
 	ctx context.Context,
@@ -112,6 +147,9 @@ func (s *LegacyStore) Update(
 	_ bool,
 	_ *metav1.UpdateOptions,
 ) (runtime.Object, bool, error) {
+	ctx, span := s.tracer.Start(ctx, "sso.Update")
+	defer span.End()
+
 	const created = false
 	ident, err := identity.GetRequester(ctx)
 	if err != nil {
@@ -148,6 +186,9 @@ func (s *LegacyStore) Delete(
 	_ rest.ValidateObjectFunc,
 	options *metav1.DeleteOptions,
 ) (runtime.Object, bool, error) {
+	ctx, span := s.tracer.Start(ctx, "sso.Delete")
+	defer span.End()
+
 	obj, err := s.Get(ctx, name, nil)
 	if err != nil {
 		return obj, false, err

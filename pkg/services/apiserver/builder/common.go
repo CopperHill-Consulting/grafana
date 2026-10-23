@@ -5,16 +5,20 @@ import (
 	"fmt"
 	"net/http"
 
+	appsdkapiserver "github.com/grafana/grafana-app-sdk/k8s/apiserver"
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/admission"
+	"k8s.io/apiserver/pkg/audit"
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 	"k8s.io/apiserver/pkg/registry/generic"
 	genericapiserver "k8s.io/apiserver/pkg/server"
 	"k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/spec3"
+	"k8s.io/kube-openapi/pkg/validation/spec"
 
+	"github.com/grafana/grafana/pkg/api/routing"
 	grafanarest "github.com/grafana/grafana/pkg/apiserver/rest"
 	"github.com/grafana/grafana/pkg/services/apiserver/options"
 	"github.com/grafana/grafana/pkg/storage/unified/apistore"
@@ -58,6 +62,13 @@ type APIGroupAuthorizer interface {
 	GetAuthorizer() authorizer.Authorizer
 }
 
+// APIGroupAuditor allows different API groups to opt-in and provide their own auditing policy evaluator function.
+// Auditing is only enabled if this is implemented. If no customization is needed, you can use the default evaluator,
+// `pkg/apiserver/auditing.NewDefaultGrafanaPolicyRuleEvaluator()`.
+type APIGroupAuditor interface {
+	GetPolicyRuleEvaluator() audit.PolicyRuleEvaluator
+}
+
 type APIGroupMutation interface {
 	// Mutate allows the builder to make changes to the object before it is persisted.
 	// Context is used only for timeout/deadline/cancellation and tracing information.
@@ -99,6 +110,17 @@ type APIRouteHandler struct {
 	Path    string           // added to the appropriate level
 	Spec    *spec3.PathProps // Exposed in the open api service discovery
 	Handler http.HandlerFunc // when Level = resource, the resource will be available in context
+
+	// Schemas are components the Spec references. A route whose types belong to
+	// another group must bring them: each group version's spec is self-contained.
+	Schemas map[string]spec.Schema
+}
+
+// GroupVersionRoutes are routes the caller mounts itself, for an endpoint that
+// belongs to no single builder.
+type GroupVersionRoutes struct {
+	GroupVersion schema.GroupVersion
+	Routes       *APIRoutes
 }
 
 // APIRoutes define explicit HTTP handlers in an apiserver
@@ -113,6 +135,16 @@ type APIRoutes struct {
 
 type APIRegistrar interface {
 	RegisterAPI(builder APIGroupBuilder)
+	RegisterAppInstaller(installer appsdkapiserver.AppInstaller)
+}
+
+// HTTPRouteRegistrar can be implemented by builders that need to register
+// routes directly on Grafana's HTTP router (not the k8s apiserver's GoRestful
+// container). This is useful for cluster-global endpoints that don't fit the
+// k8s namespace model. RegisterHTTPRoutes is called automatically by
+// service.RegisterAPI when a builder implements this interface.
+type HTTPRouteRegistrar interface {
+	RegisterHTTPRoutes(rr routing.RouteRegister)
 }
 
 func getGroup(builder APIGroupBuilder) (string, error) {

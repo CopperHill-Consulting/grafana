@@ -1,27 +1,26 @@
 import { has, isArray, isNil, omitBy, pickBy } from 'lodash';
 
 import {
-  CloudNotifierType,
-  NotificationChannelOption,
-  NotifierDTO,
-  NotifierType,
+  type CloudNotifierType,
+  type NotifierDTO,
+  type NotifierType,
 } from 'app/features/alerting/unified/types/alerting';
 import {
-  AlertmanagerReceiver,
-  GrafanaManagedContactPoint,
-  GrafanaManagedReceiverConfig,
-  GrafanaManagedReceiverSecureFields,
-  Receiver,
+  type AlertmanagerReceiver,
+  type GrafanaManagedContactPoint,
+  type GrafanaManagedReceiverConfig,
+  type GrafanaManagedReceiverSecureFields,
+  type Receiver,
 } from 'app/plugins/datasource/alertmanager/types';
 
 import {
-  ChannelValues,
-  CloudChannelConfig,
-  CloudChannelMap,
-  CloudChannelValues,
-  GrafanaChannelMap,
-  GrafanaChannelValues,
-  ReceiverFormValues,
+  type ChannelValues,
+  type CloudChannelConfig,
+  type CloudChannelMap,
+  type CloudChannelValues,
+  type GrafanaChannelMap,
+  type GrafanaChannelValues,
+  type ReceiverFormValues,
 } from '../types/receiver-form';
 
 export function grafanaReceiverToFormValues(
@@ -185,6 +184,7 @@ function grafanaChannelConfigToFormChannelValues(
   const values: GrafanaChannelValues = {
     __id: id,
     type: channel.type as NotifierType,
+    version: channel.version,
     provenance: channel.provenance,
     settings: { ...channel.settings },
     secureFields: { ...channel.secureFields },
@@ -192,36 +192,6 @@ function grafanaChannelConfigToFormChannelValues(
   };
 
   return values;
-}
-
-/**
- * Recursively find all keys that should be marked a secure fields, using JSONpath for nested fields.
- */
-export function getSecureFieldNames(notifier: NotifierDTO): string[] {
-  // eg. ['foo', 'bar.baz']
-  const secureFieldPaths: string[] = [];
-
-  // we'll pass in the prefix for each iteration so we can track the JSON path
-  function findSecureOptions(options: NotificationChannelOption[], prefix?: string) {
-    for (const option of options) {
-      const key = prefix ? `${prefix}.${option.propertyName}` : option.propertyName;
-
-      // if the field is a subform, recurse
-      if (option.subformOptions) {
-        findSecureOptions(option.subformOptions, key);
-        continue;
-      }
-
-      if (option.secure) {
-        secureFieldPaths.push(key);
-        continue;
-      }
-    }
-  }
-
-  findSecureOptions(notifier.options);
-
-  return secureFieldPaths;
 }
 
 export function formChannelValuesToGrafanaChannelConfig(
@@ -239,6 +209,7 @@ export function formChannelValuesToGrafanaChannelConfig(
     }),
     secureFields: secureFieldsFromValues,
     type: values.type,
+    version: values.version ?? existing?.version,
     name,
     disableResolveMessage:
       values.disableResolveMessage ?? existing?.disableResolveMessage ?? defaults.disableResolveMessage,

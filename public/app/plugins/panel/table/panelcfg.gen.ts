@@ -8,13 +8,22 @@
 //
 // Run 'make gen-cue' from repository root to regenerate.
 
+// Generated from public/app/plugins/panel/table/panelcfg.cue file.
+
 import * as ui from '@grafana/schema';
 
+/**
+ * @deprecated - use common in /packages/grafana-schema/src/common/table.cue instead i.e. `import { TableOptions } from '@grafana/schema';`
+ */
 export interface Options {
   /**
    * Controls the height of the rows
    */
   cellHeight?: ui.TableCellHeight;
+  /**
+   * If true, disables all keyboard events in the table. this is used when previewing a table (i.e. suggestions)
+   */
+  disableKeyboardEvents?: boolean;
   /**
    * Enable pagination on the table
    */
@@ -33,6 +42,10 @@ export interface Options {
    * limits the maximum height of a row, if text wrapping or dynamic height is enabled
    */
   maxRowHeight?: number;
+  /**
+   * When pagination is enabled, sets a fixed number of rows per page. When unset, the page size is derived from the panel height.
+   */
+  pageSize?: number;
   /**
    * Controls whether the panel should show the header
    */

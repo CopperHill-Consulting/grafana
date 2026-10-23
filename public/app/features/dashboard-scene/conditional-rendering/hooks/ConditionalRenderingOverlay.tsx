@@ -1,6 +1,6 @@
 import { css } from '@emotion/css';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { Icon, Tooltip, useStyles2 } from '@grafana/ui';
 
@@ -9,12 +9,7 @@ export const ConditionalRenderingOverlay = () => {
 
   return (
     <div className={styles.container}>
-      <Tooltip
-        content={t(
-          'dashboard.conditional-rendering.overlay.tooltip',
-          'Element is hidden due to conditional rendering.'
-        )}
-      >
+      <Tooltip content={t('dashboard.conditional-rendering.overlay.tooltip', 'Element is hidden by show/hide rules.')}>
         <Icon name="eye-slash" />
       </Tooltip>
     </div>

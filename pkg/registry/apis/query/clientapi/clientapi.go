@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
-	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1"
+	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/datasource/v0alpha1"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 )
@@ -39,4 +39,5 @@ type Instance interface {
 
 type InstanceProvider interface {
 	GetInstance(ctx context.Context, logger log.Logger, headers map[string]string) (Instance, error)
+	GetMode() string
 }

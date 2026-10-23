@@ -1,20 +1,16 @@
-import { useObservable } from 'react-use';
 import { BehaviorSubject } from 'rxjs';
 
-import { AppEvents, NavModel, NavModelItem, PageLayoutType, UrlQueryValue } from '@grafana/data';
+import { AppEvents, type NavModel, type NavModelItem, PageLayoutType, store, type UrlQueryValue } from '@grafana/data';
+import { useObservable } from '@grafana/data/unstable';
 import { t } from '@grafana/i18n';
-import { config, locationService, reportInteraction } from '@grafana/runtime';
-import appEvents from 'app/core/app_events';
-import store from 'app/core/store';
+import { config, HistoryWrapper, locationService, reportInteraction } from '@grafana/runtime';
+import { appEvents } from 'app/core/app_events';
 import { isShallowEqual } from 'app/core/utils/isShallowEqual';
 import { KioskMode } from 'app/types/dashboard';
 
-import { RouteDescriptor } from '../../navigation/types';
-import { buildBreadcrumbs } from '../Breadcrumbs/utils';
+import { type RouteDescriptor } from '../../navigation/types';
 
-import { logDuplicateUnifiedHistoryEntryEvent } from './History/eventsTracking';
-import { ReturnToPreviousProps } from './ReturnToPrevious/ReturnToPrevious';
-import { HistoryEntry } from './types';
+import { type ReturnToPreviousProps } from './ReturnToPrevious/ReturnToPrevious';
 
 export interface AppChromeState {
   chromeless?: boolean;
@@ -25,6 +21,7 @@ export interface AppChromeState {
   megaMenuOpen: boolean;
   megaMenuDocked: boolean;
   kioskMode: KioskMode | null;
+  fullscreenWorkspace?: boolean;
   layout: PageLayoutType;
   returnToPrevious?: {
     title: ReturnToPreviousProps['title'];
@@ -33,8 +30,7 @@ export interface AppChromeState {
 }
 
 export const DOCKED_LOCAL_STORAGE_KEY = 'grafana.navigation.docked';
-export const DOCKED_MENU_OPEN_LOCAL_STORAGE_KEY = 'grafana.navigation.open';
-export const HISTORY_LOCAL_STORAGE_KEY = 'grafana.navigation.history';
+const DOCKED_MENU_OPEN_LOCAL_STORAGE_KEY = 'grafana.navigation.open';
 
 export class AppChromeService {
   searchBarStorageKey = 'SearchBar_Hidden';
@@ -45,6 +41,7 @@ export class AppChromeService {
     window.innerWidth >= config.theme2.breakpoints.values.xl &&
       store.getBool(DOCKED_LOCAL_STORAGE_KEY, Boolean(window.innerWidth >= config.theme2.breakpoints.values.xl))
   );
+  private fullscreenWorkspaceUnlisten?: () => void;
 
   private sessionStorageData = window.sessionStorage.getItem('returnToPrevious');
   private returnToPreviousData = this.sessionStorageData ? JSON.parse(this.sessionStorageData) : undefined;
@@ -55,6 +52,7 @@ export class AppChromeService {
     megaMenuOpen: this.megaMenuDocked && store.getBool(DOCKED_MENU_OPEN_LOCAL_STORAGE_KEY, true),
     megaMenuDocked: this.megaMenuDocked,
     kioskMode: null,
+    fullscreenWorkspace: false,
     layout: PageLayoutType.Canvas,
     returnToPrevious: this.returnToPreviousData,
   });
@@ -88,8 +86,6 @@ export class AppChromeService {
     newState.chromeless = newState.kioskMode === KioskMode.Full || this.currentRoute?.chromeless;
 
     if (!this.ignoreStateUpdate(newState, current)) {
-      config.featureToggles.unifiedHistory &&
-        store.setObject(HISTORY_LOCAL_STORAGE_KEY, this.getUpdatedHistory(newState));
       this.state.next(newState);
     }
   }
@@ -118,40 +114,6 @@ export class AppChromeService {
     window.sessionStorage.removeItem('returnToPrevious');
   };
 
-  private getUpdatedHistory(newState: AppChromeState): HistoryEntry[] {
-    const breadcrumbs = buildBreadcrumbs(newState.sectionNav.node, newState.pageNav, { text: 'Home', url: '/' }, true);
-    const newPageNav = newState.pageNav || newState.sectionNav.node;
-
-    let entries = store.getObject<HistoryEntry[]>(HISTORY_LOCAL_STORAGE_KEY, []);
-    const clickedHistory = store.getObject<boolean>('CLICKING_HISTORY');
-    if (clickedHistory) {
-      store.setObject('CLICKING_HISTORY', false);
-      return entries;
-    }
-    if (!newPageNav) {
-      return entries;
-    }
-
-    const lastEntry = entries[0];
-    const newEntry = { name: newPageNav.text, views: [], breadcrumbs, time: Date.now(), url: window.location.href };
-    const isSamePath = lastEntry && newEntry.url.split('?')[0] === lastEntry.url.split('?')[0];
-
-    // To avoid adding an entry with the same path twice, we always use the latest one
-    if (isSamePath) {
-      entries[0] = newEntry;
-    } else {
-      if (lastEntry && lastEntry.name === newEntry.name) {
-        logDuplicateUnifiedHistoryEntryEvent({
-          entryName: newEntry.name,
-          lastEntryURL: lastEntry.url,
-          newEntryURL: newEntry.url,
-        });
-      }
-      entries = [newEntry, ...entries];
-    }
-
-    return entries;
-  }
   private ignoreStateUpdate(newState: AppChromeState, current: AppChromeState) {
     if (isShallowEqual(newState, current)) {
       return true;
@@ -208,6 +170,53 @@ export class AppChromeService {
       action: 'toggle',
       mode: nextMode,
     });
+  };
+
+  public setFullscreenWorkspace = ({
+    fullscreenWorkspace,
+    pushHistoryEntry = true,
+  }: {
+    fullscreenWorkspace: boolean;
+    pushHistoryEntry?: boolean;
+  }) => {
+    if (Boolean(this.state.getValue().fullscreenWorkspace) === fullscreenWorkspace) {
+      return;
+    }
+    this.update({ fullscreenWorkspace });
+    this.syncFullscreenWorkspaceHistory(fullscreenWorkspace, pushHistoryEntry);
+    reportInteraction('grafana_fullscreen_workspace', {
+      action: fullscreenWorkspace ? 'enter' : 'exit',
+    });
+  };
+
+  // The fullscreen workspace occupies a single browser-history entry
+  private syncFullscreenWorkspaceHistory(active: boolean, pushHistoryEntry: boolean) {
+    if (!(locationService instanceof HistoryWrapper)) {
+      return;
+    }
+    this.fullscreenWorkspaceUnlisten?.();
+    this.fullscreenWorkspaceUnlisten = undefined;
+
+    if (!active) {
+      locationService.setSingleHistoryEntryMode(false);
+      return;
+    }
+    if (pushHistoryEntry) {
+      // Push before enabling the mode, or the entry Back needs to pop would itself be
+      // collapsed into the current one.
+      locationService.push(locationService.getLocation());
+    }
+    locationService.setSingleHistoryEntryMode(true);
+    // Only listen while active, so navigation costs nothing extra the rest of the session.
+    this.fullscreenWorkspaceUnlisten = locationService.listen((_location, action) => {
+      if (action === 'POP') {
+        this.setFullscreenWorkspace({ fullscreenWorkspace: false });
+      }
+    });
+  }
+
+  public toggleFullscreenWorkspace = () => {
+    this.setFullscreenWorkspace({ fullscreenWorkspace: !this.state.getValue().fullscreenWorkspace });
   };
 
   public exitKioskMode() {

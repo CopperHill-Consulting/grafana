@@ -14,125 +14,120 @@ import (
 
 func GetOpenAPIDefinitions(ref common.ReferenceCallback) map[string]common.OpenAPIDefinition {
 	return map[string]common.OpenAPIDefinition{
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.AnnotationActions":                                                                                                                                                            schema_pkg_apis_dashboard_v2alpha1_AnnotationActions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.AnnotationPermission":                                                                                                                                                         schema_pkg_apis_dashboard_v2alpha1_AnnotationPermission(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.Dashboard":                                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_Dashboard(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAccess":                                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardAccess(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAction":                                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardAction(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardActionVariable":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardActionVariable(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdHocFilterWithLabels":                                                                                                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardAdHocFilterWithLabels(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdhocVariableKind":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdhocVariableSpec":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationPanelFilter":                                                                                                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationPanelFilter(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationQueryKind":                                                                                                                                                 schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQueryKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationQuerySpec":                                                                                                                                                 schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQuerySpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutItemKind":                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutItemSpec":                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutKind":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutSpec":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridRepeatOptions":                                                                                                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridRepeatOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardClient":                                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardClient(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingDataKind":                                                                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingDataKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingDataSpec":                                                                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingDataSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupKind":                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupSpec":                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingTimeRangeSizeKind":                                                                                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingTimeRangeSizeKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingTimeRangeSizeSpec":                                                                                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingTimeRangeSizeSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableKind":                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind":                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableSpec":                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConstantVariableKind":                                                                                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConstantVariableSpec":                                                                                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConversionStatus":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardConversionStatus(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardCustomVariableKind":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardCustomVariableSpec":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDashboardLink":                                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardDashboardLink(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataLink":                                                                                                                                                            schema_pkg_apis_dashboard_v2alpha1_DashboardDataLink(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataQueryKind":                                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardDataQueryKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef":                                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardDataSourceRef(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataTransformerConfig":                                                                                                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardDataTransformerConfig(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDatasourceVariableKind":                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDatasourceVariableSpec":                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDynamicConfigValue":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardDynamicConfigValue(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardElementReference":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardElementReference(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFetchOptions":                                                                                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardFetchOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldColor":                                                                                                                                                          schema_pkg_apis_dashboard_v2alpha1_DashboardFieldColor(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldConfig":                                                                                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfig(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldConfigSource":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfigSource(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutItemKind":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutItemSpec":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKind":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind":                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind":                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutSpec":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGroupByVariableKind":                                                                                                                                                 schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGroupByVariableSpec":                                                                                                                                                 schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardInfinityOptions":                                                                                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardInfinityOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardIntervalVariableKind":                                                                                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardIntervalVariableSpec":                                                                                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardJSONCodec":                                                                                                                                                           schema_pkg_apis_dashboard_v2alpha1_DashboardJSONCodec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelKind":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelKindSpec":                                                                                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKindSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelRef":                                                                                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelRef(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardList":                                                                                                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardList(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMatcherConfig":                                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardMatcherConfig(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMetadata":                                                                                                                                                            schema_pkg_apis_dashboard_v2alpha1_DashboardMetadata(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMetricFindValue":                                                                                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardMetricFindValue(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelKind":                                                                                                                                                           schema_pkg_apis_dashboard_v2alpha1_DashboardPanelKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelKindOrLibraryPanelKind":                                                                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardPanelKindOrLibraryPanelKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelQueryKind":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQueryKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelQuerySpec":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQuerySpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelSpec":                                                                                                                                                           schema_pkg_apis_dashboard_v2alpha1_DashboardPanelSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryGroupKind":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryGroupSpec":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryOptionsSpec":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardQueryOptionsSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableKind":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKind": schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableSpec":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRangeMap":                                                                                                                                                            schema_pkg_apis_dashboard_v2alpha1_DashboardRangeMap(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRegexMap":                                                                                                                                                            schema_pkg_apis_dashboard_v2alpha1_DashboardRegexMap(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRepeatOptions":                                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardRepeatOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowRepeatOptions":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardRowRepeatOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutKind":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutRowKind":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutRowSpec":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutSpec":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpec":                                                                                                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpecialValueMap":                                                                                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardSpecialValueMap(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStatus":                                                                                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardStatus(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStringOrArrayOfString":                                                                                                                                               schema_pkg_apis_dashboard_v2alpha1_DashboardStringOrArrayOfString(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStringOrFloat64":                                                                                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardStringOrFloat64(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabRepeatOptions":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardTabRepeatOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutKind":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutSpec":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutTabKind":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutTabSpec":                                                                                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTextVariableKind":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTextVariableSpec":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardThreshold":                                                                                                                                                           schema_pkg_apis_dashboard_v2alpha1_DashboardThreshold(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardThresholdsConfig":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardThresholdsConfig(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTimeRangeOption":                                                                                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardTimeRangeOption(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTimeSettingsSpec":                                                                                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardTimeSettingsSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTransformationKind":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardTransformationKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1ActionStyle":                                                                                                                                                 schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1ActionStyle(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1FieldConfigSourceOverrides":                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1FieldConfigSourceOverrides(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1RangeMapOptions":                                                                                                                                             schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RangeMapOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1RegexMapOptions":                                                                                                                                             schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RegexMapOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1SpecialValueMapOptions":                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1SpecialValueMapOptions(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMap":                                                                                                                                                            schema_pkg_apis_dashboard_v2alpha1_DashboardValueMap(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap":                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult":                                                                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardValueMappingResult(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardVariableOption(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVersionInfo":                                                                                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardVersionInfo(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVersionList":                                                                                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardVersionList(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVizConfigKind":                                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigKind(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVizConfigSpec":                                                                                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardWithAccessInfo":                                                                                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardWithAccessInfo(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanel":                                                                                                                                                                 schema_pkg_apis_dashboard_v2alpha1_LibraryPanel(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanelList":                                                                                                                                                             schema_pkg_apis_dashboard_v2alpha1_LibraryPanelList(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanelSpec":                                                                                                                                                             schema_pkg_apis_dashboard_v2alpha1_LibraryPanelSpec(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanelStatus":                                                                                                                                                           schema_pkg_apis_dashboard_v2alpha1_LibraryPanelStatus(ref),
-		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.VersionsQueryOptions":                                                                                                                                                         schema_pkg_apis_dashboard_v2alpha1_VersionsQueryOptions(ref),
+		AnnotationActions{}.OpenAPIModelName():                                                  schema_pkg_apis_dashboard_v2alpha1_AnnotationActions(ref),
+		AnnotationPermission{}.OpenAPIModelName():                                               schema_pkg_apis_dashboard_v2alpha1_AnnotationPermission(ref),
+		Dashboard{}.OpenAPIModelName():                                                          schema_pkg_apis_dashboard_v2alpha1_Dashboard(ref),
+		DashboardAccess{}.OpenAPIModelName():                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardAccess(ref),
+		DashboardAction{}.OpenAPIModelName():                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardAction(ref),
+		DashboardActionVariable{}.OpenAPIModelName():                                            schema_pkg_apis_dashboard_v2alpha1_DashboardActionVariable(ref),
+		DashboardAdHocFilterWithLabels{}.OpenAPIModelName():                                     schema_pkg_apis_dashboard_v2alpha1_DashboardAdHocFilterWithLabels(ref),
+		DashboardAdhocVariableKind{}.OpenAPIModelName():                                         schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableKind(ref),
+		DashboardAdhocVariableSpec{}.OpenAPIModelName():                                         schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableSpec(ref),
+		DashboardAnnotationEventFieldMapping{}.OpenAPIModelName():                               schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationEventFieldMapping(ref),
+		DashboardAnnotationPanelFilter{}.OpenAPIModelName():                                     schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationPanelFilter(ref),
+		DashboardAnnotationQueryKind{}.OpenAPIModelName():                                       schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQueryKind(ref),
+		DashboardAnnotationQuerySpec{}.OpenAPIModelName():                                       schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQuerySpec(ref),
+		DashboardAutoGridLayoutItemKind{}.OpenAPIModelName():                                    schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemKind(ref),
+		DashboardAutoGridLayoutItemSpec{}.OpenAPIModelName():                                    schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemSpec(ref),
+		DashboardAutoGridLayoutKind{}.OpenAPIModelName():                                        schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutKind(ref),
+		DashboardAutoGridLayoutSpec{}.OpenAPIModelName():                                        schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutSpec(ref),
+		DashboardAutoGridRepeatOptions{}.OpenAPIModelName():                                     schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridRepeatOptions(ref),
+		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardClient": schema_pkg_apis_dashboard_v2alpha1_DashboardClient(ref),
+		DashboardConditionalRenderingDataKind{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingDataKind(ref),
+		DashboardConditionalRenderingDataSpec{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingDataSpec(ref),
+		DashboardConditionalRenderingGroupKind{}.OpenAPIModelName():                             schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupKind(ref),
+		DashboardConditionalRenderingGroupSpec{}.OpenAPIModelName():                             schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupSpec(ref),
+		DashboardConditionalRenderingTimeRangeSizeKind{}.OpenAPIModelName():                     schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingTimeRangeSizeKind(ref),
+		DashboardConditionalRenderingTimeRangeSizeSpec{}.OpenAPIModelName():                     schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingTimeRangeSizeSpec(ref),
+		DashboardConditionalRenderingVariableKind{}.OpenAPIModelName():                          schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableKind(ref),
+		DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind{}.OpenAPIModelName(): schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind(ref),
+		DashboardConditionalRenderingVariableSpec{}.OpenAPIModelName():                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableSpec(ref),
+		DashboardConstantVariableKind{}.OpenAPIModelName():                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableKind(ref),
+		DashboardConstantVariableSpec{}.OpenAPIModelName():                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableSpec(ref),
+		DashboardConversionStatus{}.OpenAPIModelName():                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardConversionStatus(ref),
+		DashboardCustomVariableKind{}.OpenAPIModelName():                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableKind(ref),
+		DashboardCustomVariableSpec{}.OpenAPIModelName():                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableSpec(ref),
+		DashboardDashboardLink{}.OpenAPIModelName():                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardDashboardLink(ref),
+		DashboardDataLink{}.OpenAPIModelName():                                                                                              schema_pkg_apis_dashboard_v2alpha1_DashboardDataLink(ref),
+		DashboardDataQueryKind{}.OpenAPIModelName():                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardDataQueryKind(ref),
+		DashboardDataSourceRef{}.OpenAPIModelName():                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardDataSourceRef(ref),
+		DashboardDataTransformerConfig{}.OpenAPIModelName():                                                                                 schema_pkg_apis_dashboard_v2alpha1_DashboardDataTransformerConfig(ref),
+		DashboardDatasourceVariableKind{}.OpenAPIModelName():                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableKind(ref),
+		DashboardDatasourceVariableSpec{}.OpenAPIModelName():                                                                                schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableSpec(ref),
+		DashboardDynamicConfigValue{}.OpenAPIModelName():                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardDynamicConfigValue(ref),
+		DashboardElementReference{}.OpenAPIModelName():                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardElementReference(ref),
+		DashboardFetchOptions{}.OpenAPIModelName():                                                                                          schema_pkg_apis_dashboard_v2alpha1_DashboardFetchOptions(ref),
+		DashboardFieldColor{}.OpenAPIModelName():                                                                                            schema_pkg_apis_dashboard_v2alpha1_DashboardFieldColor(ref),
+		DashboardFieldConfig{}.OpenAPIModelName():                                                                                           schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfig(ref),
+		DashboardFieldConfigSource{}.OpenAPIModelName():                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfigSource(ref),
+		DashboardGridLayoutItemKind{}.OpenAPIModelName():                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemKind(ref),
+		DashboardGridLayoutItemSpec{}.OpenAPIModelName():                                                                                    schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemSpec(ref),
+		DashboardGridLayoutKind{}.OpenAPIModelName():                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKind(ref),
+		DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind{}.OpenAPIModelName():                                    schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind(ref),
+		DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind{}.OpenAPIModelName():                                    schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind(ref),
+		DashboardGridLayoutSpec{}.OpenAPIModelName():                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutSpec(ref),
+		DashboardGroupByVariableKind{}.OpenAPIModelName():                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableKind(ref),
+		DashboardGroupByVariableSpec{}.OpenAPIModelName():                                                                                   schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableSpec(ref),
+		DashboardInfinityOptions{}.OpenAPIModelName():                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardInfinityOptions(ref),
+		DashboardIntervalVariableKind{}.OpenAPIModelName():                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableKind(ref),
+		DashboardIntervalVariableSpec{}.OpenAPIModelName():                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableSpec(ref),
+		"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardJSONCodec":                                          schema_pkg_apis_dashboard_v2alpha1_DashboardJSONCodec(ref),
+		DashboardLibraryPanelKind{}.OpenAPIModelName():                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKind(ref),
+		DashboardLibraryPanelKindSpec{}.OpenAPIModelName():                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKindSpec(ref),
+		DashboardLibraryPanelRef{}.OpenAPIModelName():                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelRef(ref),
+		DashboardList{}.OpenAPIModelName():                                                                                                  schema_pkg_apis_dashboard_v2alpha1_DashboardList(ref),
+		DashboardMatcherConfig{}.OpenAPIModelName():                                                                                         schema_pkg_apis_dashboard_v2alpha1_DashboardMatcherConfig(ref),
+		DashboardMetricFindValue{}.OpenAPIModelName():                                                                                       schema_pkg_apis_dashboard_v2alpha1_DashboardMetricFindValue(ref),
+		DashboardPanelKind{}.OpenAPIModelName():                                                                                             schema_pkg_apis_dashboard_v2alpha1_DashboardPanelKind(ref),
+		DashboardPanelKindOrLibraryPanelKind{}.OpenAPIModelName():                                                                           schema_pkg_apis_dashboard_v2alpha1_DashboardPanelKindOrLibraryPanelKind(ref),
+		DashboardPanelQueryKind{}.OpenAPIModelName():                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQueryKind(ref),
+		DashboardPanelQuerySpec{}.OpenAPIModelName():                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQuerySpec(ref),
+		DashboardPanelSpec{}.OpenAPIModelName():                                                                                             schema_pkg_apis_dashboard_v2alpha1_DashboardPanelSpec(ref),
+		DashboardQueryGroupKind{}.OpenAPIModelName():                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupKind(ref),
+		DashboardQueryGroupSpec{}.OpenAPIModelName():                                                                                        schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupSpec(ref),
+		DashboardQueryOptionsSpec{}.OpenAPIModelName():                                                                                      schema_pkg_apis_dashboard_v2alpha1_DashboardQueryOptionsSpec(ref),
+		DashboardQueryVariableKind{}.OpenAPIModelName():                                                                                     schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKind(ref),
+		DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKindOrSwitchVariableKind{}.OpenAPIModelName(): schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKindOrSwitchVariableKind(ref),
+		DashboardQueryVariableSpec{}.OpenAPIModelName():                             schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref),
+		DashboardRangeMap{}.OpenAPIModelName():                                      schema_pkg_apis_dashboard_v2alpha1_DashboardRangeMap(ref),
+		DashboardRegexMap{}.OpenAPIModelName():                                      schema_pkg_apis_dashboard_v2alpha1_DashboardRegexMap(ref),
+		DashboardRepeatOptions{}.OpenAPIModelName():                                 schema_pkg_apis_dashboard_v2alpha1_DashboardRepeatOptions(ref),
+		DashboardRowRepeatOptions{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardRowRepeatOptions(ref),
+		DashboardRowsLayoutKind{}.OpenAPIModelName():                                schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutKind(ref),
+		DashboardRowsLayoutRowKind{}.OpenAPIModelName():                             schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowKind(ref),
+		DashboardRowsLayoutRowSpec{}.OpenAPIModelName():                             schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowSpec(ref),
+		DashboardRowsLayoutSpec{}.OpenAPIModelName():                                schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutSpec(ref),
+		DashboardSpec{}.OpenAPIModelName():                                          schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref),
+		DashboardSpecialValueMap{}.OpenAPIModelName():                               schema_pkg_apis_dashboard_v2alpha1_DashboardSpecialValueMap(ref),
+		DashboardStatus{}.OpenAPIModelName():                                        schema_pkg_apis_dashboard_v2alpha1_DashboardStatus(ref),
+		DashboardStringOrArrayOfString{}.OpenAPIModelName():                         schema_pkg_apis_dashboard_v2alpha1_DashboardStringOrArrayOfString(ref),
+		DashboardStringOrFloat64{}.OpenAPIModelName():                               schema_pkg_apis_dashboard_v2alpha1_DashboardStringOrFloat64(ref),
+		DashboardSwitchVariableKind{}.OpenAPIModelName():                            schema_pkg_apis_dashboard_v2alpha1_DashboardSwitchVariableKind(ref),
+		DashboardSwitchVariableSpec{}.OpenAPIModelName():                            schema_pkg_apis_dashboard_v2alpha1_DashboardSwitchVariableSpec(ref),
+		DashboardTabRepeatOptions{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardTabRepeatOptions(ref),
+		DashboardTabsLayoutKind{}.OpenAPIModelName():                                schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutKind(ref),
+		DashboardTabsLayoutSpec{}.OpenAPIModelName():                                schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutSpec(ref),
+		DashboardTabsLayoutTabKind{}.OpenAPIModelName():                             schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabKind(ref),
+		DashboardTabsLayoutTabSpec{}.OpenAPIModelName():                             schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabSpec(ref),
+		DashboardTextVariableKind{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableKind(ref),
+		DashboardTextVariableSpec{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableSpec(ref),
+		DashboardThreshold{}.OpenAPIModelName():                                     schema_pkg_apis_dashboard_v2alpha1_DashboardThreshold(ref),
+		DashboardThresholdsConfig{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardThresholdsConfig(ref),
+		DashboardTimeRangeOption{}.OpenAPIModelName():                               schema_pkg_apis_dashboard_v2alpha1_DashboardTimeRangeOption(ref),
+		DashboardTimeSettingsSpec{}.OpenAPIModelName():                              schema_pkg_apis_dashboard_v2alpha1_DashboardTimeSettingsSpec(ref),
+		DashboardTransformationKind{}.OpenAPIModelName():                            schema_pkg_apis_dashboard_v2alpha1_DashboardTransformationKind(ref),
+		DashboardV2alpha1ActionStyle{}.OpenAPIModelName():                           schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1ActionStyle(ref),
+		DashboardV2alpha1FieldConfigSourceOverrides{}.OpenAPIModelName():            schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1FieldConfigSourceOverrides(ref),
+		DashboardV2alpha1RangeMapOptions{}.OpenAPIModelName():                       schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RangeMapOptions(ref),
+		DashboardV2alpha1RegexMapOptions{}.OpenAPIModelName():                       schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RegexMapOptions(ref),
+		DashboardV2alpha1SpecialValueMapOptions{}.OpenAPIModelName():                schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1SpecialValueMapOptions(ref),
+		DashboardValueMap{}.OpenAPIModelName():                                      schema_pkg_apis_dashboard_v2alpha1_DashboardValueMap(ref),
+		DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap{}.OpenAPIModelName(): schema_pkg_apis_dashboard_v2alpha1_DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap(ref),
+		DashboardValueMappingResult{}.OpenAPIModelName():                            schema_pkg_apis_dashboard_v2alpha1_DashboardValueMappingResult(ref),
+		DashboardVariableOption{}.OpenAPIModelName():                                schema_pkg_apis_dashboard_v2alpha1_DashboardVariableOption(ref),
+		DashboardVizConfigKind{}.OpenAPIModelName():                                 schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigKind(ref),
+		DashboardVizConfigSpec{}.OpenAPIModelName():                                 schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigSpec(ref),
+		DashboardWithAccessInfo{}.OpenAPIModelName():                                schema_pkg_apis_dashboard_v2alpha1_DashboardWithAccessInfo(ref),
 	}
 }
 
@@ -179,21 +174,15 @@ func schema_pkg_apis_dashboard_v2alpha1_AnnotationPermission(ref common.Referenc
 					"dashboard": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.AnnotationActions"),
-						},
-					},
-					"organization": {
-						SchemaProps: spec.SchemaProps{
-							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.AnnotationActions"),
+							Ref:     ref(AnnotationActions{}.OpenAPIModelName()),
 						},
 					},
 				},
-				Required: []string{"dashboard", "organization"},
+				Required: []string{"dashboard"},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.AnnotationActions"},
+			AnnotationActions{}.OpenAPIModelName()},
 	}
 }
 
@@ -220,20 +209,20 @@ func schema_pkg_apis_dashboard_v2alpha1_Dashboard(ref common.ReferenceCallback) 
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"),
+							Ref:     ref("io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"),
 						},
 					},
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Spec is the spec of the Dashboard",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpec"),
+							Ref:         ref(DashboardSpec{}.OpenAPIModelName()),
 						},
 					},
 					"status": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStatus"),
+							Ref:     ref(DashboardStatus{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -241,7 +230,7 @@ func schema_pkg_apis_dashboard_v2alpha1_Dashboard(ref common.ReferenceCallback) 
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpec", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStatus", "k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"},
+			DashboardSpec{}.OpenAPIModelName(), DashboardStatus{}.OpenAPIModelName(), "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},
 	}
 }
 
@@ -249,8 +238,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAccess(ref common.ReferenceCall
 	return common.OpenAPIDefinition{
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
-				Description: "Information about how the requesting user can use a given dashboard",
-				Type:        []string{"object"},
+				Type: []string{"object"},
 				Properties: map[string]spec.Schema{
 					"slug": {
 						SchemaProps: spec.SchemaProps{
@@ -263,6 +251,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAccess(ref common.ReferenceCall
 						SchemaProps: spec.SchemaProps{
 							Type:   []string{"string"},
 							Format: "",
+						},
+					},
+					"isPublic": {
+						SchemaProps: spec.SchemaProps{
+							Default: false,
+							Type:    []string{"boolean"},
+							Format:  "",
 						},
 					},
 					"canSave": {
@@ -303,15 +298,15 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAccess(ref common.ReferenceCall
 					},
 					"annotationsPermissions": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.AnnotationPermission"),
+							Ref: ref(AnnotationPermission{}.OpenAPIModelName()),
 						},
 					},
 				},
-				Required: []string{"canSave", "canEdit", "canAdmin", "canStar", "canDelete", "annotationsPermissions"},
+				Required: []string{"isPublic", "canSave", "canEdit", "canAdmin", "canStar", "canDelete", "annotationsPermissions"},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.AnnotationPermission"},
+			AnnotationPermission{}.OpenAPIModelName()},
 	}
 }
 
@@ -337,12 +332,12 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAction(ref common.ReferenceCall
 					},
 					"fetch": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFetchOptions"),
+							Ref: ref(DashboardFetchOptions{}.OpenAPIModelName()),
 						},
 					},
 					"infinity": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardInfinityOptions"),
+							Ref: ref(DashboardInfinityOptions{}.OpenAPIModelName()),
 						},
 					},
 					"confirmation": {
@@ -364,7 +359,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAction(ref common.ReferenceCall
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardActionVariable"),
+										Ref:     ref(DashboardActionVariable{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -372,7 +367,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAction(ref common.ReferenceCall
 					},
 					"style": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1ActionStyle"),
+							Ref: ref(DashboardV2alpha1ActionStyle{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -380,7 +375,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAction(ref common.ReferenceCall
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardActionVariable", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFetchOptions", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardInfinityOptions", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1ActionStyle"},
+			DashboardActionVariable{}.OpenAPIModelName(), DashboardFetchOptions{}.OpenAPIModelName(), DashboardInfinityOptions{}.OpenAPIModelName(), DashboardV2alpha1ActionStyle{}.OpenAPIModelName()},
 	}
 }
 
@@ -523,7 +518,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableKind(ref common.Re
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdhocVariableSpec"),
+							Ref:     ref(DashboardAdhocVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -531,7 +526,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableKind(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdhocVariableSpec"},
+			DashboardAdhocVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -551,7 +546,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableSpec(ref common.Re
 					},
 					"datasource": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef"),
+							Ref: ref(DashboardDataSourceRef{}.OpenAPIModelName()),
 						},
 					},
 					"baseFilters": {
@@ -561,7 +556,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableSpec(ref common.Re
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdHocFilterWithLabels"),
+										Ref:     ref(DashboardAdHocFilterWithLabels{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -574,7 +569,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableSpec(ref common.Re
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdHocFilterWithLabels"),
+										Ref:     ref(DashboardAdHocFilterWithLabels{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -587,7 +582,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableSpec(ref common.Re
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMetricFindValue"),
+										Ref:     ref(DashboardMetricFindValue{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -626,12 +621,53 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAdhocVariableSpec(ref common.Re
 							Format:  "",
 						},
 					},
+					"enableGroupBy": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Whether the group-by operator is enabled in the ad hoc filter combobox.",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
 				},
 				Required: []string{"name", "baseFilters", "filters", "defaultKeys", "hide", "skipUrlSync", "allowCustomValue"},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdHocFilterWithLabels", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMetricFindValue"},
+			DashboardAdHocFilterWithLabels{}.OpenAPIModelName(), DashboardDataSourceRef{}.OpenAPIModelName(), DashboardMetricFindValue{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationEventFieldMapping(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Annotation event field mapping. Defines how to map a data frame field to an annotation event field.",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"source": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Source type for the field value",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"value": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Constant value to use when source is \"text\"",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"regex": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Regular expression to apply to the field value",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+				},
+			},
+		},
 	}
 }
 
@@ -656,8 +692,8 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationPanelFilter(ref commo
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: 0,
-										Type:    []string{"integer"},
-										Format:  "int64",
+										Type:    []string{"number"},
+										Format:  "double",
 									},
 								},
 							},
@@ -686,7 +722,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQueryKind(ref common.
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationQuerySpec"),
+							Ref:     ref(DashboardAnnotationQuerySpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -694,7 +730,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQueryKind(ref common.
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationQuerySpec"},
+			DashboardAnnotationQuerySpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -706,12 +742,12 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQuerySpec(ref common.
 				Properties: map[string]spec.Schema{
 					"datasource": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef"),
+							Ref: ref(DashboardDataSourceRef{}.OpenAPIModelName()),
 						},
 					},
 					"query": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataQueryKind"),
+							Ref: ref(DashboardDataQueryKind{}.OpenAPIModelName()),
 						},
 					},
 					"enable": {
@@ -750,7 +786,22 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQuerySpec(ref common.
 					},
 					"filter": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationPanelFilter"),
+							Ref: ref(DashboardAnnotationPanelFilter{}.OpenAPIModelName()),
+						},
+					},
+					"mappings": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Mappings define how to convert data frame fields to annotation event fields.",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Allows: true,
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: map[string]interface{}{},
+										Ref:     ref(DashboardAnnotationEventFieldMapping{}.OpenAPIModelName()),
+									},
+								},
+							},
 						},
 					},
 					"legacyOptions": {
@@ -773,7 +824,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAnnotationQuerySpec(ref common.
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationPanelFilter", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataQueryKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef"},
+			DashboardAnnotationEventFieldMapping{}.OpenAPIModelName(), DashboardAnnotationPanelFilter{}.OpenAPIModelName(), DashboardDataQueryKind{}.OpenAPIModelName(), DashboardDataSourceRef{}.OpenAPIModelName()},
 	}
 }
 
@@ -793,7 +844,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemKind(ref comm
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutItemSpec"),
+							Ref:     ref(DashboardAutoGridLayoutItemSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -801,7 +852,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemKind(ref comm
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutItemSpec"},
+			DashboardAutoGridLayoutItemSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -814,17 +865,17 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemSpec(ref comm
 					"element": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardElementReference"),
+							Ref:     ref(DashboardElementReference{}.OpenAPIModelName()),
 						},
 					},
 					"repeat": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridRepeatOptions"),
+							Ref: ref(DashboardAutoGridRepeatOptions{}.OpenAPIModelName()),
 						},
 					},
 					"conditionalRendering": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupKind"),
+							Ref: ref(DashboardConditionalRenderingGroupKind{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -832,7 +883,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutItemSpec(ref comm
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridRepeatOptions", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardElementReference"},
+			DashboardAutoGridRepeatOptions{}.OpenAPIModelName(), DashboardConditionalRenderingGroupKind{}.OpenAPIModelName(), DashboardElementReference{}.OpenAPIModelName()},
 	}
 }
 
@@ -852,7 +903,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutKind(ref common.R
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutSpec"),
+							Ref:     ref(DashboardAutoGridLayoutSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -860,7 +911,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutKind(ref common.R
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutSpec"},
+			DashboardAutoGridLayoutSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -915,7 +966,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutSpec(ref common.R
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutItemKind"),
+										Ref:     ref(DashboardAutoGridLayoutItemKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -926,7 +977,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardAutoGridLayoutSpec(ref common.R
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutItemKind"},
+			DashboardAutoGridLayoutItemKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -993,7 +1044,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingDataKind(re
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingDataSpec"),
+							Ref:     ref(DashboardConditionalRenderingDataSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -1001,7 +1052,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingDataKind(re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingDataSpec"},
+			DashboardConditionalRenderingDataSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -1041,7 +1092,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupKind(r
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupSpec"),
+							Ref:     ref(DashboardConditionalRenderingGroupSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -1049,7 +1100,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupKind(r
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupSpec"},
+			DashboardConditionalRenderingGroupSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -1079,7 +1130,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupSpec(r
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind"),
+										Ref: ref(DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -1090,7 +1141,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingGroupSpec(r
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind"},
+			DashboardConditionalRenderingVariableKindOrConditionalRenderingDataKindOrConditionalRenderingTimeRangeSizeKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -1110,7 +1161,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingTimeRangeSi
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingTimeRangeSizeSpec"),
+							Ref:     ref(DashboardConditionalRenderingTimeRangeSizeSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -1118,7 +1169,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingTimeRangeSi
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingTimeRangeSizeSpec"},
+			DashboardConditionalRenderingTimeRangeSizeSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -1158,7 +1209,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableKin
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableSpec"),
+							Ref:     ref(DashboardConditionalRenderingVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -1166,7 +1217,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableKin
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableSpec"},
+			DashboardConditionalRenderingVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -1178,24 +1229,24 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConditionalRenderingVariableKin
 				Properties: map[string]spec.Schema{
 					"ConditionalRenderingVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableKind"),
+							Ref: ref(DashboardConditionalRenderingVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"ConditionalRenderingDataKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingDataKind"),
+							Ref: ref(DashboardConditionalRenderingDataKind{}.OpenAPIModelName()),
 						},
 					},
 					"ConditionalRenderingTimeRangeSizeKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingTimeRangeSizeKind"),
+							Ref: ref(DashboardConditionalRenderingTimeRangeSizeKind{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingDataKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingTimeRangeSizeKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingVariableKind"},
+			DashboardConditionalRenderingDataKind{}.OpenAPIModelName(), DashboardConditionalRenderingTimeRangeSizeKind{}.OpenAPIModelName(), DashboardConditionalRenderingVariableKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -1250,7 +1301,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableKind(ref common
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConstantVariableSpec"),
+							Ref:     ref(DashboardConstantVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -1258,7 +1309,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableKind(ref common
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConstantVariableSpec"},
+			DashboardConstantVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -1286,7 +1337,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableSpec(ref common
 					"current": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"label": {
@@ -1320,7 +1371,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConstantVariableSpec(ref common
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"},
+			DashboardVariableOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -1353,6 +1404,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardConversionStatus(ref common.Ref
 							Format:      "",
 						},
 					},
+					"source": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The original value map[string]any",
+							Type:        []string{"object"},
+							Format:      "",
+						},
+					},
 				},
 				Required: []string{"failed"},
 			},
@@ -1377,7 +1435,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableKind(ref common.R
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardCustomVariableSpec"),
+							Ref:     ref(DashboardCustomVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -1385,7 +1443,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableKind(ref common.R
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardCustomVariableSpec"},
+			DashboardCustomVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -1413,7 +1471,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableSpec(ref common.R
 					"current": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"options": {
@@ -1423,7 +1481,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableSpec(ref common.R
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+										Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -1482,12 +1540,18 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardCustomVariableSpec(ref common.R
 							Format:  "",
 						},
 					},
+					"valuesFormat": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
 				},
 				Required: []string{"name", "query", "current", "options", "multi", "includeAll", "hide", "skipUrlSync", "allowCustomValue"},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"},
+			DashboardVariableOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -1581,6 +1645,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDashboardLink(ref common.Refere
 							Description: "If true, includes current time range in the link as query params",
 							Default:     false,
 							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"placement": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Placement can be used to display the link somewhere else on the dashboard other than above the visualisations.",
+							Type:        []string{"string"},
 							Format:      "",
 						},
 					},
@@ -1710,7 +1781,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDataTransformerConfig(ref commo
 					"filter": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Optional frame matcher. When missing it will be applied to all results",
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMatcherConfig"),
+							Ref:         ref(DashboardMatcherConfig{}.OpenAPIModelName()),
 						},
 					},
 					"topic": {
@@ -1732,7 +1803,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDataTransformerConfig(ref commo
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMatcherConfig"},
+			DashboardMatcherConfig{}.OpenAPIModelName()},
 	}
 }
 
@@ -1753,7 +1824,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableKind(ref comm
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDatasourceVariableSpec"),
+							Ref:     ref(DashboardDatasourceVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -1761,7 +1832,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableKind(ref comm
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDatasourceVariableSpec"},
+			DashboardDatasourceVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -1803,7 +1874,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableSpec(ref comm
 					"current": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"options": {
@@ -1813,7 +1884,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableSpec(ref comm
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+										Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -1877,7 +1948,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardDatasourceVariableSpec(ref comm
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"},
+			DashboardVariableOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -2032,6 +2103,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldColor(ref common.Reference
 							Format:      "",
 						},
 					},
+					"gradientColorTo": {
+						SchemaProps: spec.SchemaProps{
+							Description: "The end color for the gradient color mode (smallest value). Only used when mode is gradient.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 					"seriesBy": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Some visualizations need to know how to assign a series color from by value color schemes.",
@@ -2097,7 +2175,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfig(ref common.Referenc
 					},
 					"unit": {
 						SchemaProps: spec.SchemaProps{
-							Description: "Unit a field should use. The unit you select is applied to all fields except time. You can use the units ID availables in Grafana or a custom unit. Available units in Grafana: https://github.com/grafana/grafana/blob/main/packages/grafana-data/src/valueFormats/categories.ts As custom unit, you can use the following formats: `suffix:<suffix>` for custom unit that should go after value. `prefix:<prefix>` for custom unit that should go before value. `time:<format>` For custom date time formats type for example `time:YYYY-MM-DD`. `si:<base scale><unit characters>` for custom SI units. For example: `si: mF`. This one is a bit more advanced as you can specify both a unit and the source data scale. So if your source data is represented as milli (thousands of) something prefix the unit with that SI scale character. `count:<unit>` for a custom count unit. `currency:<unit>` for custom a currency unit.",
+							Description: "Unit a field should use. The unit you select is applied to all fields except time. You can use the units ID available in Grafana or a custom unit. Available units in Grafana: https://github.com/grafana/grafana/blob/main/packages/grafana-data/src/valueFormats/categories.ts As custom unit, you can use the following formats: `suffix:<suffix>` for custom unit that should go after value. `prefix:<prefix>` for custom unit that should go before value. `time:<format>` For custom date time formats type for example `time:YYYY-MM-DD`. `si:<base scale><unit characters>` for custom SI units. For example: `si: mF`. This one is a bit more advanced as you can specify both a unit and the source data scale. So if your source data is represented as milli (thousands of) something prefix the unit with that SI scale character. `count:<unit>` for a custom count unit. `currency:<unit>` for custom a currency unit.",
 							Type:        []string{"string"},
 							Format:      "",
 						},
@@ -2130,7 +2208,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfig(ref common.Referenc
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap"),
+										Ref: ref(DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -2139,13 +2217,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfig(ref common.Referenc
 					"thresholds": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Map numeric values to states",
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardThresholdsConfig"),
+							Ref:         ref(DashboardThresholdsConfig{}.OpenAPIModelName()),
 						},
 					},
 					"color": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Panel color configuration",
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldColor"),
+							Ref:         ref(DashboardFieldColor{}.OpenAPIModelName()),
 						},
 					},
 					"links": {
@@ -2170,7 +2248,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfig(ref common.Referenc
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAction"),
+										Ref:     ref(DashboardAction{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -2198,11 +2276,25 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfig(ref common.Referenc
 							},
 						},
 					},
+					"fieldMinMax": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Calculate min max per field",
+							Type:        []string{"boolean"},
+							Format:      "",
+						},
+					},
+					"nullValueMode": {
+						SchemaProps: spec.SchemaProps{
+							Description: "How null values should be handled when calculating field stats \"null\" - Include null values, \"connected\" - Ignore nulls, \"null as zero\" - Treat nulls as zero",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAction", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldColor", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardThresholdsConfig", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap"},
+			DashboardAction{}.OpenAPIModelName(), DashboardFieldColor{}.OpenAPIModelName(), DashboardThresholdsConfig{}.OpenAPIModelName(), DashboardValueMapOrRangeMapOrRegexMapOrSpecialValueMap{}.OpenAPIModelName()},
 	}
 }
 
@@ -2217,7 +2309,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfigSource(ref common.Re
 						SchemaProps: spec.SchemaProps{
 							Description: "Defaults are the options applied to all fields.",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldConfig"),
+							Ref:         ref(DashboardFieldConfig{}.OpenAPIModelName()),
 						},
 					},
 					"overrides": {
@@ -2228,7 +2320,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfigSource(ref common.Re
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1FieldConfigSourceOverrides"),
+										Ref:     ref(DashboardV2alpha1FieldConfigSourceOverrides{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -2239,7 +2331,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardFieldConfigSource(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldConfig", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1FieldConfigSourceOverrides"},
+			DashboardFieldConfig{}.OpenAPIModelName(), DashboardV2alpha1FieldConfigSourceOverrides{}.OpenAPIModelName()},
 	}
 }
 
@@ -2259,7 +2351,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemKind(ref common.R
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutItemSpec"),
+							Ref:     ref(DashboardGridLayoutItemSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -2267,7 +2359,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemKind(ref common.R
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutItemSpec"},
+			DashboardGridLayoutItemSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -2309,12 +2401,12 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemSpec(ref common.R
 						SchemaProps: spec.SchemaProps{
 							Description: "reference to a PanelKind from dashboard.spec.elements Expressed as JSON Schema reference",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardElementReference"),
+							Ref:         ref(DashboardElementReference{}.OpenAPIModelName()),
 						},
 					},
 					"repeat": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRepeatOptions"),
+							Ref: ref(DashboardRepeatOptions{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -2322,7 +2414,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutItemSpec(ref common.R
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardElementReference", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRepeatOptions"},
+			DashboardElementReference{}.OpenAPIModelName(), DashboardRepeatOptions{}.OpenAPIModelName()},
 	}
 }
 
@@ -2342,7 +2434,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKind(ref common.Refer
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutSpec"),
+							Ref:     ref(DashboardGridLayoutSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -2350,7 +2442,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKind(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutSpec"},
+			DashboardGridLayoutSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -2362,29 +2454,29 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKindOrAutoGridLayoutK
 				Properties: map[string]spec.Schema{
 					"GridLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKind"),
+							Ref: ref(DashboardGridLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"AutoGridLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutKind"),
+							Ref: ref(DashboardAutoGridLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"TabsLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutKind"),
+							Ref: ref(DashboardTabsLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"RowsLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutKind"),
+							Ref: ref(DashboardRowsLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutKind"},
+			DashboardAutoGridLayoutKind{}.OpenAPIModelName(), DashboardGridLayoutKind{}.OpenAPIModelName(), DashboardRowsLayoutKind{}.OpenAPIModelName(), DashboardTabsLayoutKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -2396,29 +2488,29 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutKindOrRowsLayoutKindO
 				Properties: map[string]spec.Schema{
 					"GridLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKind"),
+							Ref: ref(DashboardGridLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"RowsLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutKind"),
+							Ref: ref(DashboardRowsLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"AutoGridLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutKind"),
+							Ref: ref(DashboardAutoGridLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"TabsLayoutKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutKind"),
+							Ref: ref(DashboardTabsLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAutoGridLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutKind"},
+			DashboardAutoGridLayoutKind{}.OpenAPIModelName(), DashboardGridLayoutKind{}.OpenAPIModelName(), DashboardRowsLayoutKind{}.OpenAPIModelName(), DashboardTabsLayoutKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -2435,7 +2527,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutSpec(ref common.Refer
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutItemKind"),
+										Ref:     ref(DashboardGridLayoutItemKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -2446,7 +2538,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGridLayoutSpec(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutItemKind"},
+			DashboardGridLayoutItemKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -2467,7 +2559,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableKind(ref common.
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGroupByVariableSpec"),
+							Ref:     ref(DashboardGroupByVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -2475,7 +2567,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableKind(ref common.
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGroupByVariableSpec"},
+			DashboardGroupByVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -2495,18 +2587,18 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableSpec(ref common.
 					},
 					"datasource": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef"),
+							Ref: ref(DashboardDataSourceRef{}.OpenAPIModelName()),
 						},
 					},
 					"defaultValue": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref: ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"current": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"options": {
@@ -2516,7 +2608,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableSpec(ref common.
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+										Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -2560,7 +2652,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardGroupByVariableSpec(ref common.
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"},
+			DashboardDataSourceRef{}.OpenAPIModelName(), DashboardVariableOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -2664,7 +2756,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableKind(ref common
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardIntervalVariableSpec"),
+							Ref:     ref(DashboardIntervalVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -2672,7 +2764,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableKind(ref common
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardIntervalVariableSpec"},
+			DashboardIntervalVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -2700,7 +2792,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableSpec(ref common
 					"current": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"options": {
@@ -2710,7 +2802,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableSpec(ref common
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+										Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -2775,7 +2867,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardIntervalVariableSpec(ref common
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"},
+			DashboardVariableOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -2806,7 +2898,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKind(ref common.Ref
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelKindSpec"),
+							Ref:     ref(DashboardLibraryPanelKindSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -2814,7 +2906,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKind(ref common.Ref
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelKindSpec"},
+			DashboardLibraryPanelKindSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -2843,7 +2935,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKindSpec(ref common
 					"libraryPanel": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelRef"),
+							Ref:     ref(DashboardLibraryPanelRef{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -2851,7 +2943,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardLibraryPanelKindSpec(ref common
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelRef"},
+			DashboardLibraryPanelRef{}.OpenAPIModelName()},
 	}
 }
 
@@ -2908,7 +3000,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardList(ref common.ReferenceCallba
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"),
+							Ref:     ref("io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta"),
 						},
 					},
 					"items": {
@@ -2918,7 +3010,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardList(ref common.ReferenceCallba
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.Dashboard"),
+										Ref:     ref(Dashboard{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -2929,7 +3021,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardList(ref common.ReferenceCallba
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.Dashboard", "k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"},
+			Dashboard{}.OpenAPIModelName(), "io.k8s.apimachinery.pkg.apis.meta.v1.ListMeta"},
 	}
 }
 
@@ -2948,6 +3040,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardMatcherConfig(ref common.Refere
 							Format:      "",
 						},
 					},
+					"scope": {
+						SchemaProps: spec.SchemaProps{
+							Description: "If set, limits this matcher to fields of that type. If not set, \"series\" mode is used.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 					"options": {
 						SchemaProps: spec.SchemaProps{
 							Description: "The matcher options. This is specific to the matcher implementation.",
@@ -2957,102 +3056,6 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardMatcherConfig(ref common.Refere
 					},
 				},
 				Required: []string{"id"},
-			},
-		},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_DashboardMetadata(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Description: "metadata contains embedded CommonMetadata and can be extended with custom string fields without external reference as using the CommonMetadata reference breaks thema codegen.",
-				Type:        []string{"object"},
-				Properties: map[string]spec.Schema{
-					"updateTimestamp": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "date-time",
-						},
-					},
-					"createdBy": {
-						SchemaProps: spec.SchemaProps{
-							Default: "",
-							Type:    []string{"string"},
-							Format:  "",
-						},
-					},
-					"uid": {
-						SchemaProps: spec.SchemaProps{
-							Default: "",
-							Type:    []string{"string"},
-							Format:  "",
-						},
-					},
-					"creationTimestamp": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "date-time",
-						},
-					},
-					"deletionTimestamp": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"string"},
-							Format: "date-time",
-						},
-					},
-					"finalizers": {
-						SchemaProps: spec.SchemaProps{
-							Type: []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Default: "",
-										Type:    []string{"string"},
-										Format:  "",
-									},
-								},
-							},
-						},
-					},
-					"resourceVersion": {
-						SchemaProps: spec.SchemaProps{
-							Default: "",
-							Type:    []string{"string"},
-							Format:  "",
-						},
-					},
-					"generation": {
-						SchemaProps: spec.SchemaProps{
-							Default: 0,
-							Type:    []string{"integer"},
-							Format:  "int64",
-						},
-					},
-					"updatedBy": {
-						SchemaProps: spec.SchemaProps{
-							Default: "",
-							Type:    []string{"string"},
-							Format:  "",
-						},
-					},
-					"labels": {
-						SchemaProps: spec.SchemaProps{
-							Type: []string{"object"},
-							AdditionalProperties: &spec.SchemaOrBool{
-								Allows: true,
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Default: "",
-										Type:    []string{"string"},
-										Format:  "",
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"updateTimestamp", "createdBy", "uid", "creationTimestamp", "finalizers", "resourceVersion", "generation", "updatedBy", "labels"},
 			},
 		},
 	}
@@ -3074,7 +3077,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardMetricFindValue(ref common.Refe
 					},
 					"value": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStringOrFloat64"),
+							Ref: ref(DashboardStringOrFloat64{}.OpenAPIModelName()),
 						},
 					},
 					"group": {
@@ -3094,7 +3097,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardMetricFindValue(ref common.Refe
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStringOrFloat64"},
+			DashboardStringOrFloat64{}.OpenAPIModelName()},
 	}
 }
 
@@ -3114,7 +3117,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelKind(ref common.ReferenceC
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelSpec"),
+							Ref:     ref(DashboardPanelSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3122,7 +3125,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelKind(ref common.ReferenceC
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelSpec"},
+			DashboardPanelSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -3134,19 +3137,19 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelKindOrLibraryPanelKind(ref
 				Properties: map[string]spec.Schema{
 					"PanelKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelKind"),
+							Ref: ref(DashboardPanelKind{}.OpenAPIModelName()),
 						},
 					},
 					"LibraryPanelKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelKind"),
+							Ref: ref(DashboardLibraryPanelKind{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardLibraryPanelKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelKind"},
+			DashboardLibraryPanelKind{}.OpenAPIModelName(), DashboardPanelKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -3166,7 +3169,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQueryKind(ref common.Refer
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelQuerySpec"),
+							Ref:     ref(DashboardPanelQuerySpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3174,7 +3177,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQueryKind(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelQuerySpec"},
+			DashboardPanelQuerySpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -3187,12 +3190,12 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQuerySpec(ref common.Refer
 					"query": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataQueryKind"),
+							Ref:     ref(DashboardDataQueryKind{}.OpenAPIModelName()),
 						},
 					},
 					"datasource": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef"),
+							Ref: ref(DashboardDataSourceRef{}.OpenAPIModelName()),
 						},
 					},
 					"refId": {
@@ -3214,7 +3217,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelQuerySpec(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataQueryKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef"},
+			DashboardDataQueryKind{}.OpenAPIModelName(), DashboardDataSourceRef{}.OpenAPIModelName()},
 	}
 }
 
@@ -3240,9 +3243,16 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelSpec(ref common.ReferenceC
 					},
 					"description": {
 						SchemaProps: spec.SchemaProps{
-							Default: "",
-							Type:    []string{"string"},
-							Format:  "",
+							Description: "Shown in a info icon tooltip next to panel title",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
+					"subtitle": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Shown in a sub header below the title.",
+							Type:        []string{"string"},
+							Format:      "",
 						},
 					},
 					"links": {
@@ -3252,7 +3262,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelSpec(ref common.ReferenceC
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataLink"),
+										Ref:     ref(DashboardDataLink{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3261,13 +3271,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelSpec(ref common.ReferenceC
 					"data": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryGroupKind"),
+							Ref:     ref(DashboardQueryGroupKind{}.OpenAPIModelName()),
 						},
 					},
 					"vizConfig": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVizConfigKind"),
+							Ref:     ref(DashboardVizConfigKind{}.OpenAPIModelName()),
 						},
 					},
 					"transparent": {
@@ -3277,11 +3287,11 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardPanelSpec(ref common.ReferenceC
 						},
 					},
 				},
-				Required: []string{"id", "title", "description", "links", "data", "vizConfig"},
+				Required: []string{"id", "title", "links", "data", "vizConfig"},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataLink", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryGroupKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVizConfigKind"},
+			DashboardDataLink{}.OpenAPIModelName(), DashboardQueryGroupKind{}.OpenAPIModelName(), DashboardVizConfigKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -3301,7 +3311,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupKind(ref common.Refer
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryGroupSpec"),
+							Ref:     ref(DashboardQueryGroupSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3309,7 +3319,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupKind(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryGroupSpec"},
+			DashboardQueryGroupSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -3326,7 +3336,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupSpec(ref common.Refer
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelQueryKind"),
+										Ref:     ref(DashboardPanelQueryKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3339,7 +3349,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupSpec(ref common.Refer
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTransformationKind"),
+										Ref:     ref(DashboardTransformationKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3348,7 +3358,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupSpec(ref common.Refer
 					"queryOptions": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryOptionsSpec"),
+							Ref:     ref(DashboardQueryOptionsSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3356,7 +3366,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryGroupSpec(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelQueryKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryOptionsSpec", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTransformationKind"},
+			DashboardPanelQueryKind{}.OpenAPIModelName(), DashboardQueryOptionsSpec{}.OpenAPIModelName(), DashboardTransformationKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -3379,6 +3389,12 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryOptionsSpec(ref common.Ref
 						},
 					},
 					"timeShift": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"timeCompare": {
 						SchemaProps: spec.SchemaProps{
 							Type:   []string{"string"},
 							Format: "",
@@ -3431,7 +3447,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKind(ref common.Re
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableSpec"),
+							Ref:     ref(DashboardQueryVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3439,11 +3455,11 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKind(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableSpec"},
+			DashboardQueryVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
-func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKind(ref common.ReferenceCallback) common.OpenAPIDefinition {
+func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKindOrSwitchVariableKind(ref common.ReferenceCallback) common.OpenAPIDefinition {
 	return common.OpenAPIDefinition{
 		Schema: spec.Schema{
 			SchemaProps: spec.SchemaProps{
@@ -3451,49 +3467,54 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableKindOrTextVariable
 				Properties: map[string]spec.Schema{
 					"QueryVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableKind"),
+							Ref: ref(DashboardQueryVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"TextVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTextVariableKind"),
+							Ref: ref(DashboardTextVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"ConstantVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConstantVariableKind"),
+							Ref: ref(DashboardConstantVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"DatasourceVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDatasourceVariableKind"),
+							Ref: ref(DashboardDatasourceVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"IntervalVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardIntervalVariableKind"),
+							Ref: ref(DashboardIntervalVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"CustomVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardCustomVariableKind"),
+							Ref: ref(DashboardCustomVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"GroupByVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGroupByVariableKind"),
+							Ref: ref(DashboardGroupByVariableKind{}.OpenAPIModelName()),
 						},
 					},
 					"AdhocVariableKind": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdhocVariableKind"),
+							Ref: ref(DashboardAdhocVariableKind{}.OpenAPIModelName()),
+						},
+					},
+					"SwitchVariableKind": {
+						SchemaProps: spec.SchemaProps{
+							Ref: ref(DashboardSwitchVariableKind{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAdhocVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConstantVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardCustomVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDatasourceVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGroupByVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardIntervalVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTextVariableKind"},
+			DashboardAdhocVariableKind{}.OpenAPIModelName(), DashboardConstantVariableKind{}.OpenAPIModelName(), DashboardCustomVariableKind{}.OpenAPIModelName(), DashboardDatasourceVariableKind{}.OpenAPIModelName(), DashboardGroupByVariableKind{}.OpenAPIModelName(), DashboardIntervalVariableKind{}.OpenAPIModelName(), DashboardQueryVariableKind{}.OpenAPIModelName(), DashboardSwitchVariableKind{}.OpenAPIModelName(), DashboardTextVariableKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -3514,7 +3535,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref common.Re
 					"current": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"label": {
@@ -3552,13 +3573,13 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref common.Re
 					},
 					"datasource": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef"),
+							Ref: ref(DashboardDataSourceRef{}.OpenAPIModelName()),
 						},
 					},
 					"query": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataQueryKind"),
+							Ref:     ref(DashboardDataQueryKind{}.OpenAPIModelName()),
 						},
 					},
 					"regex": {
@@ -3566,6 +3587,12 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref common.Re
 							Default: "",
 							Type:    []string{"string"},
 							Format:  "",
+						},
+					},
+					"regexApplyTo": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
 						},
 					},
 					"sort": {
@@ -3588,7 +3615,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref common.Re
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+										Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3634,7 +3661,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref common.Re
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+										Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3651,7 +3678,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardQueryVariableSpec(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataQueryKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataSourceRef", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"},
+			DashboardDataQueryKind{}.OpenAPIModelName(), DashboardDataSourceRef{}.OpenAPIModelName(), DashboardVariableOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -3673,7 +3700,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRangeMap(ref common.ReferenceCa
 						SchemaProps: spec.SchemaProps{
 							Description: "Range to match against and the result to apply when the value is within the range",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1RangeMapOptions"),
+							Ref:         ref(DashboardV2alpha1RangeMapOptions{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3681,7 +3708,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRangeMap(ref common.ReferenceCa
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1RangeMapOptions"},
+			DashboardV2alpha1RangeMapOptions{}.OpenAPIModelName()},
 	}
 }
 
@@ -3703,7 +3730,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRegexMap(ref common.ReferenceCa
 						SchemaProps: spec.SchemaProps{
 							Description: "Regular expression to match against and the result to apply when the value matches the regex",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1RegexMapOptions"),
+							Ref:         ref(DashboardV2alpha1RegexMapOptions{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3711,7 +3738,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRegexMap(ref common.ReferenceCa
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1RegexMapOptions"},
+			DashboardV2alpha1RegexMapOptions{}.OpenAPIModelName()},
 	}
 }
 
@@ -3797,7 +3824,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutKind(ref common.Refer
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutSpec"),
+							Ref:     ref(DashboardRowsLayoutSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3805,7 +3832,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutKind(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutSpec"},
+			DashboardRowsLayoutSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -3825,7 +3852,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowKind(ref common.Re
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutRowSpec"),
+							Ref:     ref(DashboardRowsLayoutRowSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3833,7 +3860,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowKind(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutRowSpec"},
+			DashboardRowsLayoutRowSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -3869,17 +3896,17 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowSpec(ref common.Re
 					},
 					"conditionalRendering": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupKind"),
+							Ref: ref(DashboardConditionalRenderingGroupKind{}.OpenAPIModelName()),
 						},
 					},
 					"repeat": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowRepeatOptions"),
+							Ref: ref(DashboardRowRepeatOptions{}.OpenAPIModelName()),
 						},
 					},
 					"layout": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind"),
+							Ref: ref(DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -3887,7 +3914,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutRowSpec(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowRepeatOptions"},
+			DashboardConditionalRenderingGroupKind{}.OpenAPIModelName(), DashboardGridLayoutKindOrAutoGridLayoutKindOrTabsLayoutKindOrRowsLayoutKind{}.OpenAPIModelName(), DashboardRowRepeatOptions{}.OpenAPIModelName()},
 	}
 }
 
@@ -3904,7 +3931,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutSpec(ref common.Refer
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutRowKind"),
+										Ref:     ref(DashboardRowsLayoutRowKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3915,7 +3942,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardRowsLayoutSpec(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRowsLayoutRowKind"},
+			DashboardRowsLayoutRowKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -3932,7 +3959,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref common.ReferenceCallba
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationQueryKind"),
+										Ref:     ref(DashboardAnnotationQueryKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3967,7 +3994,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref common.ReferenceCallba
 								Allows: true,
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelKindOrLibraryPanelKind"),
+										Ref: ref(DashboardPanelKindOrLibraryPanelKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -3975,7 +4002,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref common.ReferenceCallba
 					},
 					"layout": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind"),
+							Ref: ref(DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"links": {
@@ -3986,7 +4013,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref common.ReferenceCallba
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDashboardLink"),
+										Ref:     ref(DashboardDashboardLink{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -4032,7 +4059,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref common.ReferenceCallba
 					"timeSettings": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTimeSettingsSpec"),
+							Ref:     ref(DashboardTimeSettingsSpec{}.OpenAPIModelName()),
 						},
 					},
 					"title": {
@@ -4050,7 +4077,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref common.ReferenceCallba
 							Items: &spec.SchemaOrArray{
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
-										Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKind"),
+										Ref: ref(DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKindOrSwitchVariableKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -4061,7 +4088,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpec(ref common.ReferenceCallba
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAnnotationQueryKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDashboardLink", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardPanelKindOrLibraryPanelKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTimeSettingsSpec"},
+			DashboardAnnotationQueryKind{}.OpenAPIModelName(), DashboardDashboardLink{}.OpenAPIModelName(), DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind{}.OpenAPIModelName(), DashboardPanelKindOrLibraryPanelKind{}.OpenAPIModelName(), DashboardQueryVariableKindOrTextVariableKindOrConstantVariableKindOrDatasourceVariableKindOrIntervalVariableKindOrCustomVariableKindOrGroupByVariableKindOrAdhocVariableKindOrSwitchVariableKind{}.OpenAPIModelName(), DashboardTimeSettingsSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -4082,7 +4109,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpecialValueMap(ref common.Refe
 					"options": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1SpecialValueMapOptions"),
+							Ref:     ref(DashboardV2alpha1SpecialValueMapOptions{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4090,7 +4117,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardSpecialValueMap(ref common.Refe
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardV2alpha1SpecialValueMapOptions"},
+			DashboardV2alpha1SpecialValueMapOptions{}.OpenAPIModelName()},
 	}
 }
 
@@ -4103,14 +4130,14 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardStatus(ref common.ReferenceCall
 					"conversion": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Optional conversion status.",
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConversionStatus"),
+							Ref:         ref(DashboardConversionStatus{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConversionStatus"},
+			DashboardConversionStatus{}.OpenAPIModelName()},
 	}
 }
 
@@ -4170,6 +4197,102 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardStringOrFloat64(ref common.Refe
 	}
 }
 
+func schema_pkg_apis_dashboard_v2alpha1_DashboardSwitchVariableKind(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Type: []string{"object"},
+				Properties: map[string]spec.Schema{
+					"kind": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"spec": {
+						SchemaProps: spec.SchemaProps{
+							Default: map[string]interface{}{},
+							Ref:     ref(DashboardSwitchVariableSpec{}.OpenAPIModelName()),
+						},
+					},
+				},
+				Required: []string{"kind", "spec"},
+			},
+		},
+		Dependencies: []string{
+			DashboardSwitchVariableSpec{}.OpenAPIModelName()},
+	}
+}
+
+func schema_pkg_apis_dashboard_v2alpha1_DashboardSwitchVariableSpec(ref common.ReferenceCallback) common.OpenAPIDefinition {
+	return common.OpenAPIDefinition{
+		Schema: spec.Schema{
+			SchemaProps: spec.SchemaProps{
+				Description: "Switch variable specification",
+				Type:        []string{"object"},
+				Properties: map[string]spec.Schema{
+					"name": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"current": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"enabledValue": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"disabledValue": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"label": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+					"hide": {
+						SchemaProps: spec.SchemaProps{
+							Default: "",
+							Type:    []string{"string"},
+							Format:  "",
+						},
+					},
+					"skipUrlSync": {
+						SchemaProps: spec.SchemaProps{
+							Default: false,
+							Type:    []string{"boolean"},
+							Format:  "",
+						},
+					},
+					"description": {
+						SchemaProps: spec.SchemaProps{
+							Type:   []string{"string"},
+							Format: "",
+						},
+					},
+				},
+				Required: []string{"name", "current", "enabledValue", "disabledValue", "hide", "skipUrlSync"},
+			},
+		},
+	}
+}
+
 func schema_pkg_apis_dashboard_v2alpha1_DashboardTabRepeatOptions(ref common.ReferenceCallback) common.OpenAPIDefinition {
 	return common.OpenAPIDefinition{
 		Schema: spec.Schema{
@@ -4213,7 +4336,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutKind(ref common.Refer
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutSpec"),
+							Ref:     ref(DashboardTabsLayoutSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4221,7 +4344,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutKind(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutSpec"},
+			DashboardTabsLayoutSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -4238,7 +4361,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutSpec(ref common.Refer
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutTabKind"),
+										Ref:     ref(DashboardTabsLayoutTabKind{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -4249,7 +4372,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutSpec(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutTabKind"},
+			DashboardTabsLayoutTabKind{}.OpenAPIModelName()},
 	}
 }
 
@@ -4269,7 +4392,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabKind(ref common.Re
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutTabSpec"),
+							Ref:     ref(DashboardTabsLayoutTabSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4277,7 +4400,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabKind(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabsLayoutTabSpec"},
+			DashboardTabsLayoutTabSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -4295,17 +4418,17 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabSpec(ref common.Re
 					},
 					"layout": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind"),
+							Ref: ref(DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind{}.OpenAPIModelName()),
 						},
 					},
 					"conditionalRendering": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupKind"),
+							Ref: ref(DashboardConditionalRenderingGroupKind{}.OpenAPIModelName()),
 						},
 					},
 					"repeat": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabRepeatOptions"),
+							Ref: ref(DashboardTabRepeatOptions{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4313,7 +4436,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTabsLayoutTabSpec(ref common.Re
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardConditionalRenderingGroupKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTabRepeatOptions"},
+			DashboardConditionalRenderingGroupKind{}.OpenAPIModelName(), DashboardGridLayoutKindOrRowsLayoutKindOrAutoGridLayoutKindOrTabsLayoutKind{}.OpenAPIModelName(), DashboardTabRepeatOptions{}.OpenAPIModelName()},
 	}
 }
 
@@ -4334,7 +4457,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableKind(ref common.Ref
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTextVariableSpec"),
+							Ref:     ref(DashboardTextVariableSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4342,7 +4465,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableKind(ref common.Ref
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTextVariableSpec"},
+			DashboardTextVariableSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -4363,7 +4486,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableSpec(ref common.Ref
 					"current": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"),
+							Ref:     ref(DashboardVariableOption{}.OpenAPIModelName()),
 						},
 					},
 					"query": {
@@ -4404,7 +4527,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTextVariableSpec(ref common.Ref
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVariableOption"},
+			DashboardVariableOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -4416,9 +4539,16 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardThreshold(ref common.ReferenceC
 				Properties: map[string]spec.Schema{
 					"value": {
 						SchemaProps: spec.SchemaProps{
-							Default: 0,
-							Type:    []string{"number"},
-							Format:  "double",
+							Description: "Value null means -Infinity",
+							Type:        []string{"number"},
+							Format:      "double",
+						},
+					},
+					"valueExpr": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Optional dashboard-variable expression (e.g. `$myVar`) resolved at render time; `value` is the numeric fallback when the expression cannot be resolved to a single finite number.",
+							Type:        []string{"string"},
+							Format:      "",
 						},
 					},
 					"color": {
@@ -4455,7 +4585,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardThresholdsConfig(ref common.Ref
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardThreshold"),
+										Ref:     ref(DashboardThreshold{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -4466,7 +4596,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardThresholdsConfig(ref common.Ref
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardThreshold"},
+			DashboardThreshold{}.OpenAPIModelName()},
 	}
 }
 
@@ -4565,7 +4695,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTimeSettingsSpec(ref common.Ref
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTimeRangeOption"),
+										Ref:     ref(DashboardTimeRangeOption{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -4606,7 +4736,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTimeSettingsSpec(ref common.Ref
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardTimeRangeOption"},
+			DashboardTimeRangeOption{}.OpenAPIModelName()},
 	}
 }
 
@@ -4627,7 +4757,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTransformationKind(ref common.R
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataTransformerConfig"),
+							Ref:     ref(DashboardDataTransformerConfig{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4635,7 +4765,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardTransformationKind(ref common.R
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDataTransformerConfig"},
+			DashboardDataTransformerConfig{}.OpenAPIModelName()},
 	}
 }
 
@@ -4663,10 +4793,17 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1FieldConfigSourceOverri
 			SchemaProps: spec.SchemaProps{
 				Type: []string{"object"},
 				Properties: map[string]spec.Schema{
+					"__systemRef": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Describes config override rules created when interacting with Grafana.",
+							Type:        []string{"string"},
+							Format:      "",
+						},
+					},
 					"matcher": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMatcherConfig"),
+							Ref:     ref(DashboardMatcherConfig{}.OpenAPIModelName()),
 						},
 					},
 					"properties": {
@@ -4676,7 +4813,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1FieldConfigSourceOverri
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDynamicConfigValue"),
+										Ref:     ref(DashboardDynamicConfigValue{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -4687,7 +4824,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1FieldConfigSourceOverri
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardDynamicConfigValue", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardMatcherConfig"},
+			DashboardDynamicConfigValue{}.OpenAPIModelName(), DashboardMatcherConfig{}.OpenAPIModelName()},
 	}
 }
 
@@ -4715,7 +4852,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RangeMapOptions(ref com
 						SchemaProps: spec.SchemaProps{
 							Description: "Config to apply when the value is within the range",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"),
+							Ref:         ref(DashboardValueMappingResult{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4723,7 +4860,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RangeMapOptions(ref com
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"},
+			DashboardValueMappingResult{}.OpenAPIModelName()},
 	}
 }
 
@@ -4745,7 +4882,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RegexMapOptions(ref com
 						SchemaProps: spec.SchemaProps{
 							Description: "Config to apply when the value matches the regex",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"),
+							Ref:         ref(DashboardValueMappingResult{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4753,7 +4890,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1RegexMapOptions(ref com
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"},
+			DashboardValueMappingResult{}.OpenAPIModelName()},
 	}
 }
 
@@ -4775,7 +4912,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1SpecialValueMapOptions(
 						SchemaProps: spec.SchemaProps{
 							Description: "Config to apply when the value matches the special value",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"),
+							Ref:         ref(DashboardValueMappingResult{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -4783,7 +4920,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardV2alpha1SpecialValueMapOptions(
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"},
+			DashboardValueMappingResult{}.OpenAPIModelName()},
 	}
 }
 
@@ -4810,7 +4947,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardValueMap(ref common.ReferenceCa
 								Schema: &spec.Schema{
 									SchemaProps: spec.SchemaProps{
 										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"),
+										Ref:     ref(DashboardValueMappingResult{}.OpenAPIModelName()),
 									},
 								},
 							},
@@ -4821,7 +4958,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardValueMap(ref common.ReferenceCa
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMappingResult"},
+			DashboardValueMappingResult{}.OpenAPIModelName()},
 	}
 }
 
@@ -4833,29 +4970,29 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardValueMapOrRangeMapOrRegexMapOrS
 				Properties: map[string]spec.Schema{
 					"ValueMap": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMap"),
+							Ref: ref(DashboardValueMap{}.OpenAPIModelName()),
 						},
 					},
 					"RangeMap": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRangeMap"),
+							Ref: ref(DashboardRangeMap{}.OpenAPIModelName()),
 						},
 					},
 					"RegexMap": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRegexMap"),
+							Ref: ref(DashboardRegexMap{}.OpenAPIModelName()),
 						},
 					},
 					"SpecialValueMap": {
 						SchemaProps: spec.SchemaProps{
-							Ref: ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpecialValueMap"),
+							Ref: ref(DashboardSpecialValueMap{}.OpenAPIModelName()),
 						},
 					},
 				},
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRangeMap", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardRegexMap", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpecialValueMap", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardValueMap"},
+			DashboardRangeMap{}.OpenAPIModelName(), DashboardRegexMap{}.OpenAPIModelName(), DashboardSpecialValueMap{}.OpenAPIModelName(), DashboardValueMap{}.OpenAPIModelName()},
 	}
 }
 
@@ -4917,13 +5054,29 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardVariableOption(ref common.Refer
 					"text": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Text to be displayed for the option",
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStringOrArrayOfString"),
+							Ref:         ref(DashboardStringOrArrayOfString{}.OpenAPIModelName()),
 						},
 					},
 					"value": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Value of the option",
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStringOrArrayOfString"),
+							Ref:         ref(DashboardStringOrArrayOfString{}.OpenAPIModelName()),
+						},
+					},
+					"properties": {
+						SchemaProps: spec.SchemaProps{
+							Description: "Additional properties for multi-props variables",
+							Type:        []string{"object"},
+							AdditionalProperties: &spec.SchemaOrBool{
+								Allows: true,
+								Schema: &spec.Schema{
+									SchemaProps: spec.SchemaProps{
+										Default: "",
+										Type:    []string{"string"},
+										Format:  "",
+									},
+								},
+							},
 						},
 					},
 				},
@@ -4931,105 +5084,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardVariableOption(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStringOrArrayOfString"},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_DashboardVersionInfo(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Type: []string{"object"},
-				Properties: map[string]spec.Schema{
-					"version": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The internal ID for this version (will be replaced with resourceVersion)",
-							Default:     0,
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-					"parentVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "If the dashboard came from a previous version, it is set here",
-							Type:        []string{"integer"},
-							Format:      "int32",
-						},
-					},
-					"created": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The creation timestamp for this version",
-							Default:     0,
-							Type:        []string{"integer"},
-							Format:      "int64",
-						},
-					},
-					"createdBy": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The user who created this version",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"message": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Message passed while saving the version",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-				},
-				Required: []string{"version", "created"},
-			},
-		},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_DashboardVersionList(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Type: []string{"object"},
-				Properties: map[string]spec.Schema{
-					"kind": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"apiVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Default: map[string]interface{}{},
-							Ref:     ref("k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"),
-						},
-					},
-					"items": {
-						SchemaProps: spec.SchemaProps{
-							Type: []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVersionInfo"),
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"items"},
-			},
-		},
-		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVersionInfo", "k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"},
+			DashboardStringOrArrayOfString{}.OpenAPIModelName()},
 	}
 }
 
@@ -5050,7 +5105,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigKind(ref common.Refere
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVizConfigSpec"),
+							Ref:     ref(DashboardVizConfigSpec{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -5058,7 +5113,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigKind(ref common.Refere
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardVizConfigSpec"},
+			DashboardVizConfigSpec{}.OpenAPIModelName()},
 	}
 }
 
@@ -5093,7 +5148,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigSpec(ref common.Refere
 					"fieldConfig": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldConfigSource"),
+							Ref:     ref(DashboardFieldConfigSource{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -5101,7 +5156,7 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardVizConfigSpec(ref common.Refere
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardFieldConfigSource"},
+			DashboardFieldConfigSource{}.OpenAPIModelName()},
 	}
 }
 
@@ -5129,26 +5184,26 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardWithAccessInfo(ref common.Refer
 					"metadata": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"),
+							Ref:     ref("io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"),
 						},
 					},
 					"spec": {
 						SchemaProps: spec.SchemaProps{
 							Description: "Spec is the spec of the Dashboard",
 							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpec"),
+							Ref:         ref(DashboardSpec{}.OpenAPIModelName()),
 						},
 					},
 					"status": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStatus"),
+							Ref:     ref(DashboardStatus{}.OpenAPIModelName()),
 						},
 					},
 					"access": {
 						SchemaProps: spec.SchemaProps{
 							Default: map[string]interface{}{},
-							Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAccess"),
+							Ref:     ref(DashboardAccess{}.OpenAPIModelName()),
 						},
 					},
 				},
@@ -5156,257 +5211,6 @@ func schema_pkg_apis_dashboard_v2alpha1_DashboardWithAccessInfo(ref common.Refer
 			},
 		},
 		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardAccess", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardSpec", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.DashboardStatus", "k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_LibraryPanel(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Type: []string{"object"},
-				Properties: map[string]spec.Schema{
-					"kind": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"apiVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Standard object's metadata More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata",
-							Default:     map[string]interface{}{},
-							Ref:         ref("k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"),
-						},
-					},
-					"spec": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Panel properties",
-							Default:     map[string]interface{}{},
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanelSpec"),
-						},
-					},
-					"status": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Status will show errors",
-							Ref:         ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanelStatus"),
-						},
-					},
-				},
-				Required: []string{"spec"},
-			},
-		},
-		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanelSpec", "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanelStatus", "k8s.io/apimachinery/pkg/apis/meta/v1.ObjectMeta"},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_LibraryPanelList(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Type: []string{"object"},
-				Properties: map[string]spec.Schema{
-					"kind": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"apiVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"metadata": {
-						SchemaProps: spec.SchemaProps{
-							Default: map[string]interface{}{},
-							Ref:     ref("k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"),
-						},
-					},
-					"items": {
-						SchemaProps: spec.SchemaProps{
-							Type: []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Default: map[string]interface{}{},
-										Ref:     ref("github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanel"),
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"items"},
-			},
-		},
-		Dependencies: []string{
-			"github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v2alpha1.LibraryPanel", "k8s.io/apimachinery/pkg/apis/meta/v1.ListMeta"},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_LibraryPanelSpec(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Type: []string{"object"},
-				Properties: map[string]spec.Schema{
-					"type": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The panel type",
-							Default:     "",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"pluginVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The panel type",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"title": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The panel title",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"description": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Library panel description",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"options": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The options schema depends on the panel type",
-							Ref:         ref("github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1.Unstructured"),
-						},
-					},
-					"fieldConfig": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The fieldConfig schema depends on the panel type",
-							Ref:         ref("github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1.Unstructured"),
-						},
-					},
-					"datasource": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The default datasource type",
-							Ref:         ref("github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1.DataSourceRef"),
-						},
-					},
-					"targets": {
-						VendorExtensible: spec.VendorExtensible{
-							Extensions: spec.Extensions{
-								"x-kubernetes-list-type": "set",
-							},
-						},
-						SchemaProps: spec.SchemaProps{
-							Description: "The datasource queries",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Ref: ref("github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1.DataQuery"),
-									},
-								},
-							},
-						},
-					},
-				},
-				Required: []string{"type", "options", "fieldConfig"},
-			},
-		},
-		Dependencies: []string{
-			"github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1.DataQuery", "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1.DataSourceRef", "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1.Unstructured"},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_LibraryPanelStatus(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Type: []string{"object"},
-				Properties: map[string]spec.Schema{
-					"warnings": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Translation warnings (mostly things that were in SQL columns but not found in the saved body)",
-							Type:        []string{"array"},
-							Items: &spec.SchemaOrArray{
-								Schema: &spec.Schema{
-									SchemaProps: spec.SchemaProps{
-										Default: "",
-										Type:    []string{"string"},
-										Format:  "",
-									},
-								},
-							},
-						},
-					},
-					"missing": {
-						SchemaProps: spec.SchemaProps{
-							Description: "The properties previously stored in SQL that are not included in this model",
-							Ref:         ref("github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1.Unstructured"),
-						},
-					},
-				},
-			},
-		},
-		Dependencies: []string{
-			"github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1.Unstructured"},
-	}
-}
-
-func schema_pkg_apis_dashboard_v2alpha1_VersionsQueryOptions(ref common.ReferenceCallback) common.OpenAPIDefinition {
-	return common.OpenAPIDefinition{
-		Schema: spec.Schema{
-			SchemaProps: spec.SchemaProps{
-				Type: []string{"object"},
-				Properties: map[string]spec.Schema{
-					"kind": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Kind is a string value representing the REST resource this object represents. Servers may infer this from the endpoint the client submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"apiVersion": {
-						SchemaProps: spec.SchemaProps{
-							Description: "APIVersion defines the versioned schema of this representation of an object. Servers should convert recognized schemas to the latest internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"path": {
-						SchemaProps: spec.SchemaProps{
-							Description: "Path is the URL path",
-							Type:        []string{"string"},
-							Format:      "",
-						},
-					},
-					"version": {
-						SchemaProps: spec.SchemaProps{
-							Type:   []string{"integer"},
-							Format: "int64",
-						},
-					},
-				},
-			},
-		},
+			DashboardAccess{}.OpenAPIModelName(), DashboardSpec{}.OpenAPIModelName(), DashboardStatus{}.OpenAPIModelName(), "io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta"},
 	}
 }

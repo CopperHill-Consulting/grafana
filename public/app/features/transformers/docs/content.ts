@@ -3,19 +3,19 @@
   please then rebuild the markdown by doing the following:
 
   $ cd /docs (from the root of the repository)
-  $ make sources/panels-visualizations/query-transform-data/transform-data/index.md
+  $ make sources/visualizations/panels-visualizations/query-transform-data/transform-data/index.md
   $ make docs
 
   Browse to http://localhost:3003/docs/grafana/latest/panels-visualizations/query-transform-data/transform-data/
 
-  Refer to ./docs/README.md for more information about building docs. 
+  Refer to ./docs/README.md for more information about building docs.
 */
 
 interface Link {
   title: string;
   url: string;
 }
-export interface TransformationInfo {
+interface TransformationInfo {
   name: string;
   getHelperDocs: (imageRenderType?: ImageRenderType) => string;
   links?: Link[];
@@ -203,6 +203,7 @@ This transformation has the following options:
     - It will parse the numeric input as a Unix epoch timestamp in milliseconds.
       You must multiply your input by 1000 if it's in seconds.
     - Will show an option to specify a DateFormat as input by a string like yyyy-mm-dd or DD MM YYYY hh:mm:ss
+    - The **Timezone** option determines how Grafana interprets input strings without timezone information. If not set, Grafana uses the browser timezone or your configured default timezone.
   - **Boolean** - will make the values booleans
   - **Enum** - will make the values enums
     - Will show a table to manage the enums
@@ -297,8 +298,8 @@ This transformation allows you to extract and format data in various ways. You c
     name: 'Lookup fields from resource',
     getHelperDocs: function () {
       return `
-Use this transformation to enrich a field value by looking up additional fields from an external source. 
-  
+Use this transformation to enrich a field value by looking up additional fields from an external source.
+
 This transformation has the following fields:
 
 - **Field** - Select a text field from your dataset.
@@ -369,24 +370,28 @@ This transformation is very useful if your data source does not natively filter 
 
 The available conditions for all fields are:
 
-- **Regex** - Match a regex expression.
 - **Is Null** - Match if the value is null.
 - **Is Not Null** - Match if the value is not null.
 - **Equal** - Match if the value is equal to the specified value.
-- **Different** - Match if the value is different than the specified value.
+- **Not Equal** - Match if the value is not equal to the specified value.
+- **Regex** - Match a regex expression.
 
 The available conditions for string fields are:
 
 - **Contains substring** - Match if the value contains the specified substring (case insensitive).
 - **Does not contain substring** - Match if the value doesn't contain the specified substring (case insensitive).
 
-The available conditions for number and time fields are:
+The available conditions for number fields are:
 
 - **Greater** - Match if the value is greater than the specified value.
 - **Lower** - Match if the value is lower than the specified value.
 - **Greater or equal** - Match if the value is greater or equal.
 - **Lower or equal** - Match if the value is lower or equal.
-- **Range** - Match a range between a specified minimum and maximum, min and max included. A time field will pre-populate with variables to filter by selected time.
+- **In between** - Match a range between a specified minimum and maximum, min and max included.
+
+The available conditions for time fields are:
+
+- **In between** - Match a range between a specified minimum and maximum. The min and max values will pre-populate with variables to filter by selected time.
 
 Consider the following dataset:
 
@@ -447,7 +452,7 @@ Use this transformation to selectively remove parts of your query results. There
 
 #### Use a regular expression
 
-When you filter using a regular expression, field names that match the regular expression are included. 
+When you filter using a regular expression, field names that match the regular expression are included.
 
 For example, from the input data:
 
@@ -656,7 +661,7 @@ Use this transformation to construct a matrix by specifying fields from your que
     getHelperDocs: function (imageRenderType: ImageRenderType = ImageRenderType.ShortcodeFigure) {
       return `
   Use this transformation to group the data by a specified field (column) value and process calculations on each group. Records are generated that share the same grouped field value, to be displayed in a nested table.
-    
+
   To calculate a statistic for a field, click the selection box next to it and select the **Calculate** option:
 
   ${buildImageContent(
@@ -704,7 +709,14 @@ Use this transformation to construct a matrix by specifying fields from your que
   | server 1 | 82 | <table><th><tr><td>Time</td><td>Server Status</td></tr></th><tbody><tr><td>2020-07-07 11:34:20</td><td>Shutdown</td></tr><tr><td>2020-07-07 09:28:06</td><td>OK</td></tr><tr><td>2020-07-07 09:23:07</td><td>OK</td></tr></tbody></table> |
   | server 2 | 88.6 | <table><th><tr><td>Time</td><td>Server Status</td></tr></th><tbody><tr><td>2020-07-07 10:32:20</td><td>Overload</td></tr><tr><td>2020-07-07 09:30:05</td><td>OK</td></tr><tr><td>2020-07-07 09:25:05</td><td>OK</td></tr></tbody></table> |
   | server 3 | 59.6 | <table><th><tr><td>Time</td><td>Server Status</td></tr></th><tbody><tr><td>2020-07-07 11:34:20</td><td>OK</td></tr><tr><td>2020-07-07 10:31:22</td><td>OK</td></tr><tr><td>2020-07-07 09:30:57</td><td>Rebooting</td></tr></tbody></table> |
-      `;
+
+  #### Display options
+
+  | Option                            | Description                                                                                                                |
+  | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+  | Show field names in nested tables | Show or hide the column headers inside each nested table. On by default                                                   |
+  | Expand nested rows by default     | Expand all nested rows automatically when the panel loads, instead of starting with all columns collapsed. Off by default. |
+  `;
     },
     links: [
       {
@@ -1256,7 +1268,7 @@ Multi-frame time series break data into multiple frames that all contain two fie
 
 ##### Long time series
 
-A long time series combines data into one frame, with the first field being an ascending time field. The time field might have duplicates. String values are in separate fields, and there might be more than one. 
+A long time series combines data into one frame, with the first field being an ascending time field. The time field might have duplicates. String values are in separate fields, and there might be more than one.
 
 **Example: Converting to long format**
 
@@ -1538,19 +1550,12 @@ ${buildImageContent(
   imageRenderType,
   'A select box showing available statistics that can be calculated.'
 )}
-
-
-> **Note:** This transformation is available in Grafana 9.5+ as an opt-in beta feature. Modify the Grafana [configuration file][] to use it.
   `;
     },
     links: [
       {
         title: 'sparkline cell type',
         url: 'https://grafana.com/docs/grafana/latest/panels-visualizations/visualizations/table/#sparkline',
-      },
-      {
-        title: 'configuration file',
-        url: 'https://grafana.com/docs/grafana/latest/setup-grafana/configure-grafana/',
       },
     ],
   },
@@ -1608,15 +1613,54 @@ ${buildImageContent(
   `;
     },
   },
-};
+  smoothing: {
+    name: 'Smoothing',
+    getHelperDocs: function (imageRenderType: ImageRenderType = ImageRenderType.ShortcodeFigure) {
+      return `
+Use this transformation to reduce noise in time series data through adaptive smoothing. This transformation creates smoother, cleaner visualizations while preserving all original time points and important trends and patterns in your data.
 
-export function getLinkToDocs(): string {
-  return `
-  Go to the <a href="https://grafana.com/docs/grafana/latest/panels/transformations/?utm_source=grafana" target="_blank" rel="noreferrer">
-  transformation documentation
-  </a> for more general documentation.
+The smoothing transformation uses the ASAP (Automatic Smoothing for Attention Prioritization) algorithm internally to generate a smoothed curve, which is then interpolated back onto all original time points. This ensures your visualization maintains continuous lines without gaps while reducing noise.
+
+#### Available options
+
+- **Resolution** - Controls smoothing intensity (1-1000). Lower values create more aggressive smoothing, while higher values preserve more detail. The output preserves all original time points.
+
+#### When to use smoothing
+
+This transformation is useful for:
+
+- Noisy time series data that obscures underlying trends
+- Clearer trend analysis and pattern recognition
+
+#### Example
+
+Consider noisy sensor data with thousands of points:
+
+**Before smoothing:**
+
+| Time                | Temperature |
+| ------------------- | ----------- |
+| 2020-07-07 10:00:00 | 23.1        |
+| 2020-07-07 10:00:01 | 23.3        |
+| 2020-07-07 10:00:02 | 22.9        |
+| 2020-07-07 10:00:03 | 23.2        |
+| ... (thousands more) | ...         |
+
+**After smoothing (Resolution: 100):**
+
+| Time                | Temperature (smoothed) |
+| ------------------- | ---------------------- |
+| 2020-07-07 10:00:00 | 23.1                   |
+| 2020-07-07 10:00:01 | 23.1                   |
+| 2020-07-07 10:00:02 | 23.0                   |
+| 2020-07-07 10:00:03 | 23.0                   |
+| ... (same count)    | ...                    |
+
+The transformation preserves all original time points while reducing noise, resulting in smoother curves that maintain continuous lines without gaps.
   `;
-}
+    },
+  },
+};
 
 function buildImageContent(source: string, imageRenderType: ImageRenderType, imageAltText: string) {
   return imageRenderType === 'shortcodeFigure'

@@ -25,12 +25,14 @@ func RunStorageServerTest(t *testing.T, newBackend NewBackendFunc) {
 
 // func runTestIntegrationBackendHappyPath(t *testing.T, backend resource.StorageBackend, nsPrefix string) {
 func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBackend, nsPrefix string) {
-	// Test user
+	// Test user. Carries the namespace its resources live in, because an identity
+	// with none matches nothing and is refused in production.
 	testUser := &identity.StaticRequester{
 		Type:           types.TypeUser,
 		Login:          "testuser",
 		UserID:         123,
 		UserUID:        "u123",
+		Namespace:      nsPrefix + "-ns1",
 		OrgRole:        identity.RoleAdmin,
 		IsGrafanaAdmin: true,
 	}
@@ -125,12 +127,15 @@ func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBa
 			resourceUID := fmt.Sprintf("test123-%d", i)
 
 			// Create a mock access client with the test case's permission map
-			checksPerformed := []types.CheckRequest{}
+			checksPerformed := []CheckRequestEX{}
 			mockAccess := &mockAccessClient{
 				allowed:    false, // Default to false
 				allowedMap: tc.permissionMap,
-				checkFn: func(req types.CheckRequest) {
-					checksPerformed = append(checksPerformed, req)
+				checkFn: func(req types.CheckRequest, folder string) {
+					checksPerformed = append(checksPerformed, CheckRequestEX{
+						CheckRequest: req,
+						Folder:       folder,
+					})
 				},
 			}
 
@@ -167,7 +172,7 @@ func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBa
 					}
 				}`, resourceName, resourceUID, nsPrefix+"-ns1", tc.initialFolder, i)
 
-				checksPerformed = []types.CheckRequest{}
+				checksPerformed = []CheckRequestEX{}
 				created, err := server.Create(ctx, &resourcepb.CreateRequest{
 					Value: []byte(resourceJSON),
 					Key:   key,
@@ -232,7 +237,7 @@ func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBa
 				}`, resourceName, resourceUID, nsPrefix+"-ns1", tc.targetFolder, i)
 
 				mockAccess.allowed = false // Reset to use the map
-				checksPerformed = []types.CheckRequest{}
+				checksPerformed = []CheckRequestEX{}
 
 				updated, err := server.Update(ctx, &resourcepb.UpdateRequest{
 					Key:             key,
@@ -271,12 +276,18 @@ func runTestResourcePermissionScenarios(t *testing.T, backend resource.StorageBa
 
 // runTestListTrashAccessControl tests the access control logic for ListTrash
 func runTestListTrashAccessControl(t *testing.T, backend resource.StorageBackend, nsPrefix string) {
+	// The namespace the resources below live in. Both users carry it: an identity
+	// with no namespace matches nothing, not even another empty one, so it would be
+	// refused everywhere in production.
+	namespace := nsPrefix + "-trash-test"
+
 	// Create two different users
 	testUserA := &identity.StaticRequester{
 		Type:           types.TypeUser,
 		Login:          "testuserA",
 		UserID:         123,
 		UserUID:        "u123",
+		Namespace:      namespace,
 		OrgRole:        identity.RoleAdmin,
 		IsGrafanaAdmin: true, // admin user
 	}
@@ -286,22 +297,18 @@ func runTestListTrashAccessControl(t *testing.T, backend resource.StorageBackend
 		Login:          "testuserB",
 		UserID:         456,
 		UserUID:        "u456",
+		Namespace:      namespace,
 		OrgRole:        identity.RoleEditor,
 		IsGrafanaAdmin: false, // non-admin user
 	}
 
 	mockAccess := &mockAccessClient{
-		allowed: true, // Allow regular access
-		compileFn: func(user types.AuthInfo, req types.ListRequest) types.ItemChecker {
-			return func(name, folder string) bool {
-				if req.Verb == utils.VerbSetPermissions {
-					if requester, ok := user.(identity.Requester); ok && requester.GetIsGrafanaAdmin() {
-						return true // Admin users can access trash
-					}
-					return false // Non-admin users cannot access trash
-				}
-				return false
+		userCheckFn: func(user types.AuthInfo, verb, name, folder string) bool {
+			if verb == utils.VerbSetPermissions {
+				requester, ok := user.(identity.Requester)
+				return ok && requester.GetIsGrafanaAdmin()
 			}
+			return true // allow regular CRUD
 		},
 	}
 
@@ -342,7 +349,7 @@ func runTestListTrashAccessControl(t *testing.T, backend resource.StorageBackend
 	key := &resourcepb.ResourceKey{
 		Group:     "playlist.grafana.app",
 		Resource:  "playlists",
-		Namespace: nsPrefix + "-trash-test",
+		Namespace: namespace,
 		Name:      "trash-test-playlist",
 	}
 
@@ -397,7 +404,7 @@ func runTestListTrashAccessControl(t *testing.T, backend resource.StorageBackend
 	keyB := &resourcepb.ResourceKey{
 		Group:     "playlist.grafana.app",
 		Resource:  "playlists",
-		Namespace: nsPrefix + "-trash-test",
+		Namespace: namespace,
 		Name:      "trash-test-playlist-b",
 	}
 
@@ -494,30 +501,37 @@ func runTestListTrashAccessControl(t *testing.T, backend resource.StorageBackend
 type mockAccessClient struct {
 	allowed    bool
 	allowedMap map[string]bool
-	checkFn    func(types.CheckRequest)
-	compileFn  func(user types.AuthInfo, req types.ListRequest) types.ItemChecker
+	checkFn    func(types.CheckRequest, string)
+	// userCheckFn, when set, fully controls the Check result for every call.
+	userCheckFn func(user types.AuthInfo, verb, name, folder string) bool
 }
 
-func (m *mockAccessClient) Check(ctx context.Context, user types.AuthInfo, req types.CheckRequest) (types.CheckResponse, error) {
+func (m *mockAccessClient) Check(ctx context.Context, user types.AuthInfo, req types.CheckRequest, folder string) (types.CheckResponse, error) {
+	// The real client refuses a caller from another namespace before checking
+	// anything, so a fixture whose user has none would pass here and fail there.
+	if !types.NamespaceMatches(user.GetNamespace(), req.Namespace) {
+		return types.CheckResponse{}, types.ErrNamespaceMismatch
+	}
 	if m.checkFn != nil {
-		m.checkFn(req)
+		m.checkFn(req, folder)
 	}
 
 	// Check specific folder:verb mappings if provided
 	if m.allowedMap != nil {
-		key := fmt.Sprintf("%s:%s", req.Folder, req.Verb)
+		key := fmt.Sprintf("%s:%s", folder, req.Verb)
 		if allowed, exists := m.allowedMap[key]; exists {
 			return types.CheckResponse{Allowed: allowed}, nil
 		}
+	}
+
+	if m.userCheckFn != nil {
+		return types.CheckResponse{Allowed: m.userCheckFn(user, req.Verb, req.Name, folder)}, nil
 	}
 
 	return types.CheckResponse{Allowed: m.allowed}, nil
 }
 
 func (m *mockAccessClient) Compile(ctx context.Context, user types.AuthInfo, req types.ListRequest) (types.ItemChecker, types.Zookie, error) {
-	if m.compileFn != nil {
-		return m.compileFn(user, req), types.NoopZookie{}, nil
-	}
 	return func(name, folder string) bool {
 		key := fmt.Sprintf("%s:%s", folder, req.Verb)
 		if allowed, exists := m.allowedMap[key]; exists {
@@ -525,4 +539,13 @@ func (m *mockAccessClient) Compile(ctx context.Context, user types.AuthInfo, req
 		}
 		return m.allowed
 	}, types.NoopZookie{}, nil
+}
+
+func (m *mockAccessClient) BatchCheck(ctx context.Context, user types.AuthInfo, req types.BatchCheckRequest) (types.BatchCheckResponse, error) {
+	return types.BatchCheckResponse{}, fmt.Errorf("not implemented")
+}
+
+type CheckRequestEX struct {
+	types.CheckRequest
+	Folder string
 }

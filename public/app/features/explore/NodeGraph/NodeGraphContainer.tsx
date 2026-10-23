@@ -1,16 +1,16 @@
 import { css } from '@emotion/css';
 import { useEffect, useRef, useState } from 'react';
-import { connect, ConnectedProps } from 'react-redux';
+import { connect, type ConnectedProps } from 'react-redux';
 import { useToggle, useWindowSize } from 'react-use';
 
-import { applyFieldOverrides, DataFrame, GrafanaTheme2, SplitOpen } from '@grafana/data';
+import { applyFieldOverrides, type DataFrame, type GrafanaTheme2, type SplitOpen } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
 import { config, reportInteraction } from '@grafana/runtime';
 import { useStyles2, useTheme2, PanelChrome } from '@grafana/ui';
 import { layeredLayoutThreshold } from 'app/plugins/panel/nodeGraph/NodeGraph';
-import { StoreState } from 'app/types/store';
+import { type StoreState } from 'app/types/store';
 
-import { NodeGraph } from '../../../plugins/panel/nodeGraph';
+import { NodeGraph } from '../../../plugins/panel/nodeGraph/NodeGraph';
 import { LayoutAlgorithm } from '../../../plugins/panel/nodeGraph/panelcfg.gen';
 import { useCategorizeFrames } from '../../../plugins/panel/nodeGraph/useCategorizeFrames';
 import { useLinks } from '../utils/links';

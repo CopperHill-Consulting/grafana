@@ -1,4 +1,4 @@
-import { selectors as e2eSelectors } from '@grafana/e2e-selectors/src';
+import { selectors as e2eSelectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import { Icon, Stack, Tag, Tooltip } from '@grafana/ui';
 import { Page } from 'app/core/components/Page/Page';
@@ -63,6 +63,10 @@ export const UserListPublicDashboardPage = () => {
                     <Trans
                       i18nKey="public-dashboard-users-access-list.table-body.dashboard-count"
                       count={user.totalDashboards}
+                      tOptions={{
+                        defaultValue_one: '{{count}} dashboards',
+                        defaultValue_other: '{{count}} dashboards',
+                      }}
                     >
                       {{ count: user.totalDashboards }} dashboards
                     </Trans>

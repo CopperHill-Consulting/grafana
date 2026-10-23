@@ -11,10 +11,10 @@
       },
       "connection-limits": {
         "auto-max-idle": "Otomatik maksimum boşta bağlantı sayısı",
-        "content-auto-max-idle": "Etkinleştirilirse <1>Maksimum boşta bağlantı</1> sayısı, <3>Maksimum açık bağlantı</3> sayısıyla aynı değere otomatik olarak ayarlanır. Maksimum açık bağlantı sayısı ayarlanmamışsa varsayılan değere ayarlanır ({{defaultMaxIdle}}).",
-        "content-max-idle": "Bu, boşta bağlantı havuzundaki maksimum bağlantı sayısını belirtir. <1>Maksimum açık bağlantı</1> değeri 0'dan büyük ancak <3>Maksimum boşta bağlantı</3> değerinden küçükse <5>Maksimum boşta bağlantı</5> sayısı, <8>Maksimum açık bağlantı</8> sınırına uyacak şekilde azaltılır. 0 olarak ayarlanırsa boşta bağlantılar tutulmaz.",
+        "content-auto-max-idle": "Etkinleştirilirse <i>Maksimum boşta bağlantı</i> sayısını otomatik olarak <i>Maksimum açık bağlantı</i> ile aynı değere ayarlar. Maksimum açık bağlantı sayısı ayarlanmamışsa varsayılan değere ({{defaultMaxIdle}}) ayarlanacaktır.",
+        "content-max-idle": "Boşta bağlantı havuzunda tutulacak maksimum bağlantı sayısıdır. <i>Maksimum açık bağlantı</i> değeri 0'dan büyük ve <i>Maksimum boşta bağlantı</i> değerinden küçükse <i>Maksimum boşta bağlantı</i> değeri, <i>Maksimum açık bağlantı</i>değerine düşürülür. 0 olarak ayarlanırsa boşta bağlantılar tutulmaz.",
         "content-max-lifetime": "Saniye cinsinden bir bağlantının yeniden kullanılabileceği maksimum süre. 0 olarak ayarlanırsa bağlantılar süresiz olarak yeniden kullanılır.",
-        "content-max-open": "Veri tabanına açılabilecek maksimum açık bağlantı sayısı. <1>Maksimum boşta bağlantı</1> sayısı 0'dan büyük ve <3>Maksimum açık bağlantı</3> sayısı <5>Maksimum boşta bağlantı</5> sayısından küçükse <7>Maksimum boşta bağlantı</7> değeri, <9>Maksimum açık bağlantı</9> sınırına uyacak şekilde azaltılır. 0 olarak ayarlanırsa açık bağlantı sayısı için bir sınır yoktur.",
+        "content-max-open": "Veri tabanına yapılabilecek maksimum açık bağlantı sayısı. <i>Maksimum boşta bağlantı</i> 0'dan büyükse ve <i>Maksimum açık bağlantı</i>, <i>Maksimum boşta bağlantı</i> değerinden küçükse <i>Maksimum boşta bağlantı</i> değeri <i>Maksimum açık bağlantı</i> sınırına uyacak şekilde azaltılır. 0 olarak ayarlanırsa açık bağlantı sayısında sınır olmaz.",
         "max-idle": "Maks. boşta",
         "max-lifetime": "Maksimum kullanım süresi",
         "max-open": "Maks. açık",
@@ -22,11 +22,6 @@
       },
       "dataset-selector": {
         "aria-label-dataset-selector": "Veri kümesi seçici"
-      },
-      "error-boundary": {
-        "fall-back": {
-          "error": "Hata"
-        }
       },
       "get-custom-operators": {
         "custom-operators": {
@@ -54,7 +49,7 @@
         }
       },
       "query-header": {
-        "content-invalid-query": "Sorgunuz geçersiz. Ayrıntılar için aşağıya bakın. <1></1>Ancak yine de bu sorguyu çalıştırabilirsiniz.",
+        "content-invalid-query": "Sorgunuz geçersiz. Ayrıntılar için aşağıya bakın. <br/>Ancak bu sorguyu yine de çalıştırabilirsiniz.",
         "editor-modes": {
           "label-builder": "Oluşturucu",
           "label-code": "Kod"
@@ -63,11 +58,17 @@
         "label-filter": "Filtreleyin",
         "label-format": "Biçim",
         "label-group": "Grup",
-        "label-order": "Sipariş",
+        "label-order": "Sıralama",
         "label-preview": "Ön izleme",
         "label-table": "Tablo",
         "placeholder-select-format": "Biçimi seçin",
         "run-query": "Sorgu çalıştır"
+      },
+      "query-meta": {
+        "variables": {
+          "textField": "Metin Alanı",
+          "valueField": "Değer Alanı"
+        }
       },
       "query-toolbox": {
         "content-hit-ctrlcmdreturn-to-run-query": "Sorguyu çalıştırmak için CTRL/CMD+Return tuşlarına basın",
@@ -76,7 +77,7 @@
         "tooltip-format-query": "Sorguyu biçimlendir"
       },
       "query-validator": {
-        "query-will-process": "<0></0> Bu sorgu çalıştırıldığında <2>{{bytes}}</2> işlenecek.",
+        "query-will-process": "<0></0> Bu sorgu çalıştırıldığında <strong>{{bytes}}</strong> veri işlenecek.",
         "validating-query": "Sorgu doğrulanıyor..."
       },
       "raw-editor": {

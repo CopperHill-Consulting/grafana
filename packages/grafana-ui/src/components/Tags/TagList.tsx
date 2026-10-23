@@ -1,14 +1,14 @@
 import { css, cx } from '@emotion/css';
 import { forwardRef, memo } from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { t } from '@grafana/i18n';
 
 import { useStyles2, useTheme2 } from '../../themes/ThemeContext';
-import { IconName } from '../../types/icon';
-import { SkeletonComponent, attachSkeleton } from '../../utils/skeleton';
+import { type IconName } from '../../types/icon';
+import { type SkeletonComponent, attachSkeleton } from '../../utils/skeleton';
 
-import { OnTagClick, Tag } from './Tag';
+import { type OnTagClick, Tag } from './Tag';
 
 export interface Props {
   /** Maximum number of the tags to display */
@@ -73,6 +73,11 @@ const TagListSkeleton: SkeletonComponent = ({ rootProps }) => {
   );
 };
 
+/**
+ * List of tags with predefined margins and positioning.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/information-taglist--docs
+ */
 export const TagList = attachSkeleton(TagListComponent, TagListSkeleton);
 
 const getSkeletonStyles = (theme: GrafanaTheme2) => ({

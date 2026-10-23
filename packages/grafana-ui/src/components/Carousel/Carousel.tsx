@@ -4,7 +4,7 @@ import { FocusScope } from '@react-aria/focus';
 import { OverlayContainer, useOverlay } from '@react-aria/overlays';
 import { useState, useEffect, useRef, useId } from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { t } from '@grafana/i18n';
 
 import { useStyles2 } from '../../themes/ThemeContext';
@@ -13,7 +13,7 @@ import { clearButtonStyles } from '../Button/Button';
 import { IconButton } from '../IconButton/IconButton';
 
 // Define the image item interface
-export interface CarouselImage {
+interface CarouselImage {
   path: string;
   name: string;
 }
@@ -22,6 +22,11 @@ export interface CarouselProps {
   images: CarouselImage[];
 }
 
+/**
+ * The Carousel component displays a grid of image thumbnails that can be clicked to view full-sized images in a modal with navigation controls. It provides an elegant way to present collections of images or screenshots with fullscreen preview capabilities.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/overlays-carousel--docs
+ */
 export const Carousel: React.FC<CarouselProps> = ({ images }) => {
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const [imageErrors, setImageErrors] = useState<Record<string, boolean>>({});
@@ -183,6 +188,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
     flex: 1,
   }),
   imagePreview: css({
+    borderRadius: theme.shape.radius.lg,
     maxWidth: '100%',
     maxHeight: '80vh',
     objectFit: 'contain',

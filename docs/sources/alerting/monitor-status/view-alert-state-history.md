@@ -14,22 +14,6 @@ labels:
     - oss
 title: View alert state history
 weight: 440
-refs:
-  time-series-visualizations:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/visualizations/time-series/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/visualizations/panels-visualizations/visualizations/time-series/
-  explore:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/explore/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/explore/
-  meta-monitoring:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/monitor/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/monitor/
 ---
 
 # View alert state history
@@ -46,11 +30,9 @@ Grafana OSS and Grafana Enterprise users must [configure alert state history in 
 
 The History page shows the history and state changes of all Grafana-managed alert rules. You can filter by labels and alert states.
 
-Users can only view the history of alert rules they have permission to access (RBAC).
+The **History** page also includes a **Notifications** tab for [notification history](/docs/grafana/<GRAFANA_VERSION>/alerting/monitor-status/view-notification-history/).
 
-{{< admonition type="note" >}}
-Grafana OSS and Grafana Enterprise users must also enable the [`alertingCentralAlertHistory`](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/feature-toggles/) feature toggle to access this page.
-{{< /admonition >}}
+Users can only view the history of alert rules they have permission to access (RBAC).
 
 To access the History page, complete the following steps.
 
@@ -72,6 +54,37 @@ To access the History page, complete the following steps.
 5. Click the alert rule name to jump to the History tab in the Alert Rule view.
 
    {{< figure src="/media/docs/alerting/alerting-alert-history-tab.png" max-width="750px" alt="Alert History tab in Grafana Alerting" >}}
+
+## Use Grafana Assistant to analyze alert state history
+
+{{< admonition type="note" >}}
+This feature is available in Grafana Cloud when Grafana Assistant is enabled.
+{{< /admonition >}}
+
+The **Analyze with Assistant** button provides AI-powered analysis of your alert history to help you understand and troubleshoot alert patterns. Located in the top-right corner of the History page event list, this button uses Grafana Assistant to analyze the events displayed in your current view.
+
+When you click the AI Triage button, the Grafana Assistant analyzes:
+
+- Alert state transitions over the selected time range
+- Alert instance patterns and frequency
+- Common labels and characteristics of firing alerts
+- Temporal patterns in alert behavior
+
+The AI assistant can help you:
+
+- Identify root causes of alert storms
+- Detect patterns in alert firing behavior
+- Understand correlations between different alert instances
+- Get suggestions for improving alert configurations
+
+To use the Analyze with Assistant feature:
+
+1. Navigate to the History page as described above.
+2. Filter the events to focus on the alerts you want to analyze using labels, states, or time range.
+3. Click the **Analyze with Assistant** button in the top-right corner of the event list.
+4. Review the AI-generated analysis and recommendations.
+
+The AI analysis is based on the currently displayed events, so filtering your view to specific alerts or time periods will result in more focused insights.
 
 ## View from the State history view
 
@@ -103,6 +116,6 @@ To access the State history view, complete the following steps.
 
 ## Explore and query the alert history
 
-You can also use [Grafana Explore](ref:explore) to query the data sources that store alert history.
+You can also use [Grafana Explore](/docs/grafana/<GRAFANA_VERSION>/visualizations/explore/) to query the data sources that store alert history.
 
-For details on querying these data sources, refer to [Alerting Meta monitoring](ref:meta-monitoring).
+For details on querying these data sources, refer to [Alerting Meta monitoring](/docs/grafana/<GRAFANA_VERSION>/alerting/monitor/).

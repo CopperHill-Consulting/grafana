@@ -1,21 +1,30 @@
 import { renderHook, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { first, noop } from 'lodash';
+import type { JSX } from 'react';
 import { Route, Routes } from 'react-router-dom-v5-compat';
 import { render } from 'test/test-utils';
 
-import { contextSrv } from 'app/core/core';
-import { ReceiversState } from 'app/features/alerting/unified/types/alerting';
+import { contextSrv } from 'app/core/services/context_srv';
+import { type ReceiversState } from 'app/features/alerting/unified/types/alerting';
 import {
-  AlertmanagerGroup,
+  type AlertmanagerGroup,
   MatcherOperator,
-  ObjectMatcher,
-  RouteWithID,
+  type ObjectMatcher,
+  type RouteWithID,
 } from 'app/plugins/datasource/alertmanager/types';
 
-import { useAlertmanagerAbilities } from '../../hooks/useAbilities';
+import { useNotificationPolicyAbility } from '../../hooks/abilities/alertmanager/useNotificationPolicyAbility';
+import {
+  type Ability,
+  Granted,
+  InsufficientPermissions,
+  NotSupported,
+  NotificationPolicyAction,
+} from '../../hooks/abilities/types';
 import { mockReceiversState } from '../../mocks';
 import { AlertmanagerProvider } from '../../state/AlertmanagerContext';
+import { KnownProvenance } from '../../types/knownProvenance';
 import { GRAFANA_RULES_SOURCE_NAME } from '../../utils/datasource';
 
 import {
@@ -26,21 +35,24 @@ import {
   useCreateDropdownMenuActions,
 } from './Policy';
 
-jest.mock('../../hooks/useAbilities', () => ({
-  ...jest.requireActual('../../hooks/useAbilities'),
-  useAlertmanagerAbilities: jest.fn(),
+jest.mock('../../hooks/abilities/alertmanager/useNotificationPolicyAbility', () => ({
+  ...jest.requireActual('../../hooks/abilities/alertmanager/useNotificationPolicyAbility'),
+  useNotificationPolicyAbility: jest.fn(),
 }));
 
-const useAlertmanagerAbilitiesMock = jest.mocked(useAlertmanagerAbilities);
+const useNotificationPolicyAbilityMock = jest.mocked(useNotificationPolicyAbility);
+
+function toAbility([supported, allowed]: [boolean, boolean]): Ability {
+  if (!supported) {
+    return NotSupported;
+  }
+  return allowed ? Granted : InsufficientPermissions([]);
+}
 
 describe('Policy', () => {
   beforeAll(() => {
     jest.spyOn(contextSrv, 'hasPermission').mockReturnValue(true);
-    useAlertmanagerAbilitiesMock.mockReturnValue([
-      [true, true],
-      [true, true],
-      [true, true],
-    ]);
+    useNotificationPolicyAbilityMock.mockReturnValue(toAbility([true, true]));
   });
 
   it('should render a policy tree', async () => {
@@ -110,7 +122,7 @@ describe('Policy', () => {
       'Wait 30s to group instances · Wait 5m before sending updates · Repeated every 4h'
     );
 
-    // should have custom policies
+    // should have custom policies (1 direct child + 2 grandchildren, all expanded by default)
     const customPolicies = screen.getAllByTestId('am-route-container');
     expect(customPolicies).toHaveLength(3);
 
@@ -193,11 +205,9 @@ describe('Policy', () => {
 
     const routeTree = mockRoutes;
 
-    useAlertmanagerAbilitiesMock.mockReturnValue([
-      [true, true],
-      [true, true],
-      [false, true],
-    ]);
+    useNotificationPolicyAbilityMock.mockImplementation(({ action }) =>
+      action === NotificationPolicyAction.Export ? toAbility([false, true]) : toAbility([true, true])
+    );
 
     const user = userEvent.setup();
 
@@ -230,11 +240,9 @@ describe('Policy', () => {
 
     const routeTree = mockRoutes;
 
-    useAlertmanagerAbilitiesMock.mockReturnValue([
-      [true, true],
-      [true, true],
-      [true, false],
-    ]);
+    useNotificationPolicyAbilityMock.mockImplementation(({ action }) =>
+      action === NotificationPolicyAction.Export ? toAbility([true, false]) : toAbility([true, true])
+    );
 
     const user = userEvent.setup();
 
@@ -325,10 +333,63 @@ describe('Policy', () => {
 
     const defaultPolicy = screen.getByTestId('am-root-route-container');
     expect(within(defaultPolicy).queryByTestId('matches-all')).not.toBeInTheDocument();
-    expect(within(defaultPolicy).getByText('1 error')).toBeInTheDocument();
+    // Errors are now shown as an icon in the gutter
+    expect(within(defaultPolicy).getByTestId('policy-errors')).toBeInTheDocument();
 
     const customPolicy = screen.getByTestId('am-route-container');
     expect(within(customPolicy).getByTestId('matches-all')).toBeInTheDocument();
+  });
+
+  it('shows correct badge when policy has file provenance', () => {
+    const mockRoute: RouteWithID = {
+      id: 'test-route',
+      receiver: 'test-receiver',
+      routes: [],
+    };
+
+    renderPolicy(
+      <Policy
+        readOnly
+        isDefaultPolicy
+        currentRoute={mockRoute}
+        contactPointsState={mockReceiversState()}
+        alertManagerSourceName={GRAFANA_RULES_SOURCE_NAME}
+        onEditPolicy={noop}
+        onAddPolicy={noop}
+        onDeletePolicy={noop}
+        onShowAlertInstances={noop}
+        provenance={KnownProvenance.File}
+      />
+    );
+
+    const badge = screen.getByText('Provisioned');
+    expect(badge).toBeInTheDocument();
+  });
+
+  it('shows correct badge when policy has converted_prometheus provenance', () => {
+    const mockRoute: RouteWithID = {
+      id: 'test-route',
+      receiver: 'test-receiver',
+      routes: [],
+    };
+
+    renderPolicy(
+      <Policy
+        readOnly
+        isDefaultPolicy
+        currentRoute={mockRoute}
+        contactPointsState={mockReceiversState()}
+        alertManagerSourceName={GRAFANA_RULES_SOURCE_NAME}
+        onEditPolicy={noop}
+        onAddPolicy={noop}
+        onDeletePolicy={noop}
+        onShowAlertInstances={noop}
+        provenance={KnownProvenance.ConvertedPrometheus}
+      />
+    );
+
+    const badge = screen.getByText('Imported');
+    expect(badge).toBeInTheDocument();
   });
 });
 
@@ -421,45 +482,43 @@ describe('useCreateDropdownMenuActions', () => {
     {
       isAutoGenerated: false,
       isDefaultPolicy: true,
-      provisioned: false,
+      provenance: undefined,
       expectedMenu: ['edit-policy', 'export-policy'],
     },
     {
       isAutoGenerated: false,
       isDefaultPolicy: true,
-      provisioned: true,
+      provenance: KnownProvenance.File,
       expectedMenu: ['edit-policy', 'export-policy'],
     },
     {
       isAutoGenerated: false,
       isDefaultPolicy: false,
-      provisioned: false,
+      provenance: undefined,
       expectedMenu: ['edit-policy', 'delete-policy'],
     },
     {
       isAutoGenerated: false,
       isDefaultPolicy: false,
-      provisioned: true,
+      provenance: KnownProvenance.File,
       expectedMenu: ['edit-policy', 'delete-policy'],
     },
-    { isAutoGenerated: true, isDefaultPolicy: true, provisioned: true, expectedMenu: ['edit-policy'] },
-    { isAutoGenerated: true, isDefaultPolicy: false, provisioned: false, expectedMenu: ['edit-policy'] },
-    { isAutoGenerated: true, isDefaultPolicy: true, provisioned: false, expectedMenu: ['edit-policy'] },
-    { isAutoGenerated: true, isDefaultPolicy: false, provisioned: true, expectedMenu: ['edit-policy'] },
+    { isAutoGenerated: true, isDefaultPolicy: true, provenance: KnownProvenance.File, expectedMenu: ['edit-policy'] },
+    { isAutoGenerated: true, isDefaultPolicy: false, provenance: undefined, expectedMenu: ['edit-policy'] },
+    { isAutoGenerated: true, isDefaultPolicy: true, provenance: undefined, expectedMenu: ['edit-policy'] },
+    { isAutoGenerated: true, isDefaultPolicy: false, provenance: KnownProvenance.File, expectedMenu: ['edit-policy'] },
   ];
 
-  testCases.forEach(({ isAutoGenerated, isDefaultPolicy, provisioned, expectedMenu }) => {
-    it(`Having all the permissions returns ${expectedMenu.length} menu items for isAutoGenerated=${isAutoGenerated}, isDefaultPolicy=${isDefaultPolicy}, provisioned=${provisioned}`, () => {
-      useAlertmanagerAbilitiesMock.mockReturnValue([
-        [true, true],
-        [true, true],
-        [true, true],
-      ]);
+  testCases.forEach(({ isAutoGenerated, isDefaultPolicy, provenance, expectedMenu }) => {
+    const provisionedStatus = provenance ? 'provisioned' : 'not provisioned';
+    it(`Having all the permissions returns ${expectedMenu.length} menu items for isAutoGenerated=${isAutoGenerated}, isDefaultPolicy=${isDefaultPolicy}, ${provisionedStatus}`, () => {
+      useNotificationPolicyAbilityMock.mockReturnValue(toAbility([true, true]));
       const { result } = renderHook(() =>
         useCreateDropdownMenuActions(
           isAutoGenerated,
           isDefaultPolicy,
-          provisioned,
+          true,
+          provenance,
           openDetailModal,
           currentRoute,
           toggleShowExportDrawer,

@@ -2,7 +2,7 @@ import { css, cx } from '@emotion/css';
 import { useCallback, useState, forwardRef } from 'react';
 import * as React from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { t, Trans } from '@grafana/i18n';
 
 import { useStyles2, useTheme2 } from '../../themes/ThemeContext';
@@ -27,8 +27,15 @@ export interface Props {
   invalid?: boolean;
   /** Colours the tags 'randomly' based on the name. Defaults to true */
   autoColors?: boolean;
+  /** Maximum allowed length of a single tag. Defaults to 50 */
+  maxLength?: number;
 }
 
+/**
+ * A set of an input field and a button next to it that allows the user to add new tags. The added tags are previewed next to the input and can be removed by clicking the "X" icon. You can customize the width of the input.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/inputs-tagsinput--docs
+ */
 export const TagsInput = forwardRef<HTMLInputElement, Props>(
   (
     {
@@ -42,6 +49,7 @@ export const TagsInput = forwardRef<HTMLInputElement, Props>(
       invalid,
       id,
       autoColors = true,
+      maxLength = 50,
     },
     ref
   ) => {
@@ -90,6 +98,7 @@ export const TagsInput = forwardRef<HTMLInputElement, Props>(
           onKeyDown={onKeyboardAdd}
           onBlur={onBlur}
           invalid={invalid}
+          maxLength={maxLength}
           suffix={
             <Button
               fill="text"

@@ -10,23 +10,18 @@
         "warning": "Aviso"
       },
       "connection-limits": {
-        "auto-max-idle": "Ralenti máximo automático",
-        "content-auto-max-idle": "Se ativado, defina automaticamente o número de <1>Ligações de ralenti máximas</1> para o mesmo valor que<3> Ligações abertas máximas</3>. Se o número de ligações abertas máximas não estiver definido, será definido para a predefinição ({{defaultMaxIdle}}).",
-        "content-max-idle": "O número máximo de ligações no conjunto de ligações de ralenti. Se <1>Ligações abertas máximas</1> for maior que 0, mas menor que as <3>Ligações de ralenti máximas</3>, então as <5>Ligações de ralenti máximas</5> serão reduzidas para corresponder ao limite de <8>Ligações abertas máximas</8>. Se definido para 0, nenhuma ligação de ralenti será retida.",
+        "auto-max-idle": "Máx. em inatividade automático",
+        "content-auto-max-idle": "Se ativado, defina automaticamente o número de <i>Ligações máximas em inatividade</i> para o mesmo valor que<i> Ligações abertas máximas</i>. Se o número de ligações abertas máximas não estiver definido, será definido para a predefinição ({{defaultMaxIdle}}).",
+        "content-max-idle": "O número máximo de ligações no conjunto de ligações inativas. Se o numero de <i>Ligações abertas máximas</i> for superior a 0, mas inferior ao número de <i>Ligações inativas máximas</i>, então o número de <i>Ligações inativas máximas</i> será reduzido para corresponder ao limite de <i>Ligações abertas máximas</i>. Se definido para 0, nenhuma ligação em inatividade será retida.",
         "content-max-lifetime": "A quantidade máxima de tempo em segundos que uma ligação pode ser reutilizada. Se definido para 0, as ligações serão reutilizadas para sempre.",
-        "content-max-open": "O número máximo de ligações abertas à base de dados. Se <1>Ligações de ralenti máximas</1> for maior que 0 e as <3>Ligações abertas máximas</3> for menor que <5>Ligações de ralenti máximas</5>, então <7>Ligações de ralenti máximas</7> serão reduzidas para corresponder ao limite de <9>Ligações abertas máximas</9>. Se definido para 0, não há limite para o número de ligações abertas.",
-        "max-idle": "Ralenti máx.",
+        "content-max-open": "O número máximo de ligações abertas à base de dados. Se o número de <i>Ligações máximas em inatividade</i> for superior a 0 e o número de <i>Ligações abertas máximas</i> for inferior ao número de <i>Ligações máximas em inatividade</i>, então o número de <i>Ligações máximas em inatividade</i> será reduzido para corresponder ao limite de <i>Ligações abertas máximas</i>. Se definido para 0, não há limite para o número de ligações abertas.",
+        "max-idle": "Máx. em inatividade",
         "max-lifetime": "Tempo de vida máximo",
         "max-open": "Aberturas máx.",
         "title-connection-limits": "Limites da ligação"
       },
       "dataset-selector": {
         "aria-label-dataset-selector": "Seletor de conjunto de dados"
-      },
-      "error-boundary": {
-        "fall-back": {
-          "error": "Erro"
-        }
       },
       "get-custom-operators": {
         "custom-operators": {
@@ -54,7 +49,7 @@
         }
       },
       "query-header": {
-        "content-invalid-query": "A sua consulta é inválida. Verifique abaixo para obter detalhes. <1></1>No entanto, ainda pode executar esta consulta.",
+        "content-invalid-query": "A sua consulta é inválida. Verifique abaixo para obter detalhes. <br/>No entanto, ainda pode executar esta consulta.",
         "editor-modes": {
           "label-builder": "Construtor",
           "label-code": "Cód."
@@ -69,6 +64,12 @@
         "placeholder-select-format": "Selecionar formato",
         "run-query": "Executar consulta"
       },
+      "query-meta": {
+        "variables": {
+          "textField": "Campo de texto",
+          "valueField": "Campo de valor"
+        }
+      },
       "query-toolbox": {
         "content-hit-ctrlcmdreturn-to-run-query": "Pressione CTRL/CMD+Return para executar a consulta",
         "tooltip-collapse": "Recolher editor",
@@ -76,7 +77,7 @@
         "tooltip-format-query": "Formatar consulta"
       },
       "query-validator": {
-        "query-will-process": "<0></0> Esta consulta processará <2>{{bytes}}</2> quando for executada.",
+        "query-will-process": "<0></0> Esta consulta processará <strong>{{bytes}}</strong> quando for executada.",
         "validating-query": "A validar consulta..."
       },
       "raw-editor": {

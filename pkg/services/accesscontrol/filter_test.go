@@ -18,6 +18,23 @@ import (
 	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
+func TestManagedPermissionsActionSetsFilter(t *testing.T) {
+	filter := accesscontrol.ManagedPermissionsActionSetsFilter()
+
+	// The filter should exclude individual dashboard/folder actions from managed roles
+	assert.Contains(t, filter, "role.name LIKE 'managed:%'")
+	assert.Contains(t, filter, "permission.kind IN ('dashboards', 'folders')")
+	assert.Contains(t, filter, "AND NOT")
+
+	// The filter should preserve action set permissions
+	assert.Contains(t, filter, "'dashboards:view'")
+	assert.Contains(t, filter, "'dashboards:edit'")
+	assert.Contains(t, filter, "'dashboards:admin'")
+	assert.Contains(t, filter, "'folders:view'")
+	assert.Contains(t, filter, "'folders:edit'")
+	assert.Contains(t, filter, "'folders:admin'")
+}
+
 type filterDatasourcesTestCase struct {
 	desc        string
 	sqlID       string
@@ -174,7 +191,7 @@ func TestIntegrationFilter_Datasources(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.desc, func(t *testing.T) {
-			store := db.InitTestDB(t)
+			store := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 
 			err := store.WithDbSession(context.Background(), func(sess *db.Session) error {
 				// seed 10 data sources

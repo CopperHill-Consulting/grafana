@@ -2,57 +2,68 @@ package resource
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"hash/fnv"
+	"maps"
 	"math/rand"
+	"slices"
+	"sync"
 	"time"
 
 	"github.com/grafana/dskit/ring"
 	ringclient "github.com/grafana/dskit/ring/client"
 	"github.com/grafana/dskit/services"
 	userutils "github.com/grafana/dskit/user"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/modules"
 	"github.com/grafana/grafana/pkg/services/grpcserver"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
 )
 
-func ProvideSearchDistributorServer(cfg *setting.Cfg, features featuremgmt.FeatureToggles, registerer prometheus.Registerer, tracer trace.Tracer, ring *ring.Ring, ringClientPool *ringclient.Pool) (grpcserver.Provider, error) {
-	var err error
-	grpcHandler, err := grpcserver.ProvideService(cfg, features, nil, tracer, registerer)
-	if err != nil {
-		return nil, err
+type UnifiedStorageGrpcService interface {
+	services.NamedService
+}
+
+var (
+	_ UnifiedStorageGrpcService = (*distributorServer)(nil)
+)
+
+func ProvideSearchDistributorServer(tracer trace.Tracer, cfg *setting.Cfg, ring *ring.Ring, ringClientPool *ringclient.Pool, provider grpcserver.Provider) (UnifiedStorageGrpcService, error) {
+	s := &distributorServer{
+		log:            log.New("index-server-distributor"),
+		ring:           ring,
+		searchRingRead: newSearchRingReadOp(cfg.SearchRingExtendReplicaSet),
+		clientPool:     ringClientPool,
+		tracing:        tracer,
 	}
 
-	distributorServer := &distributorServer{
-		log:        log.New("index-server-distributor"),
-		ring:       ring,
-		clientPool: ringClientPool,
-		tracing:    tracer,
-	}
-
-	healthService, err := ProvideHealthService(distributorServer)
-	if err != nil {
-		return nil, err
-	}
-
-	grpcServer := grpcHandler.GetServer()
-
-	resourcepb.RegisterResourceIndexServer(grpcServer, distributorServer)
-	resourcepb.RegisterManagedObjectIndexServer(grpcServer, distributorServer)
-	grpc_health_v1.RegisterHealthServer(grpcServer, healthService)
-	_, err = grpcserver.ProvideReflectionService(cfg, grpcHandler)
-	if err != nil {
-		return nil, err
-	}
-
-	return grpcHandler, nil
+	srv := provider.GetServer()
+	resourcepb.RegisterResourceIndexServer(srv, s)
+	resourcepb.RegisterManagedObjectIndexServer(srv, s)
+	_, _ = grpcserver.ProvideReflectionService(cfg, provider)
+	s.BasicService = services.NewBasicService(nil, func(ctx context.Context) error {
+		ringWatcher := services.NewFailureWatcher()
+		ringWatcher.WatchService(s.ring)
+		defer ringWatcher.Close()
+		if state := s.ring.State(); state != services.Running {
+			return fmt.Errorf("ring is not running: state=%s", state)
+		}
+		select {
+		case err := <-ringWatcher.Chan():
+			return fmt.Errorf("ring failure: %w", err)
+		case <-ctx.Done():
+			s.log.Info("Stopping search distributor server")
+			return nil
+		}
+	}, nil).WithName(modules.SearchServerDistributor)
+	return s, nil
 }
 
 type RingClient struct {
@@ -79,18 +90,25 @@ const RingHeartbeatTimeout = time.Minute
 const RingNumTokens = 128
 
 type distributorServer struct {
-	clientPool *ringclient.Pool
-	ring       *ring.Ring
-	log        log.Logger
-	tracing    trace.Tracer
+	*services.BasicService
+	clientPool     *ringclient.Pool
+	ring           *ring.Ring
+	searchRingRead ring.Operation
+	log            log.Logger
+	tracing        trace.Tracer
 }
 
-var (
-	// operation used by the distributor to select only ACTIVE instances to handle search-related requests
-	searchRingRead = ring.NewOp([]ring.InstanceState{ring.ACTIVE}, func(s ring.InstanceState) bool {
-		return s != ring.ACTIVE
-	})
-)
+func newSearchRingReadOp(extendReplicaSet bool) ring.Operation {
+	// The distributor routes search-related requests only to ACTIVE instances.
+	// Replica-set extension is configurable to avoid forcing replacement pods to open large local indexes during rollouts.
+	var shouldExtendReplicaSet func(ring.InstanceState) bool
+	if extendReplicaSet {
+		shouldExtendReplicaSet = func(s ring.InstanceState) bool {
+			return s != ring.ACTIVE
+		}
+	}
+	return ring.NewOp([]ring.InstanceState{ring.ACTIVE}, shouldExtendReplicaSet)
+}
 
 func (ds *distributorServer) Search(ctx context.Context, r *resourcepb.ResourceSearchRequest) (*resourcepb.ResourceSearchResponse, error) {
 	ctx, span := ds.tracing.Start(ctx, "distributor.Search")
@@ -112,6 +130,173 @@ func (ds *distributorServer) GetStats(ctx context.Context, r *resourcepb.Resourc
 	}
 
 	return client.GetStats(ctx, r)
+}
+
+func (ds *distributorServer) VectorSearch(ctx context.Context, r *resourcepb.VectorSearchRequest) (*resourcepb.VectorSearchResponse, error) {
+	ctx, span := ds.tracing.Start(ctx, "distributor.VectorSearch")
+	defer span.End()
+
+	// No per-namespace locality — every search pod hits the same pgvector
+	// backend — so pick any healthy instance.
+	rs, err := ds.ring.GetAllHealthy(ds.searchRingRead)
+	if err != nil || len(rs.Instances) == 0 {
+		return nil, fmt.Errorf("no healthy search instances available: %w", err)
+	}
+	inst := rs.Instances[rand.Intn(len(rs.Instances))]
+	client, err := ds.clientPool.GetClientForInstance(inst)
+	if err != nil {
+		return nil, err
+	}
+	var ns string
+	if r.Key != nil {
+		ns = r.Key.Namespace
+	}
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		md = make(metadata.MD)
+	}
+	ctx = userutils.InjectOrgID(metadata.NewOutgoingContext(ctx, md), ns)
+	return client.(*RingClient).Client.VectorSearch(ctx, r)
+}
+
+// HybridSearch needs the namespace's local bleve index for its lexical
+// leg, so it routes namespace-sticky like Search — not random like
+// VectorSearch (pgvector is reachable from any pod).
+func (ds *distributorServer) HybridSearch(ctx context.Context, r *resourcepb.HybridSearchRequest) (*resourcepb.HybridSearchResponse, error) {
+	ctx, span := ds.tracing.Start(ctx, "distributor.HybridSearch")
+	defer span.End()
+
+	var ns string
+	if r.Key != nil {
+		ns = r.Key.Namespace
+	}
+	ctx, client, err := ds.getClientToDistributeRequest(ctx, ns, "HybridSearch")
+	if err != nil {
+		return nil, err
+	}
+	return client.HybridSearch(ctx, r)
+}
+
+func (ds *distributorServer) RebuildIndexes(ctx context.Context, r *resourcepb.RebuildIndexesRequest) (*resourcepb.RebuildIndexesResponse, error) {
+	ctx, span := ds.tracing.Start(ctx, "distributor.RebuildIndexes")
+	defer span.End()
+
+	// validate input
+	for _, key := range r.Keys {
+		if r.Namespace != key.Namespace {
+			return &resourcepb.RebuildIndexesResponse{
+				Error: NewBadRequestError("key namespace does not match request namespace"),
+			}, nil
+		}
+	}
+
+	// distribute the request to all search pods to minimize risk of stale index
+	// it will not rebuild on those which don't have the index open
+	rs, err := ds.ring.GetAllHealthy(ds.searchRingRead)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all healthy instances from the ring")
+	}
+
+	err = grpc.SetHeader(ctx, metadata.Pairs("proxied-instance-id", "all"))
+	if err != nil {
+		ds.log.Debug("error setting grpc header", "err", err)
+	}
+
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		md = make(metadata.MD)
+	}
+	rCtx := userutils.InjectOrgID(metadata.NewOutgoingContext(ctx, md), r.Namespace)
+
+	expectedInstances := ds.ring.InstancesCount()
+	var wg sync.WaitGroup
+	responseCh := make(chan *resourcepb.RebuildIndexesResponse, expectedInstances)
+	errorCh := make(chan error, expectedInstances)
+
+	for _, inst := range rs.Instances {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			client, err := ds.clientPool.GetClientForInstance(inst)
+			if err != nil {
+				errorCh <- fmt.Errorf("instance %s: failed to get client, %w", inst.Id, err)
+				return
+			}
+
+			rsp, err := client.(*RingClient).Client.RebuildIndexes(rCtx, r)
+			if err != nil {
+				errorCh <- fmt.Errorf("instance %s: failed to distribute rebuild index request, %w", inst.Id, err)
+				return
+			}
+
+			if rsp.Error != nil {
+				errorCh <- fmt.Errorf("instance %s: rebuild index request returned the error %s", inst.Id, rsp.Error.Message)
+				return
+			}
+
+			// Add instance ID to details if present
+			if rsp.Details != "" {
+				rsp.Details = fmt.Sprintf("{instance: %s, details: %s}", inst.Id, rsp.Details)
+			}
+
+			responseCh <- rsp
+		}()
+	}
+
+	wg.Wait()
+	close(errorCh)
+	close(responseCh)
+
+	// Collect errors
+	errs := make([]error, 0, len(errorCh))
+	for err := range errorCh {
+		ds.log.Error("rebuild indexes call failed", "error", err)
+		errs = append(errs, err)
+	}
+
+	// Aggregate responses
+	var totalRebuildCount int64
+	var details string
+	minBuildTimes := make(map[string]*resourcepb.RebuildIndexesResponse_IndexBuildTime)
+	contactedInstances := len(responseCh)
+
+	for rsp := range responseCh {
+		totalRebuildCount += rsp.RebuildCount
+
+		if rsp.Details != "" {
+			if len(details) > 0 {
+				details += ", "
+			}
+			details += rsp.Details
+		}
+
+		// Compute MIN(build time) for each resource type
+		for _, bt := range rsp.BuildTimes {
+			key := bt.Group + "/" + bt.Resource
+			existing, found := minBuildTimes[key]
+			if !found || bt.BuildTimeUnix < existing.BuildTimeUnix {
+				minBuildTimes[key] = bt
+			}
+		}
+	}
+
+	// Convert map to slice
+	buildTimes := slices.Collect(maps.Values(minBuildTimes))
+
+	// Determine if all instances were contacted
+	contactedAllInstances := contactedInstances == expectedInstances && expectedInstances > 0
+
+	response := &resourcepb.RebuildIndexesResponse{
+		RebuildCount:          totalRebuildCount,
+		Details:               details,
+		BuildTimes:            buildTimes,
+		ContactedAllInstances: contactedAllInstances,
+	}
+	if len(errs) > 0 {
+		response.Error = AsErrorResult(errors.Join(errs...))
+	}
+	return response, nil
 }
 
 func (ds *distributorServer) CountManagedObjects(ctx context.Context, r *resourcepb.CountManagedObjectsRequest) (*resourcepb.CountManagedObjectsResponse, error) {
@@ -144,7 +329,7 @@ func (ds *distributorServer) getClientToDistributeRequest(ctx context.Context, n
 		return ctx, nil, err
 	}
 
-	rs, err := ds.ring.GetWithOptions(ringHasher.Sum32(), searchRingRead, ring.WithReplicationFactor(ds.ring.ReplicationFactor()))
+	rs, err := ds.ring.GetWithOptions(ringHasher.Sum32(), ds.searchRingRead, ring.WithReplicationFactor(ds.ring.ReplicationFactor()))
 	if err != nil {
 		ds.log.Debug("error getting replication set from ring", "err", err, "namespace", namespace)
 		return ctx, nil, err

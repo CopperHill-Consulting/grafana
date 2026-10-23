@@ -1,7 +1,7 @@
 import { render, screen } from 'test/test-utils';
 
 import { config } from '@grafana/runtime';
-import { contextSrv } from 'app/core/core';
+import { contextSrv } from 'app/core/services/context_srv';
 import { setupMswServer } from 'app/features/alerting/unified/mockApi';
 
 import { rulerTestDb } from '../alerting/unified/mocks/grafanaRulerApi';
@@ -75,11 +75,11 @@ describe('browse-dashboards BrowseFolderAlertingPage', () => {
     expect(await screen.findByRole('tab', { name: 'Dashboards' })).toBeInTheDocument();
     expect(await screen.findByRole('tab', { name: 'Dashboards' })).toHaveAttribute('aria-selected', 'false');
 
-    expect(await screen.findByRole('tab', { name: 'Panels' })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Panels' })).toHaveAttribute('aria-selected', 'false');
+    expect(await screen.findByRole('tab', { name: /^Panels/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /^Panels/ })).toHaveAttribute('aria-selected', 'false');
 
-    expect(await screen.findByRole('tab', { name: 'Alert rules' })).toBeInTheDocument();
-    expect(await screen.findByRole('tab', { name: 'Alert rules' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByRole('tab', { name: /^Alert rules/ })).toBeInTheDocument();
+    expect(await screen.findByRole('tab', { name: /^Alert rules/ })).toHaveAttribute('aria-selected', 'true');
   });
 
   it('displays rules from the folder', async () => {

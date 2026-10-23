@@ -47,10 +47,10 @@ type Rule interface {
 	Identifier() ngmodels.AlertRuleKeyWithGroup
 }
 
-type ruleFactoryFunc func(context.Context, *ngmodels.AlertRule) Rule
+type ruleFactoryFunc func(context.Context, ruleWithFolder) Rule
 
-func (f ruleFactoryFunc) new(ctx context.Context, rule *ngmodels.AlertRule) Rule {
-	return f(ctx, rule)
+func (f ruleFactoryFunc) new(ctx context.Context, rf ruleWithFolder) Rule {
+	return f(ctx, rf)
 }
 
 func newRuleFactory(
@@ -70,11 +70,11 @@ func newRuleFactory(
 	evalAppliedHook evalAppliedFunc,
 	stopAppliedHook stopAppliedFunc,
 ) ruleFactoryFunc {
-	return func(ctx context.Context, rule *ngmodels.AlertRule) Rule {
-		if rule.Type() == ngmodels.RuleTypeRecording {
+	return func(ctx context.Context, rf ruleWithFolder) Rule {
+		if rf.rule.Type() == ngmodels.RuleTypeRecording {
 			return newRecordingRule(
 				ctx,
-				rule.GetKeyWithGroup(),
+				rf.rule.GetKeyWithGroup(),
 				retryConfig,
 				clock,
 				evalFactory,
@@ -89,7 +89,7 @@ func newRuleFactory(
 		}
 		return newAlertRule(
 			ctx,
-			rule.GetKeyWithGroup(),
+			rf,
 			appURL,
 			disableGrafanaFolder,
 			retryConfig,
@@ -111,7 +111,8 @@ type evalAppliedFunc = func(ngmodels.AlertRuleKey, time.Time)
 type stopAppliedFunc = func(ngmodels.AlertRuleKey)
 
 type alertRule struct {
-	key ngmodels.AlertRuleKeyWithGroup
+	key                ngmodels.AlertRuleKeyWithGroup
+	currentFingerprint fingerprint
 
 	evalCh   chan *Evaluation
 	updateCh chan *Evaluation
@@ -139,7 +140,7 @@ type alertRule struct {
 
 func newAlertRule(
 	parent context.Context,
-	key ngmodels.AlertRuleKeyWithGroup,
+	rf ruleWithFolder,
 	appURL *url.URL,
 	disableGrafanaFolder bool,
 	retryConfig RetryConfig,
@@ -154,10 +155,13 @@ func newAlertRule(
 	evalAppliedHook func(ngmodels.AlertRuleKey, time.Time),
 	stopAppliedHook func(ngmodels.AlertRuleKey),
 ) *alertRule {
+	key := rf.rule.GetKeyWithGroup()
+	initialFingerprint := rf.Fingerprint()
 	ctx, stop := util.WithCancelCause(ngmodels.WithRuleKey(parent, key.AlertRuleKey))
 
-	return &alertRule{
+	a := &alertRule{
 		key:                  key,
+		currentFingerprint:   initialFingerprint,
 		evalCh:               make(chan *Evaluation),
 		updateCh:             make(chan *Evaluation),
 		ctx:                  ctx,
@@ -176,6 +180,8 @@ func newAlertRule(
 		tracer:               tracer,
 		featureToggles:       featureToggles,
 	}
+
+	return a
 }
 
 func (a *alertRule) Identifier() ngmodels.AlertRuleKeyWithGroup {
@@ -187,7 +193,7 @@ func (a *alertRule) Type() ngmodels.RuleType {
 }
 
 func (a *alertRule) Status() ngmodels.RuleStatus {
-	return a.stateManager.GetStatusForRuleUID(a.key.OrgID, a.key.UID)
+	return a.stateManager.GetStatusForRuleUID(context.Background(), a.key.OrgID, a.key.UID)
 }
 
 // eval signals the rule evaluation routine to perform the evaluation of the rule. Does nothing if the loop is stopped.
@@ -246,22 +252,23 @@ func (a *alertRule) Run() error {
 	grafanaCtx := a.ctx
 	a.logger.Debug("Alert rule routine started")
 
-	var currentFingerprint fingerprint
+	firstEvalDone := false
+
 	defer a.stopApplied()
 	for {
 		select {
 		// used by external services (API) to notify that rule is updated.
 		case ctx := <-a.updateCh:
 			fp := ctx.Fingerprint()
-			if currentFingerprint == fp {
-				a.logger.Info("Rule's fingerprint has not changed. Skip resetting the state", "currentFingerprint", currentFingerprint)
+			if a.currentFingerprint == fp {
+				a.logger.Info("Rule's fingerprint has not changed. Skip resetting the state", "currentFingerprint", a.currentFingerprint)
 				continue
 			}
 
 			a.logger.Info("Clearing the state of the rule because it was updated", "isPaused", ctx.rule.IsPaused, "fingerprint", fp)
 			// clear the state. So the next evaluation will start from the scratch.
 			a.resetState(grafanaCtx, ctx.rule, ctx.rule.IsPaused)
-			currentFingerprint = fp
+			a.currentFingerprint = fp
 		// evalCh - used by the scheduler to signal that evaluation is needed.
 		case ctx, ok := <-a.evalCh:
 			if !ok {
@@ -295,20 +302,21 @@ func (a *alertRule) Run() error {
 				for {
 					isPaused := ctx.rule.IsPaused
 
-					// Do not clean up state if the eval loop has just started.
 					var needReset bool
-					if currentFingerprint != 0 && currentFingerprint != f {
-						logger.Debug("Got a new version of alert rule. Clear up the state", "current_fingerprint", currentFingerprint, "fingerprint", f)
+					if a.currentFingerprint != f {
+						logger.Debug("Got a new version of alert rule. Clear up the state", "current_fingerprint", a.currentFingerprint, "fingerprint", f)
 						needReset = true
 					}
 					// We need to reset state if the loop has started and the alert is already paused. It can happen,
 					// if we have an alert with state and we do file provision with stateful Grafana, that state
 					// lingers in DB and won't be cleaned up until next alert rule update.
-					needReset = needReset || (currentFingerprint == 0 && isPaused)
+					needReset = needReset || (!firstEvalDone && isPaused)
 					if needReset {
 						a.resetState(grafanaCtx, ctx.rule, isPaused)
 					}
-					currentFingerprint = f
+
+					firstEvalDone = true
+					a.currentFingerprint = f
 					if isPaused {
 						logger.Debug("Skip rule evaluation because it is paused")
 						return
@@ -319,7 +327,7 @@ func (a *alertRule) Run() error {
 						evalTotal.Inc()
 					}
 
-					fpStr := currentFingerprint.String()
+					fpStr := a.currentFingerprint.String()
 					utcTick := ctx.scheduledAt.UTC().Format(time.RFC3339Nano)
 					tracingCtx, span := a.tracer.Start(grafanaCtx, "alert rule execution", trace.WithAttributes(
 						attribute.String("rule_uid", ctx.rule.UID),
@@ -373,17 +381,16 @@ func (a *alertRule) Run() error {
 			ctx, cancelFunc := context.WithTimeout(context.Background(), time.Minute)
 			defer cancelFunc()
 
+			a.logger.Info("Stopping alert rule routine", "reason", reason)
 			if errors.Is(reason, errRuleDeleted) {
 				// Clean up the state and send resolved notifications for firing alerts only if the reason for stopping
 				// the evaluation loop is that the rule was deleted.
 				stateTransitions := a.stateManager.DeleteStateByRuleUID(ngmodels.WithRuleKey(ctx, a.key.AlertRuleKey), a.key, ngmodels.StateReasonRuleDeleted)
 				a.expireAndSend(grafanaCtx, stateTransitions)
-			} else {
-				// Otherwise, just clean up the cache.
-				a.stateManager.ForgetStateByRuleUID(ngmodels.WithRuleKey(ctx, a.key.AlertRuleKey), a.key)
+				return nil
 			}
-
-			a.logger.Debug("Stopping alert rule routine", "reason", reason)
+			// Otherwise, just clean up the cache.
+			a.stateManager.ForgetStateByRuleUID(ngmodels.WithRuleKey(ctx, a.key.AlertRuleKey), a.key)
 			return nil
 		}
 	}
@@ -427,24 +434,24 @@ func (a *alertRule) evaluate(ctx context.Context, e *Evaluation, span trace.Span
 
 		// Only retry (return errors) if this isn't the last attempt, otherwise skip these return operations.
 		if retry {
-			// The only thing that can return non-nil `err` from ruleEval.Evaluate is the server side expression pipeline.
-			// This includes transport errors such as transient network errors.
-			if err != nil {
+			// `err` is set only when the SSE pipeline itself failed; retry it unless it is
+			// deterministically non-retryable. The `err == nil` guard below is load-bearing:
+			// with a non-nil `err`, `results` is nil and HasNonRetryableErrors() would say retryable.
+			if err != nil && !eval.IsNonRetryableError(err) {
 				span.SetStatus(codes.Error, "rule evaluation failed")
 				span.RecordError(err)
 				return fmt.Errorf("server side expressions pipeline returned an error: %w", err)
-			}
-
-			// If the pipeline executed successfully but have other types of errors that can be retryable, we should do so.
-			if !results.HasNonRetryableErrors() {
+			} else if err == nil && !results.HasNonRetryableErrors() {
+				// If the pipeline executed successfully but have other types of errors that can be retryable, we should do so.
 				span.SetStatus(codes.Error, "rule evaluation failed")
-				span.RecordError(err)
+				span.RecordError(results.Error())
 				return fmt.Errorf("the result-set has errors that can be retried: %w", results.Error())
 			}
-		} else {
-			// Only count the final attempt as a failure.
-			evalTotalFailures.Inc()
 		}
+
+		// Final failure (last attempt or non-retryable): count it once. Previously this ran
+		// only on the last attempt, so non-retryable early-stops were undercounted.
+		evalTotalFailures.Inc()
 
 		// If results is nil, we assume that the error must be from the SSE pipeline (ruleEval.Evaluate) which is the only code that can actually return an `err`.
 		if results == nil {
@@ -466,12 +473,12 @@ func (a *alertRule) evaluate(ctx context.Context, e *Evaluation, span trace.Span
 		))
 	}
 	start = a.clock.Now()
-	_ = a.stateManager.ProcessEvalResults(
+	_, procErr := a.stateManager.ProcessEvalResults(
 		ctx,
 		e.scheduledAt,
 		e.rule,
 		results,
-		state.GetRuleExtraLabels(logger, e.rule, e.folderTitle, !a.disableGrafanaFolder),
+		state.GetRuleExtraLabels(logger, e.rule, e.folderTitle, !a.disableGrafanaFolder, a.featureToggles),
 		func(ctx context.Context, statesToSend state.StateTransitions) {
 			start := a.clock.Now()
 			alerts := a.send(ctx, logger, statesToSend)
@@ -481,6 +488,11 @@ func (a *alertRule) evaluate(ctx context.Context, e *Evaluation, span trace.Span
 			sendDuration.Observe(a.clock.Now().Sub(start).Seconds())
 		},
 	)
+	if errors.Is(procErr, state.ErrNotReady) {
+		logger.Warn("Skip processing evaluation results because the state cache is not ready")
+		a.metrics.EvaluationMissed.WithLabelValues(fmt.Sprint(a.key.OrgID), e.rule.Title, "state_not_warmed").Inc()
+		return nil
+	}
 	processDuration.Observe(a.clock.Now().Sub(start).Seconds())
 
 	return nil
@@ -490,7 +502,7 @@ func (a *alertRule) evaluate(ctx context.Context, e *Evaluation, span trace.Span
 func (a *alertRule) send(ctx context.Context, logger log.Logger, states state.StateTransitions) definitions.PostableAlerts {
 	alerts := definitions.PostableAlerts{PostableAlerts: make([]models.PostableAlert, 0, len(states))}
 	for _, alertState := range states {
-		alerts.PostableAlerts = append(alerts.PostableAlerts, *state.StateToPostableAlert(alertState, a.appURL, a.featureToggles))
+		alerts.PostableAlerts = append(alerts.PostableAlerts, *state.StateToPostableAlert(alertState, a.appURL))
 	}
 
 	if len(alerts.PostableAlerts) > 0 {
@@ -502,7 +514,7 @@ func (a *alertRule) send(ctx context.Context, logger log.Logger, states state.St
 
 // sendExpire sends alerts to expire all previously firing alerts in the provided state transitions.
 func (a *alertRule) expireAndSend(ctx context.Context, states []state.StateTransition) {
-	expiredAlerts := state.FromAlertsStateToStoppedAlert(states, a.appURL, a.clock, a.featureToggles)
+	expiredAlerts := state.FromAlertsStateToStoppedAlert(states, a.appURL, a.clock)
 	if len(expiredAlerts.PostableAlerts) > 0 {
 		a.sender.Send(ctx, a.key.AlertRuleKey, expiredAlerts)
 	}

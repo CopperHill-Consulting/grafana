@@ -11,10 +11,10 @@
       },
       "connection-limits": {
         "auto-max-idle": "Inaktív automatikus maximális száma",
-        "content-auto-max-idle": "Ha engedélyezve van, automatikusan beállítja az <1>Inaktív kapcsolatok maximális száma</1> értéket a <3>Megnyitott kapcsolatok maximális száma</3> értékére. Ha a nyitott kapcsolatok maximális száma nincs beállítva, akkor az alapértelmezett értékre lesz beállítva ({{defaultMaxIdle}}).",
-        "content-max-idle": "Az inaktív kapcsolatok készletében lévő kapcsolatok maximális száma. Ha a <1>Megnyitott kapcsolatok maximális száma</1> nagyobb, mint 0, de kisebb, mint az <3>Inaktív kapcsolatok maximális száma</3>, akkor az <5>Inaktív kapcsolatok maximális száma</5> csökken, hogy megfeleljen a <8>Megnyitott kapcsolatok maximális száma</8> határértékének. Ha 0-ra van állítva, akkor egyetlen inaktív kapcsolat sem marad meg.",
+        "content-auto-max-idle": "Ha engedélyezve van, automatikusan beállítja az <i>Inaktív kapcsolatok maximális számát</i> a <i>Megnyitott kapcsolatok maximális számára</i>. Ha a Megnyitott kapcsolatok maximális száma nincs beállítva, akkor az alapértelmezett értékre lesz beállítva ({{defaultMaxIdle}}).",
+        "content-max-idle": "Az inaktív kapcsolatok készletében lévő kapcsolatok maximális száma. Ha a <i>Megnyitott kapcsolatok maximális száma</i> nagyobb, mint 0, de kisebb, mint az <i>Inaktív kapcsolatok maximális száma</i>, akkor az <i>Inaktív kapcsolatok maximális száma</i> csökken, hogy megfeleljen a <i>Megnyitott kapcsolatok maximális száma</i> határértékének. Ha 0-ra van állítva, akkor egyetlen inaktív kapcsolat sem marad meg.",
         "content-max-lifetime": "A csatlakozás újrafelhasználásának maximális időtartama másodpercben. Ha 0-ra van állítva, a kapcsolatok újrafelhasználása végtelen.",
-        "content-max-open": "Az adatbázishoz irányuló nyitott kapcsolatok maximális száma. Ha az <1>Inaktív kapcsolatok maximális száma</1> nagyobb, mint 0, és a <3>Megnyitott kapcsolatok maximális száma</3> kisebb, mint az <5>Inaktív kapcsolatok maximális száma</5>, akkor az <7>Inaktív kapcsolatok maximális száma</7> csökken, hogy megfeleljen a <9>Megnyitott kapcsolatok maximális száma</9> határértékének. Ha 0-ra van állítva, akkor nincs korlátozva a nyitott kapcsolatok száma.",
+        "content-max-open": "Az adatbázissal létesített megnyitott kapcsolatok maximális száma. Ha az <i>Inaktív kapcsolatok maximális száma</i> nagyobb, mint 0, és a <i>Megnyitott kapcsolatok maximális száma</i> kisebb, mint az <i>Inaktív kapcsolatok maximális száma</i>, akkor az <i>Inaktív kapcsolatok maximális száma</i> csökken, hogy megfeleljen a <i>Megnyitott kapcsolatok maximális száma</i> határértékének. Ha 0-ra van állítva, akkor nincs korlátozva a megnyitott kapcsolatok száma.",
         "max-idle": "Max. inaktív",
         "max-lifetime": "Max. élettartam",
         "max-open": "Max. nyitott",
@@ -22,11 +22,6 @@
       },
       "dataset-selector": {
         "aria-label-dataset-selector": "Adatkészlet-választó"
-      },
-      "error-boundary": {
-        "fall-back": {
-          "error": "Hiba"
-        }
       },
       "get-custom-operators": {
         "custom-operators": {
@@ -54,7 +49,7 @@
         }
       },
       "query-header": {
-        "content-invalid-query": "A lekérdezés érvénytelen. A részleteket tekintse meg alább. <1></1>Ezt a lekérdezést azonban továbbra is futtathatja.",
+        "content-invalid-query": "A lekérdezése érvénytelen. A részleteket tekintse meg alább. <br/>Ezt a lekérdezést azonban továbbra is futtathatja.",
         "editor-modes": {
           "label-builder": "Építő",
           "label-code": "Kód"
@@ -69,6 +64,12 @@
         "placeholder-select-format": "Formátum kiválasztása",
         "run-query": "Lekérdezés"
       },
+      "query-meta": {
+        "variables": {
+          "textField": "Szöveges mező",
+          "valueField": "Értékmező"
+        }
+      },
       "query-toolbox": {
         "content-hit-ctrlcmdreturn-to-run-query": "A lekérdezés futtatásához nyomja le a CTRL/CMD+Enter billentyűkombinációt",
         "tooltip-collapse": "Szerkesztő összecsukása",
@@ -76,7 +77,7 @@
         "tooltip-format-query": "Lekérdezés formázása"
       },
       "query-validator": {
-        "query-will-process": "<0></0> Ez a lekérdezés <2>{{bytes}}</2> feldolgozását végzi futtatáskor.",
+        "query-will-process": "<0></0> Ez a lekérdezés <strong>{{bytes}}</strong> feldolgozását végzi futtatáskor.",
         "validating-query": "Lekérdezés érvényesítése…"
       },
       "raw-editor": {

@@ -160,7 +160,7 @@ Log navigation in Explore has been significantly improved. We added pagination t
 
 You can now use the Plugin catalog app to easily manage your plugins from within Grafana. Install, update, and uninstall plugins without requiring a server restart.
 
-[Plugin catalog](../../administration/plugin-management/#plugin-catalog) was added as a result of this feature.
+[Plugin catalog](../../administration/plugin-management/#access-the-plugin-catalog) was added as a result of this feature.
 
 ### Performance improvements
 
@@ -267,11 +267,11 @@ JWT is a new authentication option in Grafana.
 
 You can now configure Grafana to accept a JWT token provided in the HTTP header.
 
-[JWT authentication](../../setup-grafana/configure-security/configure-authentication/jwt/) was added and [Configuration](../../setup-grafana/configure-grafana/#authjwt) was updated as a result of this feature.
+[JWT authentication](../../setup-grafana/configure-access/configure-authentication/jwt/) was added and [Configuration](../../setup-grafana/configure-grafana/#authjwt) was updated as a result of this feature.
 
 #### OAuth
 
-[Generic OAuth authentication](../../setup-grafana/configure-security/configure-authentication/generic-oauth/) has been updated as a result of these changes.
+[Generic OAuth authentication](../../setup-grafana/configure-access/configure-authentication/generic-oauth/) has been updated as a result of these changes.
 
 ##### Added OAuth support for empty scopes
 
@@ -316,7 +316,7 @@ When creating a report, you can now choose to export Table panels as .csv files 
 
 You can also link back to the dashboard directly from the email, for users who want to see the data live in Grafana. This release also includes some improvements to the Reports list view.
 
-For more information, refer to [Reporting docs](../../dashboards/share-dashboards-panels/#reporting).
+For more information, refer to [Reporting docs](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/visualizations/dashboards/create-reports/).
 
 ### License restrictions clarification in the docs
 

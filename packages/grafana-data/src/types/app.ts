@@ -1,15 +1,15 @@
-import { ComponentType } from 'react';
+import { type ComponentType } from 'react';
 
 import { throwIfAngular } from '../utils/throwIfAngular';
 
-import { KeyValue } from './data';
-import { NavModel } from './navModel';
-import { PluginMeta, GrafanaPlugin, PluginIncludeType } from './plugin';
+import { type KeyValue } from './data';
+import { type NavModel } from './navModel';
+import { type PluginMeta, GrafanaPlugin, PluginIncludeType } from './plugin';
 import {
-  PluginExtensionExposedComponentConfig,
-  PluginExtensionAddedComponentConfig,
-  PluginExtensionAddedLinkConfig,
-  PluginExtensionAddedFunctionConfig,
+  type PluginExtensionExposedComponentConfig,
+  type PluginExtensionAddedComponentConfig,
+  type PluginExtensionAddedLinkConfig,
+  type PluginExtensionAddedFunctionConfig,
 } from './pluginExtensions';
 
 /**
@@ -20,6 +20,7 @@ export enum CoreApp {
   CloudAlerting = 'cloud-alerting',
   UnifiedAlerting = 'unified-alerting',
   Dashboard = 'dashboard',
+  Notebook = 'notebook',
   Explore = 'explore',
   Correlations = 'correlations',
   Unknown = 'unknown',

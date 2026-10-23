@@ -1,7 +1,20 @@
-import { DescendantCount } from 'app/types/folders';
+import { generatedAPI } from '@grafana/api-clients/rtkq/folder/v1beta1';
+import { invalidateQuotaUsage } from '@grafana/api-clients/rtkq/quotas/v0alpha1';
+import { PAGE_SIZE } from 'app/features/browse-dashboards/api/constants';
+import { TEAM_FOLDERS_UID } from 'app/features/search/constants';
+import { dispatch } from 'app/store/store';
+import { type DescendantCount } from 'app/types/folders';
 
-import { generatedAPI } from './endpoints.gen';
 import { getParsedCounts } from './utils';
+
+async function refreshTeamFolders() {
+  // Lazy-imported to avoid a circular dependency: state/actions transitively imports
+  // browseDashboardsAPI, which imports this module via folder/v1beta1/hooks.
+  const { refetchChildren } = await import('app/features/browse-dashboards/state/actions');
+  dispatch(refetchChildren({ parentUID: TEAM_FOLDERS_UID, pageSize: PAGE_SIZE }));
+}
+
+const folderListTag = { type: 'Folder' as const, id: 'LIST' };
 
 export const folderAPIv1beta1 = generatedAPI
   .enhanceEndpoints({
@@ -13,34 +26,55 @@ export const folderAPIv1beta1 = generatedAPI
         providesTags: (result) =>
           result
             ? [
-                { type: 'Folder', id: 'LIST' },
+                folderListTag,
                 ...result.items
                   .map((folder) => ({ type: 'Folder' as const, id: folder.metadata?.name }))
                   .filter(Boolean),
               ]
-            : [{ type: 'Folder', id: 'LIST' }],
+            : [folderListTag],
       },
       deleteFolder: {
-        // We don't want delete to invalidate getFolder tags, as that would lead to unnecessary 404s
-        invalidatesTags: (result, error) => (error ? [] : [{ type: 'Folder', id: 'LIST' }]),
+        invalidatesTags: (_result, error) => (error ? [] : [folderListTag]),
+        onQueryStarted: async (arg, { queryFulfilled }) => {
+          try {
+            await queryFulfilled;
+            // TODO the args are different than in old browseDashboardAPI so we don't have parent ready here.
+            //  We probably need to get the full folder before deleting or change the arg to refresh the parent.
+            // dispatch(refetchChildren({ parentUID: parentUid, pageSize: PAGE_SIZE }));
+            await refreshTeamFolders();
+            invalidateQuotaUsage(dispatch);
+          } catch {
+            // Error handled by mutation caller
+          }
+        },
       },
       updateFolder: {
-        query: (queryArg) => ({
-          url: `/folders/${queryArg.name}`,
-          method: 'PATCH',
-          // We need to stringify the body and set the correct header for the call to work with k8s api.
-          body: JSON.stringify(queryArg.patch),
-          headers: {
-            'Content-Type': 'application/strategic-merge-patch+json',
-          },
-          params: {
-            pretty: queryArg.pretty,
-            dryRun: queryArg.dryRun,
-            fieldManager: queryArg.fieldManager,
-            fieldValidation: queryArg.fieldValidation,
-            force: queryArg.force,
-          },
-        }),
+        onQueryStarted: async ({ patch }, { queryFulfilled }) => {
+          try {
+            if (
+              Array.isArray(patch) &&
+              patch.length &&
+              patch.some((part) => 'path' in part && part.path === '/metadata/ownerReferences')
+            ) {
+              await queryFulfilled;
+              await refreshTeamFolders();
+            }
+          } catch {
+            // Error handled by mutation caller
+          }
+        },
+      },
+      createFolder: {
+        onQueryStarted: async ({ folder }, { queryFulfilled }) => {
+          try {
+            if (folder.metadata?.ownerReferences && folder.metadata?.ownerReferences.length) {
+              await queryFulfilled;
+              await refreshTeamFolders();
+            }
+          } catch {
+            // Error handled by mutation caller
+          }
+        },
       },
     },
   })
@@ -54,7 +88,7 @@ export const folderAPIv1beta1 = generatedAPI
           const initialCounts: DescendantCount = {
             folders: folderUIDs.length,
             dashboards: dashboardUIDs.length,
-            library_elements: 0,
+            librarypanels: 0,
             alertrules: 0,
           };
 
@@ -71,10 +105,10 @@ export const folderAPIv1beta1 = generatedAPI
               }
 
               const counts = getParsedCounts(data?.counts ?? []);
-              acc.folders += counts.folders;
-              acc.dashboards += counts.dashboards;
-              acc.alertrules += counts.alertrules;
-              acc.library_elements += counts.library_elements;
+              acc.folders += counts.folders ?? 0;
+              acc.dashboards += counts.dashboards ?? 0;
+              acc.alertrules += counts.alertrules ?? 0;
+              acc.librarypanels += counts.librarypanels ?? 0;
               return acc;
             }, initialCounts);
 
@@ -95,7 +129,8 @@ export const {
   useUpdateFolderMutation,
   useReplaceFolderMutation,
   useGetAffectedItemsQuery,
+  useGetFolderCountsQuery,
 } = folderAPIv1beta1;
 
 // eslint-disable-next-line no-barrel-files/no-barrel-files
-export { type Folder, type FolderList, type CreateFolderApiArg, type ReplaceFolderApiArg } from './endpoints.gen';
+export * from '@grafana/api-clients/rtkq/folder/v1beta1';

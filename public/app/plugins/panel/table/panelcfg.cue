@@ -24,6 +24,7 @@ composableKinds: PanelCfg: {
 		schemas: [{
 			version: [0, 0]
 			schema: {
+				// @deprecated - use common in /packages/grafana-schema/src/common/table.cue instead i.e. `import { TableOptions } from '@grafana/schema';`
 				Options: {
 					// Represents the index of the selected frame
 					frameIndex: number | *0
@@ -35,6 +36,8 @@ composableKinds: PanelCfg: {
 					sortBy?: [...ui.TableSortByFieldState]
 					// Enable pagination on the table
 					enablePagination?: bool
+					// When pagination is enabled, sets a fixed number of rows per page. When unset, the page size is derived from the panel height.
+					pageSize?: number
 					// Controls the height of the rows
 					cellHeight?: ui.TableCellHeight & (*"sm" | _)
 					// limits the maximum height of a row, if text wrapping or dynamic height is enabled
@@ -43,10 +46,10 @@ composableKinds: PanelCfg: {
 					frozenColumns?: {
 						left?: number | *0
 					}
+					// If true, disables all keyboard events in the table. this is used when previewing a table (i.e. suggestions)
+					disableKeyboardEvents?: bool
 				} @cuetsy(kind="interface")
-				FieldConfig: {
-					ui.TableFieldOptions
-				} @cuetsy(kind="interface")
+				FieldConfig: {ui.TableFieldOptions} @cuetsy(kind="interface")
 			}
 		}]
 		lenses: []

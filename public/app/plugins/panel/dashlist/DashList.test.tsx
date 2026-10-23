@@ -1,16 +1,16 @@
-import { render, screen } from 'test/test-utils';
+import { render, screen, testWithFeatureToggles } from 'test/test-utils';
 
 import { setBackendSrv } from '@grafana/runtime';
-import { setupMockServer } from '@grafana/test-utils/server';
+import { getCustomSearchHandler } from '@grafana/test-utils/handlers';
+import server, { setupMockServer } from '@grafana/test-utils/server';
 import { getFolderFixtures } from '@grafana/test-utils/unstable';
 import { backendSrv } from 'app/core/services/backend_srv';
 import impressionSrv from 'app/core/services/impression_srv';
-import { testWithFeatureToggles } from 'app/features/alerting/unified/test/test-utils';
 
 import { getPanelProps } from '../test-utils';
 
 import { DashList } from './DashList';
-import { Options } from './panelcfg.gen';
+import { type Options } from './panelcfg.gen';
 
 const [_, { folderA, folderA_dashbdD, dashbdE }] = getFolderFixtures();
 
@@ -33,13 +33,19 @@ const defaultOptions: Options = {
 const findStarButton = (title: string, isStarred: boolean) =>
   screen.findByRole('button', { name: new RegExp(`^${isStarred ? 'unmark' : 'mark'} "${title}" as favorite`, 'i') });
 
-describe.each([
-  // App platform APIs
-  true,
-  // Legacy APIs
-  false,
-])('DashList - app platform APIs: %s', (featureTogglesEnabled) => {
-  testWithFeatureToggles(featureTogglesEnabled ? ['unifiedStorageSearchUI'] : []);
+const fixtures: Array<
+  [
+    // Test title
+    string,
+    // Feature toggle setup
+    Parameters<typeof testWithFeatureToggles>[0],
+  ]
+> = [
+  ['DashList - app platform APIs enabled', { enable: ['starsFromAPIServer'] }],
+  ['DashList - app platform APIs disabled', {}],
+];
+describe.each(fixtures)('%s', (_title, featureTogglesSetup) => {
+  testWithFeatureToggles(featureTogglesSetup);
 
   it('renders different groups of dashboards', async () => {
     const props = getPanelProps({
@@ -51,7 +57,7 @@ describe.each([
     });
     render(<DashList {...props} />);
 
-    const headings = (await screen.findAllByRole('heading')).map((heading) => heading.textContent);
+    const headings = (await screen.findAllByTestId('dashlist-header')).map((heading) => heading.textContent);
     expect(headings).toEqual(['Starred dashboards', 'Recently viewed dashboards', 'Search']);
   });
 
@@ -124,5 +130,35 @@ describe.each([
     render(<DashList {...props} />);
 
     expect(await screen.findByText(dashbdE.item.title)).toBeInTheDocument();
+  });
+
+  it('shows the dashboard description in a tooltip when hovering the description indicator', async () => {
+    server.use(
+      getCustomSearchHandler([
+        {
+          name: 'dash-uid',
+          title: 'Dashboard with description',
+          resource: 'dashboards',
+          description: 'Uptime overview',
+        },
+      ])
+    );
+    const props = getPanelProps({ ...defaultOptions, showSearch: true });
+    const { user } = render(<DashList {...props} />);
+
+    await user.hover(await screen.findByLabelText('Description'));
+
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Uptime overview');
+  });
+
+  it('does not render a description tooltip indicator when a dashboard has no description', async () => {
+    server.use(
+      getCustomSearchHandler([{ name: 'dash-uid', title: 'Dashboard without description', resource: 'dashboards' }])
+    );
+    const props = getPanelProps({ ...defaultOptions, showSearch: true });
+    render(<DashList {...props} />);
+
+    expect(await screen.findByText('Dashboard without description')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Description')).not.toBeInTheDocument();
   });
 });

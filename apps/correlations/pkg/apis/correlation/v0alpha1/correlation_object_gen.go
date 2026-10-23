@@ -21,8 +21,12 @@ type Correlation struct {
 
 	// Spec is the spec of the Correlation
 	Spec CorrelationSpec `json:"spec" yaml:"spec"`
+}
 
-	Status CorrelationStatus `json:"status" yaml:"status"`
+func NewCorrelation() *Correlation {
+	return &Correlation{
+		Spec: *NewCorrelationSpec(),
+	}
 }
 
 func (o *Correlation) GetSpec() any {
@@ -39,15 +43,11 @@ func (o *Correlation) SetSpec(spec any) error {
 }
 
 func (o *Correlation) GetSubresources() map[string]any {
-	return map[string]any{
-		"status": o.Status,
-	}
+	return map[string]any{}
 }
 
 func (o *Correlation) GetSubresource(name string) (any, bool) {
 	switch name {
-	case "status":
-		return o.Status, true
 	default:
 		return nil, false
 	}
@@ -55,13 +55,6 @@ func (o *Correlation) GetSubresource(name string) (any, bool) {
 
 func (o *Correlation) SetSubresource(name string, value any) error {
 	switch name {
-	case "status":
-		cast, ok := value.(CorrelationStatus)
-		if !ok {
-			return fmt.Errorf("cannot set status type %#v, not of type CorrelationStatus", value)
-		}
-		o.Status = cast
-		return nil
 	default:
 		return fmt.Errorf("subresource '%s' does not exist", name)
 	}
@@ -233,7 +226,10 @@ func (o *Correlation) DeepCopyInto(dst *Correlation) {
 	dst.TypeMeta.Kind = o.TypeMeta.Kind
 	o.ObjectMeta.DeepCopyInto(&dst.ObjectMeta)
 	o.Spec.DeepCopyInto(&dst.Spec)
-	o.Status.DeepCopyInto(&dst.Status)
+}
+
+func (Correlation) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.Correlation"
 }
 
 // Interface compliance compile-time check
@@ -289,6 +285,10 @@ func (o *CorrelationList) DeepCopyInto(dst *CorrelationList) {
 	resource.CopyObjectInto(dst, o)
 }
 
+func (CorrelationList) OpenAPIModelName() string {
+	return "com.github.grafana.grafana.apps.correlations.pkg.apis.correlation.v0alpha1.CorrelationList"
+}
+
 // Interface compliance compile-time check
 var _ resource.ListObject = &CorrelationList{}
 
@@ -303,17 +303,5 @@ func (s *CorrelationSpec) DeepCopy() *CorrelationSpec {
 
 // DeepCopyInto deep copies Spec into another Spec object
 func (s *CorrelationSpec) DeepCopyInto(dst *CorrelationSpec) {
-	resource.CopyObjectInto(dst, s)
-}
-
-// DeepCopy creates a full deep copy of CorrelationStatus
-func (s *CorrelationStatus) DeepCopy() *CorrelationStatus {
-	cpy := &CorrelationStatus{}
-	s.DeepCopyInto(cpy)
-	return cpy
-}
-
-// DeepCopyInto deep copies CorrelationStatus into another CorrelationStatus object
-func (s *CorrelationStatus) DeepCopyInto(dst *CorrelationStatus) {
 	resource.CopyObjectInto(dst, s)
 }

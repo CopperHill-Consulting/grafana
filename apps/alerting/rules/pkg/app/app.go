@@ -5,16 +5,45 @@ import (
 
 	"github.com/grafana/grafana-app-sdk/app"
 	"github.com/grafana/grafana-app-sdk/logging"
+	"github.com/grafana/grafana-app-sdk/operator"
+	"github.com/grafana/grafana-app-sdk/resource"
 	"github.com/grafana/grafana-app-sdk/simple"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/grafana/grafana/apps/alerting/rules/pkg/apis"
+	"github.com/grafana/grafana/apps/alerting/rules/pkg/apis/alerting/v0alpha1"
+	"github.com/grafana/grafana/apps/alerting/rules/pkg/app/alertrule"
+	"github.com/grafana/grafana/apps/alerting/rules/pkg/app/config"
+	"github.com/grafana/grafana/apps/alerting/rules/pkg/app/recordingrule"
+	"github.com/grafana/grafana/apps/alerting/rules/pkg/app/rulesequence"
+	"github.com/grafana/grafana/apps/alerting/rules/pkg/app/validation"
 )
 
 func New(cfg app.Config) (app.App, error) {
 	managedKinds := make([]simple.AppManagedKind, 0)
+	runtimeCfg, ok := cfg.SpecificConfig.(config.RuntimeConfig)
+	if !ok {
+		return nil, config.ErrInvalidRuntimeConfig
+	}
+
 	for _, kinds := range apis.GetKinds() {
 		for _, kind := range kinds {
-			managedKinds = append(managedKinds, simple.AppManagedKind{Kind: kind})
+			validator, err := buildKindValidator(kind, runtimeCfg, cfg.ManifestData)
+			if err != nil {
+				return nil, err
+			}
+			managedKind := simple.AppManagedKind{
+				Kind:      kind,
+				Validator: validator,
+				Mutator:   buildKindMutator(kind, runtimeCfg),
+				Watcher:   buildKindWatcher(kind, runtimeCfg),
+			}
+			// Only kinds with a watcher run an informer (RuleSequence), so this
+			// scopes that watch to WatchNamespace; empty means all namespaces.
+			if managedKind.Watcher != nil && runtimeCfg.WatchNamespace != "" {
+				managedKind.ReconcileOptions.Namespace = runtimeCfg.WatchNamespace
+			}
+			managedKinds = append(managedKinds, managedKind)
 		}
 	}
 
@@ -22,11 +51,14 @@ func New(cfg app.Config) (app.App, error) {
 		Name:       "alerting.rules",
 		KubeConfig: cfg.KubeConfig,
 		InformerConfig: simple.AppInformerConfig{
-			ErrorHandler: func(ctx context.Context, err error) {
-				logging.DefaultLogger.With("error", err).Error("Informer processing error")
+			InformerOptions: operator.InformerOptions{
+				ErrorHandler: func(ctx context.Context, err error) {
+					logging.DefaultLogger.With("error", err).Error("Informer processing error")
+				},
 			},
 		},
-		ManagedKinds: managedKinds,
+		ManagedKinds:          managedKinds,
+		VersionedCustomRoutes: buildSearchRoutes(runtimeCfg),
 	}
 
 	a, err := simple.NewApp(c)
@@ -40,4 +72,65 @@ func New(cfg app.Config) (app.App, error) {
 	}
 
 	return a, nil
+}
+
+// buildSearchRoutes wires the rule search handler (provided by the registry) to
+// its namespaced POST /searchRules custom route. The route is skipped when the
+// handler is unset so manifest validation without a backing instance does not
+// register a nil handler. The path must match search.RouteResource, which the
+// apiserver authorizer matches on.
+func buildSearchRoutes(cfg config.RuntimeConfig) map[string]simple.AppVersionRouteHandlers {
+	if cfg.SearchRulesHandler == nil {
+		return nil
+	}
+	handlers := simple.AppVersionRouteHandlers{
+		simple.AppVersionRoute{Namespaced: true, Path: "/searchRules", Method: simple.AppCustomRouteMethodPost}: cfg.SearchRulesHandler,
+	}
+	return map[string]simple.AppVersionRouteHandlers{"v0alpha1": handlers}
+}
+
+func buildKindValidator(kind resource.Kind, cfg config.RuntimeConfig, md app.ManifestData) (*simple.Validator, error) {
+	gk := schema.GroupKind{Group: kind.Group(), Kind: kind.Kind()}
+	switch kind.Kind() {
+	case "AlertRule":
+		return validation.NewBuilder[*v0alpha1.AlertRule]().
+			WithOpenAPIValidation(md, gk).
+			OnWrite(alertrule.ValidateWrite(cfg)).
+			OnDelete(alertrule.ValidateDelete(cfg)).
+			Build()
+	case "RecordingRule":
+		return validation.NewBuilder[*v0alpha1.RecordingRule]().
+			WithOpenAPIValidation(md, gk).
+			OnWrite(recordingrule.ValidateWrite(cfg)).
+			OnDelete(recordingrule.ValidateDelete(cfg)).
+			Build()
+	case "RuleSequence":
+		return validation.NewBuilder[*v0alpha1.RuleSequence]().
+			WithOpenAPIValidation(md, gk).
+			OnWrite(rulesequence.ValidateWrite(cfg)).
+			Build()
+	}
+	return nil, nil
+}
+
+func buildKindMutator(kind resource.Kind, cfg config.RuntimeConfig) *simple.Mutator {
+	switch kind.Kind() {
+	case "AlertRule":
+		return alertrule.NewMutator(cfg)
+	case "RecordingRule":
+		return recordingrule.NewMutator(cfg)
+	case "RuleSequence":
+		return rulesequence.NewMutator(cfg)
+	}
+	return nil
+}
+
+func buildKindWatcher(kind resource.Kind, cfg config.RuntimeConfig) operator.ResourceWatcher {
+	switch kind.Kind() {
+	case "RuleSequence":
+		if idx, ok := cfg.MembershipResolver.(*rulesequence.MembershipIndex); ok {
+			return idx
+		}
+	}
+	return nil
 }

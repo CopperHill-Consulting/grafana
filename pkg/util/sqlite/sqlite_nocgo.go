@@ -1,5 +1,3 @@
-//go:build !cgo
-
 package sqlite
 
 import (
@@ -20,9 +18,9 @@ type Driver = sqlite.Driver
 // until we rewrite the tests not to depend on the sqlite3 package internals directly.
 // Note: Since modernc.org/sqlite driver does not expose error codes like sqlite3, we cannot use the same approach.
 var (
-	TestErrUniqueConstraintViolation = errors.New("unique constraint violation (simulated)")
-	TestErrBusy                      = errors.New("database is busy (simulated)")
-	TestErrLocked                    = errors.New("database is locked (simulated)")
+	ErrTestUniqueConstraintViolation = errors.New("unique constraint violation (simulated)")
+	ErrTestBusy                      = errors.New("database is busy (simulated)")
+	ErrTestLocked                    = errors.New("database is locked (simulated)")
 )
 
 var dsnAlias = map[string]string{
@@ -56,18 +54,22 @@ var dsnMapping = map[string]string{
 }
 
 func convertSQLite3URL(dsn string) (string, error) {
-	pos := strings.IndexRune(dsn, '?')
-	if pos < 1 {
-		return dsn, nil // no parameters to convert
+	newDSN := dsn
+	var params url.Values
+	if pos := strings.IndexRune(dsn, '?'); pos >= 1 {
+		var err error
+		if params, err = url.ParseQuery(dsn[pos+1:]); err != nil {
+			return "", err
+		}
+		newDSN = dsn[:pos]
 	}
-	params, err := url.ParseQuery(dsn[pos+1:])
-	if err != nil {
-		return "", err
-	}
-	newDSN := dsn[:pos]
 
 	q := url.Values{}
-	q.Add("_pragma", "busy_timeout(5000)")
+	q.Add("_pragma", "busy_timeout(7500)") // Default of mattn/go-sqlite3 is 5s but we increase it to 7.5s to try and avoid busy errors.
+	// Without this, modernc serializes time.Time values with time.Time.String(), which Go documents as a
+	// debugging representation. That can embed a monotonic reading or a duplicated zone offset, producing
+	// values that don't round-trip. A user-supplied _time_format below overrides this default.
+	q.Set("_time_format", "sqlite")
 
 	for key, values := range params {
 		if alias, ok := dsnAlias[strings.ToLower(key)]; ok {
@@ -80,8 +82,8 @@ func convertSQLite3URL(dsn string) (string, error) {
 		value := values[0]
 		switch mapped {
 		case "_pragma":
-			value = strings.TrimPrefix(value, "_")
-			q.Add("_pragma", fmt.Sprintf("%s(%s)", key, value))
+			pragma := strings.TrimPrefix(key, "_")
+			q.Add("_pragma", fmt.Sprintf("%s(%s)", pragma, value))
 		case "_txlock":
 			q.Set("_txlock", value)
 		case "_time_format":
@@ -112,6 +114,10 @@ func init() {
 	sql.Register("sqlite3", &moderncDriver{Driver: &Driver{}})
 }
 
+func DriverType() string {
+	return "modernc.org/sqlite"
+}
+
 func IsBusyOrLocked(err error) bool {
 	var sqliteErr *sqlite.Error
 	if errors.As(err, &sqliteErr) {
@@ -119,7 +125,7 @@ func IsBusyOrLocked(err error) bool {
 		code := sqliteErr.Code() & 0xff
 		return code == sqlite3.SQLITE_BUSY || code == sqlite3.SQLITE_LOCKED
 	}
-	if errors.Is(err, TestErrBusy) || errors.Is(err, TestErrLocked) {
+	if errors.Is(err, ErrTestBusy) || errors.Is(err, ErrTestLocked) {
 		return true
 	}
 	return false
@@ -131,7 +137,7 @@ func IsUniqueConstraintViolation(err error) bool {
 		// These constants are extended codes combined with primary code, so we can check them directly.
 		return sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_PRIMARYKEY || sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE
 	}
-	if errors.Is(err, TestErrUniqueConstraintViolation) {
+	if errors.Is(err, ErrTestUniqueConstraintViolation) {
 		return true
 	}
 	return false
@@ -142,5 +148,5 @@ func ErrorMessage(err error) string {
 	if errors.As(err, &sqliteErr) {
 		return sqliteErr.Error()
 	}
-	return ""
+	return err.Error()
 }

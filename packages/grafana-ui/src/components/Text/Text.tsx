@@ -1,8 +1,9 @@
 import { css } from '@emotion/css';
-import { createElement, CSSProperties } from 'react';
+import { type CSSObject } from '@emotion/serialize';
+import { createElement } from 'react';
 import * as React from 'react';
 
-import { GrafanaTheme2, ThemeTypographyVariantTypes } from '@grafana/data';
+import { type GrafanaTheme2, type ThemeTypographyVariantTypes } from '@grafana/data';
 
 import { useStyles2 } from '../../themes/ThemeContext';
 
@@ -25,10 +26,15 @@ export interface TextProps extends Omit<React.HTMLAttributes<HTMLElement>, 'clas
   /** If true, numbers will have fixed width, useful for displaying tabular data. False by default */
   tabular?: boolean;
   /** Whether to align the text to left, center or right */
-  textAlignment?: CSSProperties['textAlign'];
+  textAlignment?: CSSObject['textAlign'];
   children: NonNullable<React.ReactNode>;
 }
 
+/**
+ * The Text component can be used to apply typography styles in a simple way, without the need of extra css.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/foundations-text--docs
+ */
 export const Text = React.forwardRef<HTMLElement, TextProps>(
   (
     { element = 'span', variant, weight, color, truncate, italic, textAlignment, children, tabular, ...restProps },

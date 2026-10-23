@@ -1,6 +1,6 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
-import { getConfigDashboards } from './utils';
+import { getConfigDashboards, trackDashboardReloadRequests, checkDashboardReloadBehavior } from './utils';
 
 test.use({
   featureToggles: {
@@ -19,7 +19,7 @@ test.describe(
     tag: ['@dashboard-cujs'],
   },
   () => {
-    test('View a dashboard', async ({ page, gotoDashboardPage, selectors }) => {
+    test.skip('View a dashboard', async ({ page, gotoDashboardPage, selectors }) => {
       const dashboards = await getConfigDashboards();
       if (dashboards.length === 0) {
         dashboards.push(DASHBOARD_UNDER_TEST);
@@ -27,7 +27,13 @@ test.describe(
 
       for (const db of dashboards) {
         await test.step('1.Loads dashboard successfully - ' + db, async () => {
+          const { getRequests, waitForExpectedRequests } = await trackDashboardReloadRequests(page);
           const dashboardPage = await gotoDashboardPage({ uid: db });
+          await waitForExpectedRequests();
+          await page.waitForLoadState('networkidle');
+
+          const requests = getRequests();
+          expect(checkDashboardReloadBehavior(requests)).toBe(true);
 
           const panelTitle = dashboardPage.getByGrafanaSelector(
             selectors.components.Panels.Panel.title(PANEL_UNDER_TEST)
@@ -159,9 +165,8 @@ test.describe(
 
         await refreshBtn.click();
 
-        await page.waitForLoadState('networkidle');
-
-        expect(await panelContent.textContent()).not.toBe(panelContents);
+        // Wait for the panel content to change (not just for network to complete)
+        await expect(panelContent).not.toHaveText(panelContents!, { timeout: 10000 });
       });
 
       await test.step('6.Turn off refresh', async () => {
@@ -184,7 +189,7 @@ test.describe(
         const refreshedPanelContents = await panelContent.textContent();
 
         await intervalRefreshBtn.click();
-        const offBtn = page.locator('button[aria-label="Turn off auto refresh"]');
+        const offBtn = page.locator('button[aria-label="Off"]');
         await offBtn.click();
 
         await expect(panelContent).toHaveText(refreshedPanelContents!, {

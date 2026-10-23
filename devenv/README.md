@@ -25,8 +25,9 @@ To remove the setup developer dashboards and data sources
 ./setup.sh undev
 ```
 
-After restarting the Grafana server, there should be a number of data sources named `gdev-<type>` provisioned as well as
-a dashboard folder named `gdev dashboards`. This folder contains dashboard and panel features tests dashboards.
+After restarting the Grafana server (`make run`), there should be a number of data sources named `gdev-<type>`
+provisioned as well as a dashboard folder named `gdev dashboards`. This folder contains dashboard and panel features
+tests dashboards.
 
 Please update these dashboards or make new ones as new panels and dashboards features are developed or new bugs are
 found. The dashboards are located in the `devenv/dev-dashboards` folder.
@@ -52,10 +53,6 @@ make devenv sources=postgres,auth/openldap,grafana postgres_version=9.2 grafana_
 #### Grafana
 
 The grafana block is pre-configured with the dev-datasources and dashboards.
-
-#### Tempo
-
-The tempo block runs loki and prometheus as well and should not be ran with prometheus as a separate source. You need to install a docker plugin for the self logging to work, without it the container won't start. See https://grafana.com/docs/loki/latest/clients/docker-driver/#installing for installation instructions.
 
 #### Jaeger
 
@@ -86,7 +83,7 @@ You can access the web UI at http://localhost:12080/#/
 
 ## Debugging setup in VS Code
 
-An example of launch.json is provided in `.vscode/launch.json`. It basically does what Makefile and .bra.toml do. The 'program' field is set to the folder name so VS Code loads all \*.go files in it instead of just main.go.
+An example of launch.json is provided in `.vscode/launch.json`. It basically does what Makefile and .air.toml do. The 'program' field is set to the folder name so VS Code loads all \*.go files in it instead of just main.go.
 
 ## Troubleshooting
 

@@ -22,6 +22,7 @@ type Service struct {
 	logger          log.Logger
 	resourceHandler backend.CallResourceHandler
 	HTTPClient      *http.Client
+	caps            caps
 }
 
 const (
@@ -35,6 +36,7 @@ func ProvideService(httpClientProvider *httpclient.Provider, tracer trace.Tracer
 		im:     datasource.NewInstanceManager(newInstanceSettings(httpClientProvider)),
 		tracer: tracer,
 		logger: logger,
+		caps:   loadCaps(),
 	}
 
 	s.resourceHandler = httpadapter.New(s.newResourceMux())
@@ -100,7 +102,7 @@ func (s *Service) CallResource(ctx context.Context, req *backend.CallResourceReq
 func (s *Service) createRequest(ctx context.Context, dsInfo *datasourceInfo, params URLParams) (*http.Request, error) {
 	u, err := url.Parse(dsInfo.URL)
 	if err != nil {
-		return nil, err
+		return nil, backend.DownstreamError(err)
 	}
 
 	if params.SubPath != "" {
@@ -125,7 +127,7 @@ func (s *Service) createRequest(ctx context.Context, dsInfo *datasourceInfo, par
 	req, err := http.NewRequestWithContext(ctx, method, u.String(), params.Body)
 	if err != nil {
 		s.logger.Info("Failed to create request", "error", err)
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, backend.PluginError(fmt.Errorf("failed to create request: %w", err))
 	}
 
 	for k, v := range params.Headers {

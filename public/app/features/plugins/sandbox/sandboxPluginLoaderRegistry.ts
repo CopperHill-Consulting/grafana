@@ -1,9 +1,9 @@
 import { PluginSignatureType } from '@grafana/data';
 import { config } from '@grafana/runtime';
-import { contextSrv } from 'app/core/core';
+import { getPluginSettings } from '@grafana/runtime/unstable';
+import { contextSrv } from 'app/core/services/context_srv';
 
 import { getPluginDetails } from '../admin/api';
-import { getPluginSettings } from '../pluginSettings';
 
 type SandboxEligibilityCheckParams = {
   pluginId: string;
@@ -35,11 +35,6 @@ export async function shouldLoadPluginInFrontendSandbox({ pluginId }: SandboxEli
  * It does not check if the plugin is actually enabled for the sandbox.
  */
 export async function isPluginFrontendSandboxEligible({ pluginId }: SandboxEligibilityCheckParams): Promise<boolean> {
-  // Only if the feature is not enabled no support for sandbox
-  if (!Boolean(config.featureToggles.pluginsFrontendSandbox)) {
-    return false;
-  }
-
   // To fast-test and debug the sandbox in the browser (dev mode only).
   const sandboxDisableQueryParam =
     window.location.search.includes('nosandbox') && config.buildInfo.env === 'development';
@@ -63,7 +58,7 @@ export async function isPluginFrontendSandboxEligible({ pluginId }: SandboxEligi
 async function isPluginSignatureEligibleForSandbox({ pluginId }: SandboxEligibilityCheckParams): Promise<boolean> {
   try {
     // this can fail if we are trying to fetch settings of a non-installed plugin
-    const pluginMeta = await getPluginSettings(pluginId, { showErrorAlert: false });
+    const pluginMeta = await getPluginSettings(pluginId, false);
     return pluginMeta.signatureType !== PluginSignatureType.grafana && pluginMeta.signature !== 'internal';
   } catch (e) {
     try {

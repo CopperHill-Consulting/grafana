@@ -6,19 +6,23 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/open-feature/go-sdk/openfeature"
+	"github.com/open-feature/go-sdk/openfeature/memprovider"
 	"github.com/stretchr/testify/require"
 
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/plugins"
-	"github.com/grafana/grafana/pkg/plugins/manager/fakes"
+	"github.com/grafana/grafana/pkg/plugins/manager/pluginfakes"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/managedplugins"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginchecker"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/provisionedplugins"
+	"github.com/grafana/grafana/pkg/setting"
 )
 
 type mockPluginPreinstall struct {
@@ -34,6 +38,7 @@ func TestPluginUpdateChecker_HasUpdate(t *testing.T) {
 		updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
 
 		svc := PluginsService{
+			log: log.New("test"),
 			availableUpdates: map[string]availableUpdate{
 				"test-ds": {
 					localVersion:     "0.9.0",
@@ -239,7 +244,63 @@ func TestPluginUpdateChecker_checkForUpdates(t *testing.T) {
 
 		require.Empty(t, svc.availableUpdates["test-core-panel"])
 	})
+
+	t.Run("sends the grafana.com token when configured", func(t *testing.T) {
+		updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
+		client := &fakeHTTPClient{fakeResp: "[]"}
+		svc := PluginsService{
+			availableUpdates: map[string]availableUpdate{},
+			pluginStore:      &pluginstore.FakePluginStore{},
+			httpClient:       client,
+			log:              log.NewNopLogger(),
+			tracer:           tracing.InitializeTracerForTest(),
+			updateCheckURL:   updateCheckURL,
+			updateCheckToken: "token",
+		}
+
+		err := svc.checkForUpdates(context.Background())
+		require.NoError(t, err)
+		require.Equal(t, "Bearer token", client.authHeader)
+	})
+
+	t.Run("does not send an authorization header without a token", func(t *testing.T) {
+		updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
+		client := &fakeHTTPClient{fakeResp: "[]"}
+		svc := PluginsService{
+			availableUpdates: map[string]availableUpdate{},
+			pluginStore:      &pluginstore.FakePluginStore{},
+			httpClient:       client,
+			log:              log.NewNopLogger(),
+			tracer:           tracing.InitializeTracerForTest(),
+			updateCheckURL:   updateCheckURL,
+		}
+
+		err := svc.checkForUpdates(context.Background())
+		require.NoError(t, err)
+		require.Empty(t, client.authHeader)
+	})
 }
+
+func TestProvidePluginsService(t *testing.T) {
+	t.Run("wires the grafana.com token and update check URL from the config", func(t *testing.T) {
+		cfg := &setting.Cfg{
+			GrafanaComAPIURL:        "https://grafana.com/api",
+			GrafanaComProxyAPIToken: "token",
+		}
+
+		svc, err := ProvidePluginsService(cfg,
+			&pluginstore.FakePluginStore{},
+			&pluginfakes.FakePluginInstaller{},
+			tracing.InitializeTracerForTest(),
+			&featuremgmt.FeatureManager{},
+			pluginchecker.ProvideService(managedplugins.NewNoop(), provisionedplugins.NewNoop(), &mockPluginPreinstall{}),
+		)
+		require.NoError(t, err)
+		require.Equal(t, "token", svc.updateCheckToken)
+		require.Equal(t, "https://grafana.com/api/plugins/versioncheck", svc.updateCheckURL.String())
+	})
+}
+
 func TestPluginUpdateChecker_updateAll(t *testing.T) {
 	t.Run("update is available", func(t *testing.T) {
 		pluginsFakeStore := map[string]string{}
@@ -262,7 +323,7 @@ func TestPluginUpdateChecker_updateAll(t *testing.T) {
 			availableUpdates: availableUpdates,
 			log:              log.NewNopLogger(),
 			tracer:           tracing.InitializeTracerForTest(),
-			pluginInstaller: &fakes.FakePluginInstaller{
+			pluginInstaller: &pluginfakes.FakePluginInstaller{
 				AddFunc: func(ctx context.Context, pluginID, version string, opts plugins.AddOpts) error {
 					pluginsFakeStore[pluginID] = version
 					return nil
@@ -289,14 +350,106 @@ type fakeHTTPClient struct {
 	fakeResp string
 
 	requestURL string
+	authHeader string
 }
 
 func (c *fakeHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	c.requestURL = req.URL.String()
+	c.authHeader = req.Header.Get("Authorization")
 
 	resp := &http.Response{
 		Body: io.NopCloser(strings.NewReader(c.fakeResp)),
 	}
 
 	return resp, nil
+}
+
+func TestPluginsService_PluginsAutoUpdateFlag(t *testing.T) {
+	updateCheckURL, _ := url.Parse("https://grafana.com/api/plugins/versioncheck")
+
+	tests := []struct {
+		name         string
+		flagEnabled  bool
+		expectUpdate bool
+	}{
+		{
+			name:         "pluginsAutoUpdate enabled calls updateAll",
+			flagEnabled:  true,
+			expectUpdate: true,
+		},
+		{
+			name:         "pluginsAutoUpdate disabled does not call updateAll",
+			flagEnabled:  false,
+			expectUpdate: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			setupOpenFeatureProvider(t, tt.flagEnabled)
+
+			updateCallCount := 0
+
+			availableUpdates := map[string]availableUpdate{
+				"test-plugin": {
+					localVersion:     "0.9.0",
+					availableVersion: "1.0.0",
+				},
+			}
+
+			svc := &PluginsService{
+				availableUpdates: availableUpdates,
+				httpClient: &fakeHTTPClient{
+					fakeResp: `[]`,
+				},
+				log:            log.NewNopLogger(),
+				tracer:         tracing.InitializeTracerForTest(),
+				updateCheckURL: updateCheckURL,
+				updateChecker:  pluginchecker.ProvideService(managedplugins.NewNoop(), provisionedplugins.NewNoop(), &mockPluginPreinstall{}),
+				pluginStore:    &pluginstore.FakePluginStore{PluginList: []pluginstore.Plugin{}},
+				pluginInstaller: &pluginfakes.FakePluginInstaller{
+					AddFunc: func(ctx context.Context, pluginID, version string, opts plugins.AddOpts) error {
+						updateCallCount++
+						return nil
+					},
+				},
+				grafanaVersion: "10.0.0",
+			}
+
+			ctx := context.Background()
+			// Test the synchronous initialization work directly, without the long-running ticker loop
+			svc.checkAndUpdate(ctx)
+
+			if tt.expectUpdate {
+				require.Equal(t, updateCallCount, 1, "updateAll should be called when flag is enabled")
+			} else {
+				require.Equal(t, 0, updateCallCount, "updateAll should not be called when flag is disabled")
+			}
+		})
+	}
+}
+
+var openfeatureTestMutex sync.Mutex
+
+func setupOpenFeatureProvider(t *testing.T, flagValue bool) {
+	t.Helper()
+	openfeatureTestMutex.Lock()
+
+	flag := memprovider.InMemoryFlag{Key: featuremgmt.FlagPluginsAutoUpdate, Variants: map[string]any{"": flagValue}}
+
+	staticFlags := map[string]memprovider.InMemoryFlag{
+		featuremgmt.FlagPluginsAutoUpdate: flag,
+	}
+
+	// Create static provider with Grafana's standard flags
+	provider, err := featuremgmt.CreateStaticProviderWithStandardFlags(staticFlags)
+	require.NoError(t, err)
+
+	err = openfeature.SetProviderAndWait(provider)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		_ = openfeature.SetProviderAndWait(openfeature.NoopProvider{})
+		openfeatureTestMutex.Unlock()
+	})
 }

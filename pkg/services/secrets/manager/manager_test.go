@@ -33,7 +33,7 @@ func TestMain(m *testing.M) {
 func TestIntegrationSecretsService_EnvelopeEncryption(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	testDB := db.InitTestDB(t)
+	testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	store := database.ProvideSecretsStore(testDB)
 	svc := SetupTestService(t, store)
 	ctx := context.Background()
@@ -87,7 +87,6 @@ func TestIntegrationSecretsService_EnvelopeEncryption(t *testing.T) {
 		reports, err := svc.usageStats.GetUsageReport(context.Background())
 		require.NoError(t, err)
 
-		assert.Equal(t, 1, reports.Metrics["stats.encryption.envelope_encryption_enabled.count"])
 		assert.Equal(t, 1, reports.Metrics["stats.encryption.current_provider.secretKey.count"])
 		assert.Equal(t, 1, reports.Metrics["stats.encryption.providers.secretKey.count"])
 	})
@@ -96,7 +95,7 @@ func TestIntegrationSecretsService_EnvelopeEncryption(t *testing.T) {
 func TestIntegrationSecretsService_DataKeys(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	testDB := db.InitTestDB(t)
+	testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	store := database.ProvideSecretsStore(testDB)
 	ctx := context.Background()
 
@@ -177,7 +176,7 @@ func TestIntegrationSecretsService_UseCurrentProvider(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
 	t.Run("When encryption_provider is not specified explicitly, should use 'secretKey' as a current provider", func(t *testing.T) {
-		testDB := db.InitTestDB(t)
+		testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 		svc := SetupTestService(t, database.ProvideSecretsStore(testDB))
 		assert.Equal(t, secrets.ProviderID("secretKey.v1"), svc.currentProviderID)
 	})
@@ -205,7 +204,7 @@ func TestIntegrationSecretsService_UseCurrentProvider(t *testing.T) {
 
 		features := featuremgmt.WithFeatures()
 		kms := newFakeKMS(osskmsproviders.ProvideService(encryptionService, cfg, features))
-		testDB := db.InitTestDB(t)
+		testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 		secretStore := database.ProvideSecretsStore(testDB)
 
 		secretsService, err := ProvideSecretsService(
@@ -270,7 +269,7 @@ func newFakeKMS(kms osskmsproviders.Service) fakeKMS {
 	}
 }
 
-func (f *fakeKMS) Provide() (map[secrets.ProviderID]secrets.Provider, error) {
+func (f *fakeKMS) Provide() (map[secrets.ProviderID]secrets.Provider, error) { //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
 	providers, err := f.kms.Provide()
 	if err != nil {
 		return providers, err
@@ -284,7 +283,7 @@ func TestIntegrationSecretsService_Run(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
 	ctx := context.Background()
-	testDB := db.InitTestDB(t)
+	testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	store := database.ProvideSecretsStore(testDB)
 	svc := SetupTestService(t, store)
 
@@ -336,7 +335,7 @@ func TestIntegrationSecretsService_ReEncryptDataKeys(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
 	ctx := context.Background()
-	testDB := db.InitTestDB(t)
+	testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	store := database.ProvideSecretsStore(testDB)
 	svc := SetupTestService(t, store)
 
@@ -385,7 +384,7 @@ func TestIntegrationSecretsService_Decrypt(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
 	ctx := context.Background()
-	testDB := db.InitTestDB(t)
+	testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	store := database.ProvideSecretsStore(testDB)
 
 	t.Run("empty payload should fail", func(t *testing.T) {
@@ -396,31 +395,6 @@ func TestIntegrationSecretsService_Decrypt(t *testing.T) {
 		assert.Equal(t, "unable to decrypt empty payload", err.Error())
 	})
 
-	t.Run("ee encrypted payload with ee disabled should fail", func(t *testing.T) {
-		svc := SetupTestService(t, store)
-		ciphertext, err := svc.Encrypt(ctx, []byte("grafana"), secrets.WithoutScope())
-		require.NoError(t, err)
-
-		svc = SetupDisabledTestService(t, store)
-
-		_, err = svc.Decrypt(ctx, ciphertext)
-		assert.Error(t, err)
-	})
-
-	t.Run("ee encrypted payload with providers initialized should work", func(t *testing.T) {
-		svc := SetupTestService(t, store)
-		ciphertext, err := svc.Encrypt(ctx, []byte("grafana"), secrets.WithoutScope())
-		require.NoError(t, err)
-
-		svc = SetupDisabledTestService(t, store)
-		err = svc.InitProviders()
-		require.NoError(t, err)
-
-		plaintext, err := svc.Decrypt(ctx, ciphertext)
-		assert.NoError(t, err)
-		assert.Equal(t, []byte("grafana"), plaintext)
-	})
-
 	t.Run("ee encrypted payload with ee enabled should work", func(t *testing.T) {
 		svc := SetupTestService(t, store)
 		ciphertext, err := svc.Encrypt(ctx, []byte("grafana"), secrets.WithoutScope())
@@ -429,20 +403,6 @@ func TestIntegrationSecretsService_Decrypt(t *testing.T) {
 		plaintext, err := svc.Decrypt(ctx, ciphertext)
 		assert.NoError(t, err)
 		assert.Equal(t, []byte("grafana"), plaintext)
-	})
-
-	t.Run("legacy payload should always work", func(t *testing.T) {
-		encrypted := []byte{122, 56, 53, 113, 101, 117, 73, 89, 20, 254, 36, 112, 112, 16, 128, 232, 227, 52, 166, 108, 192, 5, 28, 125, 126, 42, 197, 190, 251, 36, 94}
-
-		svc := SetupTestService(t, store)
-		decrypted, err := svc.Decrypt(context.Background(), encrypted)
-		require.NoError(t, err)
-		assert.Equal(t, []byte("grafana"), decrypted)
-
-		svc = SetupDisabledTestService(t, store)
-		decrypted, err = svc.Decrypt(context.Background(), encrypted)
-		require.NoError(t, err)
-		assert.Equal(t, []byte("grafana"), decrypted)
 	})
 }
 
@@ -540,7 +500,7 @@ func TestIntegration_SecretsService(t *testing.T) {
 
 	for name, tc := range tcs {
 		t.Run(name, func(t *testing.T) {
-			testDB := db.InitTestDB(t)
+			testDB := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 			svc := SetupTestService(t, database.ProvideSecretsStore(testDB))
 
 			// Here's what actually matters and varies on each test: look at the test case name.

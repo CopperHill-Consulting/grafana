@@ -36,7 +36,7 @@ func NewOAuthStrategy(cfg *setting.Cfg) *OAuthStrategy {
 	return oauthStrategy
 }
 
-func (s *OAuthStrategy) IsMatch(provider string) bool {
+func (s *OAuthStrategy) IsMatch(_ context.Context, provider string) bool {
 	_, ok := s.settingsByProvider[provider]
 	return ok
 }
@@ -81,6 +81,7 @@ func (s *OAuthStrategy) loadSettingsForProvider(provider string) map[string]any 
 		"auth_style":                    section.Key("auth_style").Value(),
 		"auth_url":                      section.Key("auth_url").Value(),
 		"token_url":                     section.Key("token_url").Value(),
+		"token_exchange_timeout":        section.Key("token_exchange_timeout").MustInt(15),
 		"api_url":                       section.Key("api_url").Value(),
 		"teams_url":                     section.Key("teams_url").Value(),
 		"enabled":                       section.Key("enabled").MustBool(false),
@@ -109,6 +110,8 @@ func (s *OAuthStrategy) loadSettingsForProvider(provider string) map[string]any 
 		"org_mapping":                   section.Key("org_mapping").Value(),
 		"org_attribute_path":            section.Key("org_attribute_path").Value(),
 		"login_prompt":                  section.Key("login_prompt").Value(),
+		"validate_id_token":             section.Key("validate_id_token").MustBool(false),
+		"jwk_set_url":                   section.Key("jwk_set_url").Value(),
 	}
 
 	extraKeys := extraKeysByProvider[provider]

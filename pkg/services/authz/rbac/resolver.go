@@ -14,13 +14,20 @@ import (
 type ScopeResolverFunc func(scope string) (string, error)
 
 func (s *Service) fetchServiceAccounts(ctx context.Context, ns types.NamespaceInfo) (map[int64]string, error) {
-	serviceAccounts, err := s.identityStore.ListServiceAccounts(ctx, ns, legacy.ListServiceAccountsQuery{})
-	if err != nil {
-		return nil, fmt.Errorf("could not fetch service accounts: %w", err)
-	}
-	saIDs := make(map[int64]string, len(serviceAccounts.Items))
-	for _, sa := range serviceAccounts.Items {
-		saIDs[sa.ID] = sa.UID
+	saIDs := make(map[int64]string)
+	query := legacy.ListServiceAccountsQuery{}
+	for {
+		serviceAccounts, err := s.identityStore.ListServiceAccounts(ctx, ns, query)
+		if err != nil {
+			return nil, fmt.Errorf("could not fetch service accounts: %w", err)
+		}
+		for _, sa := range serviceAccounts.Items {
+			saIDs[sa.ID] = sa.UID
+		}
+		if serviceAccounts.Continue == 0 {
+			break
+		}
+		query.Pagination.Continue = serviceAccounts.Continue
 	}
 	return saIDs, nil
 }
@@ -54,13 +61,20 @@ func (s *Service) newServiceAccountNameResolver(ctx context.Context, ns types.Na
 func (s *Service) fetchTeams(ctx context.Context, ns types.NamespaceInfo) (map[int64]string, error) {
 	key := teamIDsCacheKey(ns.Value)
 	res, err, _ := s.sf.Do(key, func() (any, error) {
-		teams, err := s.identityStore.ListTeams(ctx, ns, legacy.ListTeamQuery{})
-		if err != nil {
-			return nil, fmt.Errorf("could not fetch teams: %w", err)
-		}
-		teamIDs := make(map[int64]string, len(teams.Teams))
-		for _, team := range teams.Teams {
-			teamIDs[team.ID] = team.UID
+		teamIDs := make(map[int64]string)
+		query := legacy.ListTeamQuery{}
+		for {
+			teams, err := s.identityStore.ListTeams(ctx, ns, query)
+			if err != nil {
+				return nil, fmt.Errorf("could not fetch teams: %w", err)
+			}
+			for _, team := range teams.Teams {
+				teamIDs[team.ID] = team.UID
+			}
+			if teams.Continue == 0 {
+				break
+			}
+			query.Pagination.Continue = teams.Continue
 		}
 		return teamIDs, nil
 	})
@@ -120,13 +134,20 @@ func (s *Service) newTeamNameResolver(ctx context.Context, ns types.NamespaceInf
 }
 
 func (s *Service) fetchUsers(ctx context.Context, ns types.NamespaceInfo) (map[int64]string, error) {
-	users, err := s.identityStore.ListUsers(ctx, ns, legacy.ListUserQuery{})
-	if err != nil {
-		return nil, fmt.Errorf("could not fetch users: %w", err)
-	}
-	userIDs := make(map[int64]string, len(users.Items))
-	for _, user := range users.Items {
-		userIDs[user.ID] = user.UID
+	userIDs := make(map[int64]string)
+	query := legacy.ListUserQuery{}
+	for {
+		users, err := s.identityStore.ListUsers(ctx, ns, query)
+		if err != nil {
+			return nil, fmt.Errorf("could not fetch users: %w", err)
+		}
+		for _, user := range users.Items {
+			userIDs[user.ID] = user.UID
+		}
+		if users.Continue == 0 {
+			break
+		}
+		query.Pagination.Continue = users.Continue
 	}
 	return userIDs, nil
 }
@@ -157,21 +178,24 @@ func (s *Service) newUserNameResolver(ctx context.Context, ns types.NamespaceInf
 	}, nil
 }
 
-func permissionsDelegateResolverFunc(scope string) (string, error) {
-	if strings.TrimPrefix(scope, "permissions:type:") == "delegate" {
-		// The permissions:type:delegate scope does not have any discriminating value,
-		// so we return a wildcard to indicate that it applies to all roles.
+func permissionsTypeResolverFunc(scope string) (string, error) {
+	switch strings.TrimPrefix(scope, "permissions:type:") {
+	case "delegate":
 		return "*", nil
+	case "escalate":
+		return "", nil
+	default:
+		return "", fmt.Errorf("unsupported scope: %s", scope)
 	}
-	return "", fmt.Errorf("unsupported scope: %s", scope)
 }
 
 func (s *Service) nameResolver(ctx context.Context, ns types.NamespaceInfo, scopePrefix string) (ScopeResolverFunc, error) {
 	if scopePrefix == "teams:id:" {
 		return s.newTeamNameResolver(ctx, ns)
 	}
+
 	if scopePrefix == "permissions:type:" {
-		return permissionsDelegateResolverFunc, nil
+		return permissionsTypeResolverFunc, nil
 	}
 	if scopePrefix == "serviceaccounts:id:" {
 		return s.newServiceAccountNameResolver(ctx, ns)
@@ -223,7 +247,12 @@ func (s *Service) resolveScopeMap(ctx context.Context, ns types.NamespaceInfo, s
 		}
 		if resolved != "" {
 			scopeMap[resolved] = true
-			delete(scopeMap, scope)
+			// Keep permissions:type:* literals alongside their resolved value.
+			// delegate resolves to "*" for the roles resource, but the permissions resource
+			// skips wildcards (SkipWildcard) to block privilege escalation
+			if !strings.HasPrefix(scope, "permissions:type:") {
+				delete(scopeMap, scope)
+			}
 		}
 	}
 	return scopeMap, nil

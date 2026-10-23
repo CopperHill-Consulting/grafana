@@ -8,6 +8,7 @@ import (
 	"github.com/grafana/grafana-app-sdk/logging"
 	advisor "github.com/grafana/grafana/apps/advisor/pkg/apis/advisor/v0alpha1"
 	"github.com/grafana/grafana/apps/advisor/pkg/app/checks"
+	"github.com/grafana/grafana/apps/advisor/pkg/translations"
 	"github.com/grafana/grafana/pkg/plugins/repo"
 	"github.com/grafana/grafana/pkg/services/datasources"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
@@ -15,20 +16,20 @@ import (
 
 type missingPluginStep struct {
 	PluginStore    pluginstore.Store
-	PluginRepo     repo.Service
+	PluginRepo     checks.PluginInfoGetter
 	GrafanaVersion string
 }
 
 func (s *missingPluginStep) Title() string {
-	return "Missing plugin check"
+	return translations.StepTitle(CheckID, MissingPluginStepID)
 }
 
 func (s *missingPluginStep) Description() string {
-	return "Checks if the plugin associated with the data source is installed and available."
+	return translations.StepDescription(CheckID, MissingPluginStepID)
 }
 
 func (s *missingPluginStep) Resolution() string {
-	return "Delete the datasource or install the plugin."
+	return translations.StepResolution(CheckID, MissingPluginStepID)
 }
 
 func (s *missingPluginStep) ID() string {
@@ -44,13 +45,10 @@ func (s *missingPluginStep) Run(ctx context.Context, log logging.Logger, obj *ad
 	_, exists := s.PluginStore.Plugin(ctx, ds.Type)
 	if !exists {
 		links := []advisor.CheckErrorLink{
-			{
-				Message: "Delete data source",
-				Url:     fmt.Sprintf("/connections/datasources/edit/%s", ds.UID),
-			},
+			checks.NewErrorLink("delete-data-source", fmt.Sprintf("/connections/datasources/edit/%s", ds.UID)),
 		}
 		plugins, err := s.PluginRepo.GetPluginsInfo(ctx, repo.GetPluginsInfoOptions{
-			IncludeDeprecated: true,
+			IncludeDeprecated: false, // Deprecated plugins are not visible in the catalog
 			Plugins:           []string{ds.Type},
 		}, repo.NewCompatOpts(s.GrafanaVersion, sysruntime.GOOS, sysruntime.GOARCH))
 		if err != nil {
@@ -58,10 +56,7 @@ func (s *missingPluginStep) Run(ctx context.Context, log logging.Logger, obj *ad
 		}
 		if len(plugins) > 0 {
 			// Plugin is available in the repo
-			links = append(links, advisor.CheckErrorLink{
-				Message: "View plugin",
-				Url:     fmt.Sprintf("/plugins/%s", ds.Type),
-			})
+			links = append(links, checks.NewErrorLink("view-plugin", fmt.Sprintf("/plugins/%s", ds.Type)))
 		}
 		// The plugin is not installed
 		return []advisor.CheckReportFailure{checks.NewCheckReportFailureWithMoreInfo(

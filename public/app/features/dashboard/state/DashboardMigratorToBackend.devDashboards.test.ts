@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'fs';
 import path from 'path';
 
 import { variableAdapters } from 'app/features/variables/adapters';
@@ -12,11 +12,7 @@ import { createTextBoxVariableAdapter } from 'app/features/variables/textbox/ada
 
 import { DASHBOARD_SCHEMA_VERSION } from './DashboardMigrator';
 import { DashboardModel } from './DashboardModel';
-import {
-  setupDevDashboardDataSources,
-  handleAngularPanelMigration,
-  constructLatestVersionOutputFilename,
-} from './__tests__/migrationTestUtils';
+import { setupDevDashboardDataSources, constructLatestVersionOutputFilename } from './__tests__/migrationTestUtils';
 
 /*
  * Dev Dashboard Backend / Frontend Migration Comparison Test
@@ -68,8 +64,20 @@ describe('Dev Dashboard Backend / Frontend result comparison', () => {
     setupDevDashboardDataSources();
   });
 
-  const devDashboardInputDir = '../../../../../devenv/dev-dashboards';
+  // Read the preserved v1 corpus, not devenv/dev-dashboards: the provisioned devenv set
+  // is now v2-schema (no top-level schemaVersion) and would be skipped, silently voiding
+  // this parity check. The corpus is the v1 input the backend goldens were generated from.
+  const devDashboardInputDir = '../../../../../apps/dashboard/pkg/migration/testdata/v1_dev_dashboards';
   const devDashboardOutputDir = '../../../../../apps/dashboard/pkg/migration/testdata/dev-dashboards-output';
+
+  beforeAll(() => {
+    const outputDirAbsolute = path.join(__dirname, devDashboardOutputDir);
+    if (!existsSync(outputDirAbsolute)) {
+      throw new Error(
+        `Golden files not found at ${outputDirAbsolute}. Run "make generate-golden-files" from apps/dashboard/ to generate them.`
+      );
+    }
+  });
 
   // Find all JSON files in dev-dashboards directory
   const devDashboardFiles = findJSONFiles(path.join(__dirname, devDashboardInputDir));
@@ -99,6 +107,7 @@ describe('Dev Dashboard Backend / Frontend result comparison', () => {
       );
       const backendOutputWithSuffix = path.join(path.dirname(backendOutputPath), backendOutputFilename);
       const backendMigrationResult = JSON.parse(readFileSync(backendOutputWithSuffix, 'utf8'));
+      delete backendMigrationResult.id; // Remove id to match frontend behavior
 
       expect(backendMigrationResult.schemaVersion).toEqual(DASHBOARD_SCHEMA_VERSION);
 
@@ -106,9 +115,6 @@ describe('Dev Dashboard Backend / Frontend result comparison', () => {
       const frontendModel = new DashboardModel(jsonInput, undefined, {
         getVariablesFromState: () => jsonInput?.templating?.list ?? [],
       });
-
-      // Handle angular panel migration if needed
-      await handleAngularPanelMigration(frontendModel, jsonInput.schemaVersion, DASHBOARD_SCHEMA_VERSION);
 
       const frontendMigrationResult = frontendModel.getSaveModelClone();
 

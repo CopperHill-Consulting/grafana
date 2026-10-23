@@ -1,26 +1,32 @@
 import { css } from '@emotion/css';
-import { useEffect } from 'react';
+import { memo, useEffect } from 'react';
 import { Controller, useFormContext } from 'react-hook-form';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { t } from '@grafana/i18n';
 import { Box, Card, Field, Input, LoadingPlaceholder, Stack, Text, useStyles2 } from '@grafana/ui';
-import { RepositoryViewList } from 'app/api/clients/provisioning/v0alpha1';
+import { type RepositoryViewList } from 'app/api/clients/provisioning/v0alpha1';
+import { isOnPrem } from 'app/core/utils/isOnPrem';
 import { generateRepositoryTitle } from 'app/features/provisioning/utils/data';
+
+import { QuotaLimitNote } from '../Shared/QuotaLimitNote';
+import { CONFIGURE_GRAFANA_DOCS_URL, UPGRADE_URL } from '../constants';
 
 import { BootstrapStepCardIcons } from './BootstrapStepCardIcons';
 import { BootstrapStepResourceCounting } from './BootstrapStepResourceCounting';
 import { useStepStatus } from './StepStatusContext';
 import { useModeOptions } from './hooks/useModeOptions';
+import { useRepositoryStatus } from './hooks/useRepositoryStatus';
 import { useResourceStats } from './hooks/useResourceStats';
-import { WizardFormData } from './types';
+import { type WizardFormData } from './types';
 
 export interface Props {
   settingsData?: RepositoryViewList;
   repoName: string;
 }
 
-export function BootstrapStep({ settingsData, repoName }: Props) {
+export const BootstrapStep = memo(function BootstrapStep({ settingsData, repoName }: Props) {
   const { setStepStatusInfo } = useStepStatus();
   const {
     register,
@@ -28,32 +34,117 @@ export function BootstrapStep({ settingsData, repoName }: Props) {
     setValue,
     watch,
     getValues,
-    formState: { errors },
+    formState: { errors, dirtyFields },
   } = useFormContext<WizardFormData>();
 
   const selectedTarget = watch('repository.sync.target');
   const repositoryType = watch('repository.type');
-  const options = useModeOptions(repoName, settingsData);
-  const { target } = options[0];
-  const { resourceCountString, fileCountString, isLoading } = useResourceStats(repoName, settingsData?.legacyStorage);
+  const { enabledOptions } = useModeOptions(repoName, settingsData);
+  const { target } = enabledOptions?.[0];
+
+  const {
+    isReady: isRepositoryReady,
+    isLoading: isRepositoryStatusLoading,
+    hasError: repositoryStatusError,
+    refetch: retryRepositoryStatus,
+    isHealthy,
+    isUnhealthy,
+    healthStatusNotReady,
+    quota,
+  } = useRepositoryStatus(repoName);
+
+  const {
+    resourceCountString,
+    fileCountString,
+    fileCount,
+    isLoading: isResourceStatsLoading,
+  } = useResourceStats(repoName, selectedTarget, undefined, { isHealthy, healthStatusNotReady });
+
+  const maxResourcesPerRepository = quota?.maxResourcesPerRepository ?? 0;
   const styles = useStyles2(getStyles);
 
-  useEffect(() => {
-    // Pick a name nice name based on type+settings
-    const repository = getValues('repository');
-    const title = generateRepositoryTitle(repository);
-    setValue('repository.title', title);
-  }, [getValues, setValue]);
+  const isLoading = isRepositoryStatusLoading || isResourceStatsLoading || !isRepositoryReady;
+  const isQuotaWarning = !isLoading && maxResourcesPerRepository > 0 && fileCount > maxResourcesPerRepository;
 
   useEffect(() => {
-    setStepStatusInfo({ status: isLoading ? 'running' : 'idle' });
-  }, [isLoading, setStepStatusInfo]);
+    // Pick a nice name based on type+settings, but only if user hasn't modified it
+    if (!dirtyFields.repository?.title) {
+      const repository = getValues('repository');
+      const title = generateRepositoryTitle(repository);
+      setValue('repository.title', title);
+    }
+  }, [getValues, setValue, dirtyFields.repository?.title]);
+
+  useEffect(() => {
+    // TODO: improve error handling base on BE response, leverage "fieldErrors" when available
+    // Only show error if: query error, OR unhealthy (already reconciled)
+    if (repositoryStatusError || isUnhealthy) {
+      setStepStatusInfo({
+        status: 'error',
+        error: {
+          title: t(
+            'provisioning.bootstrap-step.error-repository-status-unhealthy-title',
+            'Repository status unhealthy'
+          ),
+          message: t(
+            'provisioning.bootstrap-step.error-repository-status-unhealthy-message',
+            'There was an issue connecting to the repository. Please check the repository settings and try again.'
+          ),
+        },
+        action: {
+          label: t('provisioning.bootstrap-step.retry-action', 'Retry'),
+          onClick: retryRepositoryStatus,
+        },
+      });
+    } else if (isQuotaWarning) {
+      const onPrem = isOnPrem();
+      setStepStatusInfo({
+        status: 'warning',
+        warning: {
+          title: t('provisioning.bootstrap-step.warning-quota-may-exceed-title', 'Resource limit may be exceeded'),
+          message: onPrem
+            ? t(
+                'provisioning.bootstrap-step.warning-quota-may-exceed-message-onprem',
+                'This repository folder contains approximately {{fileCount}} resources, which may exceed your instance limit of {{limit}}. If the limit is reached during sync, some resources will be skipped. You can continue and adjust later, or update your Grafana configuration.',
+                { fileCount, limit: maxResourcesPerRepository }
+              )
+            : t(
+                'provisioning.bootstrap-step.warning-quota-may-exceed-message',
+                'This repository folder contains approximately {{fileCount}} resources, which may exceed your account limit of {{limit}}. If the limit is reached during sync, some resources will be skipped. You can continue and adjust later, or upgrade your account.',
+                { fileCount, limit: maxResourcesPerRepository }
+              ),
+        },
+        action: onPrem
+          ? {
+              label: t('provisioning.bootstrap-step.update-configuration-action', 'View configuration docs'),
+              href: CONFIGURE_GRAFANA_DOCS_URL,
+              external: true,
+            }
+          : {
+              label: t('provisioning.bootstrap-step.upgrade-action', 'Upgrade account'),
+              href: UPGRADE_URL,
+              external: true,
+            },
+      });
+    } else {
+      setStepStatusInfo({ status: isLoading ? 'running' : 'idle' });
+    }
+  }, [
+    isLoading,
+    setStepStatusInfo,
+    repositoryStatusError,
+    retryRepositoryStatus,
+    maxResourcesPerRepository,
+    isQuotaWarning,
+    fileCount,
+    isUnhealthy,
+  ]);
 
   useEffect(() => {
     setValue('repository.sync.target', target);
   }, [target, setValue]);
 
-  if (isLoading) {
+  if (!repositoryStatusError && isLoading) {
     return (
       <Box padding={4}>
         <LoadingPlaceholder
@@ -61,6 +152,12 @@ export function BootstrapStep({ settingsData, repoName }: Props) {
         />
       </Box>
     );
+  }
+
+  // Only show error state if: query error, OR unhealthy (already reconciled)
+  if (repositoryStatusError || isUnhealthy) {
+    // error message and retry will be set in above step status
+    return null;
   }
 
   return (
@@ -71,14 +168,17 @@ export function BootstrapStep({ settingsData, repoName }: Props) {
           control={control}
           render={({ field: { ref, onChange, ...field } }) => (
             <>
-              {options.map((action) => (
+              {enabledOptions?.map((action) => (
                 <Card
                   key={action.target}
                   isSelected={action.target === selectedTarget}
                   onClick={() => {
-                    onChange(action.target);
+                    if (!action.disabled) {
+                      onChange(action.target);
+                    }
                   }}
                   noMargin
+                  disabled={action.disabled}
                   {...field}
                 >
                   <Card.Heading>
@@ -93,12 +193,11 @@ export function BootstrapStep({ settingsData, repoName }: Props) {
                     <Stack direction="column" gap={3}>
                       {action.description}
                       <Text color="primary">{action.subtitle}</Text>
+                      <QuotaLimitNote maxResourcesPerRepository={maxResourcesPerRepository} />
                     </Stack>
-
                     <div className={styles.divider} />
 
                     <BootstrapStepResourceCounting
-                      target={action.target}
                       fileCountString={fileCountString}
                       resourceCountString={resourceCountString}
                     />
@@ -115,7 +214,7 @@ export function BootstrapStep({ settingsData, repoName }: Props) {
             label={t('provisioning.bootstrap-step.label-display-name', 'Display name')}
             description={t(
               'provisioning.bootstrap-step.description-clear-repository-connection',
-              'Add a clear name for this repository connection'
+              'This name will be used for the repository connection and the folder displayed in the UI'
             )}
             error={errors.repository?.title?.message}
             invalid={!!errors.repository?.title}
@@ -124,6 +223,7 @@ export function BootstrapStep({ settingsData, repoName }: Props) {
           >
             <Input
               id="repository-title"
+              data-testid={selectors.pages.Provisioning.Wizard.repositoryTitleInput}
               {...register('repository.title', {
                 required: t('provisioning.bootstrap-step.error-field-required', 'This field is required.'),
               })}
@@ -132,14 +232,14 @@ export function BootstrapStep({ settingsData, repoName }: Props) {
                 'My repository connection'
               )}
               // Autofocus the title field if it's the only available option
-              autoFocus={options.length === 1 && options[0].target === 'folder'}
+              autoFocus={enabledOptions?.length === 1 && enabledOptions[0]?.target === 'folder'}
             />
           </Field>
         )}
       </Stack>
     </Stack>
   );
-}
+});
 
 const getStyles = (theme: GrafanaTheme2) => ({
   divider: css({

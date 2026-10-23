@@ -16,4 +16,23 @@ describe('Pagination component', () => {
     expect(screen.getAllByRole('button')).toHaveLength(9);
     expect(screen.getAllByTestId('pagination-ellipsis-icon')).toHaveLength(2);
   });
+  it('should only render the page number if number of pages is 0', () => {
+    render(<Pagination currentPage={8} numberOfPages={0} onNavigate={() => {}} />);
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getAllByRole('button')[1]).toBeEnabled();
+    expect(screen.getByText('8')).toBeVisible();
+  });
+  it('should disable the next page button if hasNextPage is false', () => {
+    render(<Pagination currentPage={8} numberOfPages={0} onNavigate={() => {}} hasNextPage={false} />);
+    expect(screen.getAllByRole('button')).toHaveLength(2);
+    expect(screen.getAllByRole('button')[0]).toBeEnabled();
+    expect(screen.getAllByRole('button')[1]).toBeDisabled();
+  });
+  it('should mark only the current page button with aria-current', () => {
+    render(<Pagination currentPage={2} numberOfPages={3} onNavigate={() => {}} />);
+    const currentPageButton = screen.getByRole('button', { name: '2' });
+    expect(currentPageButton).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('button', { name: '1' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('button', { name: '3' })).not.toHaveAttribute('aria-current');
+  });
 });

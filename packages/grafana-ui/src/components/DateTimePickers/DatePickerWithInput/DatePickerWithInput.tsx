@@ -1,15 +1,15 @@
 import { css } from '@emotion/css';
 import { autoUpdate, useClick, useDismiss, useFloating, useInteractions } from '@floating-ui/react';
-import { ChangeEvent, forwardRef, useImperativeHandle, useState } from 'react';
+import { type ChangeEvent, forwardRef, useImperativeHandle, useState } from 'react';
 
-import { GrafanaTheme2, dateTime } from '@grafana/data';
+import { type GrafanaTheme2, dateTime } from '@grafana/data';
 
 import { useStyles2 } from '../../../themes/ThemeContext';
 import { getPositioningMiddleware } from '../../../utils/floating';
-import { Props as InputProps, Input } from '../../Input/Input';
+import { type Props as InputProps, Input } from '../../Input/Input';
 import { DatePicker } from '../DatePicker/DatePicker';
 
-export const formatDate = (date: Date | string) => dateTime(date).format('L');
+const formatDate = (date: Date | string) => dateTime(date).format('L');
 
 /** @public */
 export interface DatePickerWithInputProps extends Omit<InputProps, 'value' | 'onChange'> {
@@ -27,7 +27,12 @@ export interface DatePickerWithInputProps extends Omit<InputProps, 'value' | 'on
   placeholder?: string;
 }
 
-/** @public */
+/**
+ * An input with a calendar view, used to select a date.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/date-time-pickers-datepickerwithinput--docs
+ * @public
+ */
 export const DatePickerWithInput = forwardRef<HTMLInputElement, DatePickerWithInputProps>(
   ({ value, minDate, maxDate, onChange, closeOnSelect, placeholder = 'Date', ...rest }, ref) => {
     const [open, setOpen] = useState(false);

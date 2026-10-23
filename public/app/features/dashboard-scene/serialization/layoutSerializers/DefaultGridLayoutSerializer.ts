@@ -1,19 +1,19 @@
-import { SceneGridItemLike, SceneGridLayout, VizPanel } from '@grafana/scenes';
+import { type SceneGridItemLike, SceneGridLayout, VizPanel } from '@grafana/scenes';
 import {
-  Spec as DashboardV2Spec,
-  GridLayoutItemKind,
-  GridLayoutKind,
-  RepeatOptions,
-  Element,
-  GridLayoutItemSpec,
-  PanelKind,
-  LibraryPanelKind,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
+  type Spec as DashboardV2Spec,
+  type GridLayoutItemKind,
+  type GridLayoutKind,
+  type RepeatOptions,
+  type Element,
+  type GridLayoutItemSpec,
+  type PanelKind,
+  type LibraryPanelKind,
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
 
 import { DashboardGridItem } from '../../scene/layout-default/DashboardGridItem';
 import { DefaultGridLayoutManager } from '../../scene/layout-default/DefaultGridLayoutManager';
 import { getIsLazy } from '../../scene/layouts-shared/utils';
-import { dashboardSceneGraph } from '../../utils/dashboardSceneGraph';
+import { dashboardSceneGraph, type PanelIdGenerator } from '../../utils/dashboardSceneGraph';
 import { calculateGridItemDimensions, isLibraryPanel } from '../../utils/utils';
 
 import { buildLibraryPanel, buildVizPanel } from './utils';
@@ -34,7 +34,7 @@ export function deserializeDefaultGridLayout(
   layout: DashboardV2Spec['layout'],
   elements: DashboardV2Spec['elements'],
   preload: boolean,
-  panelIdGenerator?: () => number
+  panelIdGenerator?: PanelIdGenerator
 ): DefaultGridLayoutManager {
   if (layout.kind !== 'GridLayout') {
     throw new Error('Invalid layout kind');
@@ -55,7 +55,7 @@ function getGridLayoutItems(body: DefaultGridLayoutManager, isSnapshot?: boolean
       if (child.state.variableName) {
         items = items.concat(repeaterToLayoutItems(child, isSnapshot));
       } else {
-        items.push(gridItemToGridLayoutItemKind(child));
+        items.push(gridItemToGridLayoutItemKind(child, undefined, isSnapshot));
       }
     }
   }
@@ -63,7 +63,11 @@ function getGridLayoutItems(body: DefaultGridLayoutManager, isSnapshot?: boolean
   return items;
 }
 
-export function gridItemToGridLayoutItemKind(gridItem: DashboardGridItem, yOverride?: number): GridLayoutItemKind {
+export function gridItemToGridLayoutItemKind(
+  gridItem: DashboardGridItem,
+  yOverride?: number,
+  isSnapshot = false
+): GridLayoutItemKind {
   let elementGridItem: GridLayoutItemKind | undefined;
   let x = 0,
     y = 0,
@@ -83,8 +87,11 @@ export function gridItemToGridLayoutItemKind(gridItem: DashboardGridItem, yOverr
   width = gridItem_.state.width ?? 0;
   const repeatVar = gridItem_.state.variableName;
 
-  // For serialization we should retrieve the original element key
-  let elementKey = dashboardSceneGraph.getElementIdentifierForVizPanel(gridItem_.state.body);
+  // For serialization we should retrieve the original element key. In snapshot mode we must also
+  // disambiguate panels that live inside a repeated row/tab clone (they reuse the source keys).
+  let elementKey = isSnapshot
+    ? dashboardSceneGraph.getSnapshotElementIdentifierForVizPanel(gridItem_.state.body)
+    : dashboardSceneGraph.getElementIdentifierForVizPanel(gridItem_.state.body);
 
   elementGridItem = {
     kind: 'GridLayoutItem',
@@ -135,20 +142,43 @@ function repeaterToLayoutItems(repeater: DashboardGridItem, isSnapshot = false):
       return [];
     }
 
-    if (repeater.state.repeatedPanels) {
+    const vizPanels = [repeater.state.body, ...(repeater.state.repeatedPanels ?? [])];
+
+    // Fall back to serializing the source panel only (no clones to expand). Pass isSnapshot so the element
+    // reference is resolved with the same (clone-row-aware) key that getElements uses — otherwise a
+    // single-value repeater inside a repeated row clone would reference a non-prefixed key that isn't
+    // present in `elements`.
+    if (vizPanels.length === 1) {
+      const item = gridItemToGridLayoutItemKind(repeater, undefined, isSnapshot);
+      // If the repeat has already run (materialized — `repeatedPanels` is defined, even if empty for a
+      // single value), strip the repeat directive: the panel is baked and the viewer must not re-expand it
+      // (which could collapse back to "All"). If it hasn't run yet (`undefined`), keep it as a fallback.
+      if (repeater.state.repeatedPanels !== undefined) {
+        delete item.spec.repeat;
+      }
+      return [item];
+    }
+
+    if (vizPanels.length > 1) {
       const { h, w, columnCount } = calculateGridItemDimensions(repeater);
-      const panels = repeater.state.repeatedPanels!.map((panel, index) => {
+      const panels = vizPanels.map((panel, index) => {
         let x = 0,
           y = 0;
         if (repeater.state.repeatDirection === 'v') {
-          x = repeater.state.x!;
-          y = index * h;
+          x = repeater.state.x ?? 0;
+          y = (repeater.state.y ?? 0) + index * h;
         } else {
-          x = (index % columnCount) * w;
-          y = repeater.state.y! + Math.floor(index / columnCount) * h;
+          x = (repeater.state.x ?? 0) + (index % columnCount) * w;
+          y = (repeater.state.y ?? 0) + Math.floor(index / columnCount) * h;
         }
 
         const gridPos = { x, y, w, h };
+
+        if (panel.state.repeatSourceKey && !panel.state.key) {
+          throw new Error('Snapshot serialization expected repeat clone to have a key');
+        }
+
+        const elementName = dashboardSceneGraph.getSnapshotElementIdentifierForVizPanel(panel);
 
         const result: GridLayoutItemKind = {
           kind: 'GridLayoutItem',
@@ -157,15 +187,9 @@ function repeaterToLayoutItems(repeater: DashboardGridItem, isSnapshot = false):
             y: gridPos.y,
             width: gridPos.w,
             height: gridPos.h,
-            repeat: {
-              mode: 'variable',
-              value: repeater.state.variableName!,
-              maxPerRow: repeater.getMaxPerRow(),
-              direction: repeater.state.repeatDirection,
-            },
             element: {
               kind: 'ElementReference',
-              name: panel.state.key!,
+              name: elementName,
             },
           },
         };
@@ -181,7 +205,7 @@ function repeaterToLayoutItems(repeater: DashboardGridItem, isSnapshot = false):
 function createSceneGridLayoutForItems(
   layout: GridLayoutKind,
   elements: Record<string, Element>,
-  panelIdGenerator?: () => number
+  panelIdGenerator?: PanelIdGenerator
 ): SceneGridItemLike[] {
   const gridItems = layout.spec.items;
 
@@ -223,7 +247,7 @@ function buildGridItem(
 export function deserializeGridItem(
   item: GridLayoutItemKind,
   elements: DashboardV2Spec['elements'],
-  panelIdGenerator?: () => number
+  panelIdGenerator?: PanelIdGenerator
 ): DashboardGridItem {
   const panel = elements[item.spec.element.name];
 

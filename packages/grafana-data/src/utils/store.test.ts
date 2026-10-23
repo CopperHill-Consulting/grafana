@@ -1,4 +1,4 @@
-import { Store } from './store';
+import { store, Store } from './store';
 
 describe('Store', () => {
   let store: Store;
@@ -13,6 +13,15 @@ describe('Store', () => {
             return (key: string) => {
               delete target[key];
             };
+          }
+          if (prop === 'length') {
+            return Object.keys(target).length;
+          }
+          if (prop === 'key') {
+            return (index: number) => Object.keys(target)[index] ?? null;
+          }
+          if (prop === 'getItem') {
+            return (key: string) => target[key] ?? null;
           }
           return target[prop as string];
         },
@@ -79,5 +88,110 @@ describe('Store', () => {
 
       expect(window.localStorage[testKey]).toBe(undefined);
     });
+  });
+
+  describe('all', () => {
+    it('returns all keys', () => {
+      store.set('service:user:key1', 'value1');
+      store.set('service:user:key2', 'value2');
+      store.set('other:user:key3', 'value3');
+
+      const result = store.all();
+
+      expect(result).toEqual({
+        'service:user:key1': 'value1',
+        'service:user:key2': 'value2',
+        'other:user:key3': 'value3',
+      });
+    });
+
+    it('returns all keys matching the given prefix', () => {
+      store.set('service:user:key1', 'value1');
+      store.set('service:user:key2', 'value2');
+      store.set('other:user:key3', 'value3');
+
+      const result = store.all('service:user:');
+
+      expect(result).toEqual({ key1: 'value1', key2: 'value2' });
+    });
+
+    it('returns empty object when no keys match the prefix', () => {
+      store.set('other:user:key1', 'value1');
+
+      const result = store.all('service:user:');
+
+      expect(result).toEqual({});
+    });
+  });
+});
+
+describe('Store without window (SSR)', () => {
+  const originalWindow = window;
+
+  beforeEach(() => {
+    // @ts-expect-error -- simulate a server environment where window is not defined
+    delete global.window;
+  });
+
+  afterEach(() => {
+    global.window = originalWindow;
+  });
+
+  it('does not throw when constructed or used', () => {
+    expect(() => {
+      const ssrStore = new Store();
+      ssrStore.subscribe('key', jest.fn());
+      ssrStore.set('key', 'value');
+      ssrStore.setObject('key', { a: 1 });
+      ssrStore.get('key');
+      ssrStore.getBool('key', true);
+      ssrStore.getObject('key', { a: 1 });
+      ssrStore.exists('key');
+      ssrStore.delete('key');
+    }).not.toThrow();
+  });
+});
+
+/* tests moved here from public/app/core/specs/store.test.ts */
+describe('store', () => {
+  it('should store', () => {
+    store.set('key1', '123');
+    expect(store.get('key1')).toBe('123');
+  });
+
+  it('get key when undefined', () => {
+    expect(store.get('key2')).toBe(undefined);
+  });
+
+  it('check if key exixts', () => {
+    store.set('key3', '123');
+    expect(store.exists('key3')).toBe(true);
+  });
+
+  it('get boolean when no key', () => {
+    expect(store.getBool('key4', false)).toBe(false);
+  });
+
+  it('get boolean', () => {
+    store.set('key5', 'true');
+    expect(store.getBool('key5', false)).toBe(true);
+  });
+
+  it('gets an object', () => {
+    expect(store.getObject('object1')).toBeUndefined();
+    expect(store.getObject('object1', [])).toEqual([]);
+    store.setObject('object1', [1]);
+    expect(store.getObject('object1')).toEqual([1]);
+  });
+
+  it('sets an object', () => {
+    expect(store.setObject('object2', { a: 1 })).toBe(true);
+    expect(store.getObject('object2')).toEqual({ a: 1 });
+  });
+
+  it('key should be deleted', () => {
+    store.set('key6', '123');
+    store.delete('key6');
+    expect(store.exists('key6')).toBe(false);
   });
 });

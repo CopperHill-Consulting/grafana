@@ -1,30 +1,30 @@
 import * as React from 'react';
-import { CSSProperties } from 'react';
-import { OnDrag, OnResize, OnRotate } from 'react-moveable/declaration/types';
+import { type CSSProperties } from 'react';
+import { type OnDrag, type OnResize, type OnRotate } from 'react-moveable/declaration/types';
 
 import {
   FieldType,
   getLinksSupplier,
-  LinkModel,
-  ScopedVars,
-  ValueLinkConfig,
+  type LinkModel,
+  type ScopedVars,
+  type ValueLinkConfig,
   OneClickMode,
-  ActionModel,
-  ActionVariableInput,
+  type ActionModel,
+  type ActionVariableInput,
   ActionType,
 } from '@grafana/data';
 import { t } from '@grafana/i18n';
+import { config } from '@grafana/runtime';
 import { TooltipDisplayMode } from '@grafana/schema';
 import { ConfirmModal, VariablesInputModal } from '@grafana/ui';
-import { LayerElement } from 'app/core/components/Layers/types';
-import { config } from 'app/core/config';
+import { type LayerElement } from 'app/core/components/Layers/types';
 import { notFoundItem } from 'app/features/canvas/elements/notFound';
-import { DimensionContext } from 'app/features/dimensions/context';
+import { type DimensionContext } from 'app/features/dimensions/context';
 import {
   BackgroundImageSize,
-  Constraint,
+  type Constraint,
   HorizontalConstraint,
-  Placement,
+  type Placement,
   VerticalConstraint,
 } from 'app/plugins/panel/canvas/panelcfg.gen';
 import {
@@ -35,13 +35,14 @@ import {
   removeStyles,
 } from 'app/plugins/panel/canvas/utils';
 
+import { reportActionTrigger } from '../../actions/analytics';
 import { getActions, getActionsDefaultField, isInfinityActionWithAuth } from '../../actions/utils';
-import { CanvasElementItem, CanvasElementOptions } from '../element';
+import { type CanvasElementItem, type CanvasElementOptions } from '../element';
 import { canvasElementRegistry } from '../registry';
 
-import { FrameState } from './frame';
-import { RootElement } from './root';
-import { Scene } from './scene';
+import { type FrameState } from './frame';
+import { type RootElement } from './root';
+import { type Scene } from './scene';
 
 let counter = 0;
 
@@ -1045,10 +1046,13 @@ export class ElementState implements LayerElement {
             title={t('grafana-ui.action-editor.button.confirm-action', 'Confirm action')}
             body={action.confirmation(/** TODO: implement actionVars */)}
             confirmText={t('grafana-ui.action-editor.button.confirm', 'Confirm')}
-            confirmButtonVariant="primary"
+            confirmVariant="primary"
             onConfirm={() => {
               this.showActionConfirmation = false;
               action.onClick(new MouseEvent('click'), null, this.actionVars);
+              if (action.type) {
+                reportActionTrigger(action.type, true, 'canvas');
+              }
               this.forceUpdate();
             }}
             onDismiss={() => {
@@ -1086,7 +1090,7 @@ export class ElementState implements LayerElement {
     );
   };
 
-  render() {
+  renderElement() {
     const { item, div } = this;
     const scene = this.getScene();
     const isSelected = div && scene && scene.selecto && scene.selecto.getSelectedTargets().includes(div);
@@ -1104,12 +1108,7 @@ export class ElementState implements LayerElement {
           tabIndex={0}
           style={{ userSelect: 'none' }}
         >
-          <item.display
-            key={`${this.UID}/${this.revId}`}
-            config={this.options.config}
-            data={this.data}
-            isSelected={isSelected}
-          />
+          <item.display key={this.UID} config={this.options.config} data={this.data} isSelected={isSelected} />
         </div>
         {this.showActionConfirmation && this.renderActionsConfirmModal(this.getPrimaryAction())}
         {this.showActionVarsModal && this.renderVariablesInputModal(this.getPrimaryAction())}

@@ -93,6 +93,10 @@ composableKinds: PanelCfg: lineage: {
 			HeatmapLegend: {
 				// Controls if the legend is shown
 				show: bool
+				// Controls where the legend is shown
+				placement?: ui.LegendPlacement
+				// Controls legend width when shown on the right
+				width?: number | string
 			} @cuetsy(kind="interface")
 			// Controls exemplar options
 			ExemplarConfig: {
@@ -105,8 +109,11 @@ composableKinds: PanelCfg: lineage: {
 				value?: string
 				// Controls tick alignment when not calculating from data
 				layout?: ui.HeatmapCellLayout
+				// Controls the scale distribution of the y-axis buckets
+				yBucketScale?: ui.ScaleDistributionConfig
 			} @cuetsy(kind="interface")
 			Options: {
+				annotations?: ui.VizAnnotations
 				// Controls if the heatmap should be calculated from data
 				calculate?: bool | *false
 				// Calculation options for the heatmap
@@ -145,7 +152,8 @@ composableKinds: PanelCfg: lineage: {
 				// }
 				// Controls legend options
 				legend: HeatmapLegend | *{
-					show: true
+					show:      true
+					placement: "bottom"
 				}
 				// Controls tooltip options
 				tooltip: HeatmapTooltip | *{

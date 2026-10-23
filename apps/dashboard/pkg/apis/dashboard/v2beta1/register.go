@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/grafana/grafana/pkg/apimachinery/utils"
 )
 
 const (
@@ -23,49 +24,71 @@ var DashboardResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
 	utils.TableColumns{
 		Definition: []metav1.TableColumnDefinition{
 			{Name: "Name", Type: "string", Format: "name"},
-			{Name: "Title", Type: "string", Format: "string", Description: "The dashboard name"},
+			{Name: "Title", Type: "string", Description: "The dashboard name"},
+			{Name: "Tags", Type: "array", Format: "string", Description: "Dashboard tags"},
 			{Name: "Created At", Type: "date"},
 		},
-		Reader: func(obj any) ([]interface{}, error) {
+		Reader: func(obj any) ([]any, error) {
 			dash, ok := obj.(*Dashboard)
-			if ok {
-				if dash != nil {
-					return []interface{}{
-						dash.Name,
-						dash.Spec.Title,
-						dash.CreationTimestamp.UTC().Format(time.RFC3339),
-					}, nil
-				}
+			if !ok || dash == nil {
+				return nil, fmt.Errorf("expected dashboard")
 			}
-			return nil, fmt.Errorf("expected dashboard")
+			return []any{
+				dash.Name,
+				dash.Spec.Title,
+				dash.Spec.Tags,
+				dash.CreationTimestamp.UTC().Format(time.RFC3339),
+			}, nil
 		},
 	},
 )
 
-var LibraryPanelResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
-	"librarypanels", "librarypanel", "LibraryPanel",
-	func() runtime.Object { return &LibraryPanel{} },
-	func() runtime.Object { return &LibraryPanelList{} },
+var VariableResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
+	"variables", "variable", "Variable",
+	func() runtime.Object { return &Variable{} },
+	func() runtime.Object { return &VariableList{} },
 	utils.TableColumns{
 		Definition: []metav1.TableColumnDefinition{
 			{Name: "Name", Type: "string", Format: "name"},
-			{Name: "Title", Type: "string", Description: "The dashboard name"},
-			{Name: "Type", Type: "string", Description: "the panel type"},
+			{Name: "Variable Kind", Type: "string", Format: "string", Description: "The global variable type"},
 			{Name: "Created At", Type: "date"},
 		},
 		Reader: func(obj any) ([]interface{}, error) {
-			panel, ok := obj.(*LibraryPanel)
+			variable, ok := obj.(*Variable)
 			if ok {
-				if panel != nil {
+				if variable != nil {
 					return []interface{}{
-						panel.Name,
-						panel.Spec.Title,
-						panel.Spec.Type,
-						panel.CreationTimestamp.UTC().Format(time.RFC3339),
+						variable.Name,
+						getVariableKindName(variable.Spec),
+						variable.CreationTimestamp.UTC().Format(time.RFC3339),
 					}, nil
 				}
 			}
-			return nil, fmt.Errorf("expected library panel")
+			return nil, fmt.Errorf("expected variable")
+		},
+	},
+)
+
+var NotebookResourceInfo = utils.NewResourceInfo(GROUP, VERSION,
+	"notebooks", "notebook", "Notebook",
+	func() runtime.Object { return &Notebook{} },
+	func() runtime.Object { return &NotebookList{} },
+	utils.TableColumns{
+		Definition: []metav1.TableColumnDefinition{
+			{Name: "Name", Type: "string", Format: "name"},
+			{Name: "Title", Type: "string", Description: "The notebook name"},
+			{Name: "Created At", Type: "date"},
+		},
+		Reader: func(obj any) ([]interface{}, error) {
+			notebook, ok := obj.(*Notebook)
+			if ok && notebook != nil {
+				return []interface{}{
+					notebook.Name,
+					notebook.Spec.Title,
+					notebook.CreationTimestamp.UTC().Format(time.RFC3339),
+				}, nil
+			}
+			return nil, fmt.Errorf("expected notebook")
 		},
 	},
 )
@@ -87,15 +110,40 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&Dashboard{},
 		&DashboardList{},
 		&DashboardWithAccessInfo{},
-		&DashboardVersionList{},
-		&VersionsQueryOptions{},
-		&LibraryPanel{},
-		&LibraryPanelList{},
+		&Variable{},
+		&VariableList{},
+		&Notebook{},
+		&NotebookList{},
 		&metav1.PartialObjectMetadata{},
 		&metav1.PartialObjectMetadataList{},
 	)
 	metav1.AddToGroupVersion(scheme, schemeGroupVersion)
 	return nil
+}
+
+func getVariableKindName(spec VariableSpec) string {
+	switch {
+	case spec.QueryVariableKind != nil:
+		return spec.QueryVariableKind.Kind
+	case spec.TextVariableKind != nil:
+		return spec.TextVariableKind.Kind
+	case spec.ConstantVariableKind != nil:
+		return spec.ConstantVariableKind.Kind
+	case spec.DatasourceVariableKind != nil:
+		return spec.DatasourceVariableKind.Kind
+	case spec.IntervalVariableKind != nil:
+		return spec.IntervalVariableKind.Kind
+	case spec.CustomVariableKind != nil:
+		return spec.CustomVariableKind.Kind
+	case spec.GroupByVariableKind != nil:
+		return spec.GroupByVariableKind.Kind
+	case spec.AdhocVariableKind != nil:
+		return spec.AdhocVariableKind.Kind
+	case spec.SwitchVariableKind != nil:
+		return spec.SwitchVariableKind.Kind
+	default:
+		return ""
+	}
 }
 
 func addDefaultingFuncs(scheme *runtime.Scheme) error {

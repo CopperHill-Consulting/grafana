@@ -1,21 +1,25 @@
-import { HTMLAttributes, PropsWithChildren } from 'react';
-import * as React from 'react';
+import { createElement, type HTMLAttributes, type PropsWithChildren, type HTMLElementType, type JSX } from 'react';
 
 import { textUtil } from '@grafana/data';
 
 export interface RenderUserContentAsHTMLProps<T = HTMLSpanElement>
   extends Omit<HTMLAttributes<T>, 'dangerouslySetInnerHTML'> {
-  component?: keyof React.ReactHTML;
+  component?: HTMLElementType;
   content: string;
 }
 
+/**
+ * Abstraction layer component for sanitizing and rendering an html content.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/utilities-renderusercontentashtml--docs
+ */
 export function RenderUserContentAsHTML<T>({
   component,
   content,
   ...rest
 }: PropsWithChildren<RenderUserContentAsHTMLProps<T>>): JSX.Element {
-  return React.createElement(component || 'span', {
-    dangerouslySetInnerHTML: { __html: textUtil.sanitize(content) },
+  return createElement(component || 'span', {
     ...rest,
+    dangerouslySetInnerHTML: { __html: textUtil.sanitize(content) },
   });
 }

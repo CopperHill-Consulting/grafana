@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grafana/grafana-plugin-sdk-go/backend"
-	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/datasource/v0alpha1"
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/components/simplejson"
@@ -146,7 +146,7 @@ func TestIntegrationParseMetricRequest(t *testing.T) {
 			require.Equal(t, tc.signedInUser.Name, tc.pluginContext.req.PluginContext.User.Name)
 			require.Equal(t, tc.signedInUser.Email, tc.pluginContext.req.PluginContext.User.Email)
 			require.Equal(t, string(tc.signedInUser.OrgRole), tc.pluginContext.req.PluginContext.User.Role)
-			require.Equal(t, tc.signedInUser.OrgID, tc.pluginContext.req.PluginContext.OrgID)
+			require.Equal(t, tc.signedInUser.OrgID, tc.pluginContext.req.PluginContext.OrgID) // nolint:staticcheck
 		})
 	})
 
@@ -356,39 +356,82 @@ func TestIntegrationParseMetricRequest(t *testing.T) {
 				"from": "1753944628000",
 				"to": "1753944629000"
 			}
+		}`, `{
+			"refId": "C",
+			"datasource": {
+				"uid": "gIEkMvIVz",
+				"type": "postgres"
+			}
 		}`)
-		mr.From = ""
-		mr.To = ""
+		mr.From = "1753944638000"
+		mr.To = "1753944639000"
 
-		verifyTimestamps := func(parsedReq *parsedRequest, ts1 int64, ts2 int64, ts3 int64, ts4 int64) {
+		q0Copy := mr.Queries[0].DeepCopy()
+		q1Copy := mr.Queries[1].DeepCopy()
+
+		verifyTimestamps := func(
+			parsedReq *parsedRequest,
+			ts1 int64, ts2 int64, q0JSON string,
+			ts3 int64, ts4 int64, q1JSON string,
+			ts5 int64, ts6 int64, q2JSON string,
+		) {
 			require.NotNil(t, parsedReq)
 			assert.Len(t, parsedReq.parsedQueries, 1)
 			assert.Contains(t, parsedReq.parsedQueries, "gIEkMvIVz")
 			queries := parsedReq.getFlattenedQueries()
-			assert.Len(t, queries, 2)
+			assert.Len(t, queries, 3)
 
+			assert.Equal(t, "A", queries[0].query.RefID)
 			assert.Equal(t, ts1, queries[0].query.TimeRange.From.UnixMilli())
 			assert.Equal(t, ts2, queries[0].query.TimeRange.To.UnixMilli())
+			assert.JSONEq(t, q0JSON, string(queries[0].query.JSON))
 
+			assert.Equal(t, "B", queries[1].query.RefID)
 			assert.Equal(t, ts3, queries[1].query.TimeRange.From.UnixMilli())
 			assert.Equal(t, ts4, queries[1].query.TimeRange.To.UnixMilli())
+			assert.JSONEq(t, q1JSON, string(queries[1].query.JSON))
+
+			assert.Equal(t, "C", queries[2].query.RefID)
+			assert.Equal(t, ts5, queries[2].query.TimeRange.From.UnixMilli())
+			assert.Equal(t, ts6, queries[2].query.TimeRange.To.UnixMilli())
+			assert.JSONEq(t, q2JSON, string(queries[2].query.JSON))
 		}
 
 		// with flag enabled
 		parsedReq, err := tc.queryService.parseMetricRequest(context.Background(), tc.signedInUser, true, mr, true)
 		require.NoError(t, err)
 
+		// verify the query-structures were not mutated
+		require.Equal(t, q0Copy, mr.Queries[0])
+		require.Equal(t, q1Copy, mr.Queries[1])
+
 		verifyTimestamps(parsedReq,
 			int64(1753944618000),
 			int64(1753944619000),
+			`{"datasource":{"type":"postgres","uid":"gIEkMvIVz"},"refId":"A"}`,
 			int64(1753944628000),
-			int64(1753944629000))
+			int64(1753944629000),
+			`{"datasource":{"type":"postgres","uid":"gIEkMvIVz"},"refId":"B"}`,
+			int64(1753944638000),
+			int64(1753944639000),
+			`{"datasource":{"type":"postgres","uid":"gIEkMvIVz"},"refId":"C"}`,
+		)
 
 		// with flag disabled
 		parsedReq2, err := tc.queryService.parseMetricRequest(context.Background(), tc.signedInUser, true, mr, false)
 		require.NoError(t, err)
 
-		verifyTimestamps(parsedReq2, int64(0), int64(0), int64(0), int64(0))
+		verifyTimestamps(parsedReq2,
+			int64(1753944638000),
+			int64(1753944639000),
+			`{"datasource":{"type":"postgres","uid":"gIEkMvIVz"},"refId":"A", "timeRange":{"from":"1753944618000", "to":"1753944619000"}}`,
+			int64(1753944638000),
+			int64(1753944639000),
+			`{"datasource":{"type":"postgres","uid":"gIEkMvIVz"},"refId":"B", "timeRange":{"from":"1753944628000", "to":"1753944629000"}}`,
+			int64(1753944638000),
+			int64(1753944639000),
+			`{"datasource":{"type":"postgres","uid":"gIEkMvIVz"},"refId":"C"}`,
+		)
 	})
 
 	t.Run("Test a datasource query with local time range, malformed to-value", func(t *testing.T) {
@@ -718,6 +761,69 @@ func TestIntegrationQueryDataWithQSDSClient(t *testing.T) {
 	})
 }
 
+func TestQueryToJson(t *testing.T) {
+	tests := []struct {
+		name          string
+		data          []byte
+		expected      []byte
+		expectedError bool
+	}{
+		{
+			name:          "simple",
+			data:          []byte(`{"refId":"A", "expr": "42", "timeRange":{"from":"111","to":"112"}}`),
+			expected:      []byte(`{"refId":"A", "expr": "42"}`),
+			expectedError: false,
+		},
+		{
+			name:          "no time range",
+			data:          []byte(`{"refId":"A", "expr": "42"}`),
+			expected:      []byte(`{"refId":"A", "expr": "42"}`),
+			expectedError: false,
+		},
+		{
+			name:          "nested structures, numbers",
+			data:          []byte(`{"a":{"b":["c","d"]},"intervalMs":60000, "timeRange":{"from":"111","to":"112"}}`),
+			expected:      []byte(`{"a":{"b":["c","d"]},"intervalMs":60000}`),
+			expectedError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := simplejson.NewJson(tt.data)
+			require.NoError(t, err)
+
+			// first we go with supportLocalTimeRange=false
+			res, err := queryToJson(q, false)
+			require.NoError(t, err)
+
+			// verify that we did not mutate the input
+			data2, err := q.MarshalJSON()
+			require.NoError(t, err)
+			require.JSONEq(t, string(data2), string(tt.data))
+
+			// verify the output is the same as the input (because we used supportLocalTimeRange=false)
+			require.JSONEq(t, string(res), string(tt.data))
+
+			// now we go with supportLocalTimeRange=true
+
+			res, err = queryToJson(q, true)
+			if tt.expectedError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+
+				require.JSONEq(t, string(tt.expected), string(res))
+			}
+
+			// verify that we did not mutate the input
+			data2, err = q.MarshalJSON()
+			require.NoError(t, err)
+			require.JSONEq(t, string(data2), string(tt.data))
+		})
+	}
+}
+
 func setup(t *testing.T, isMultiTenant bool, mockClient clientapi.QueryDataClient) *testContext {
 	dss := []*datasources.DataSource{
 		{UID: "gIEkMvIVz", Type: "postgres"},
@@ -731,7 +837,7 @@ func setup(t *testing.T, isMultiTenant bool, mockClient clientapi.QueryDataClien
 	dc := &fakeDataSourceCache{cache: dss}
 	rv := &fakeDataSourceRequestValidator{}
 
-	sqlStore, cfg := db.InitTestDBWithCfg(t)
+	sqlStore, cfg := db.InitTestDBWithCfg(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	secretsService := secretsmng.SetupTestService(t, fakes.NewFakeSecretsStore())
 	ss := secretskvs.NewSQLSecretsKVStore(sqlStore, secretsService, log.New("test.logger"))
 
@@ -788,7 +894,7 @@ func setup(t *testing.T, isMultiTenant bool, mockClient clientapi.QueryDataClien
 		secretStore:            ss,
 		pluginRequestValidator: rv,
 		queryService:           queryService,
-		signedInUser:           &user.SignedInUser{OrgID: 1, Login: "login", Name: "name", Email: "email", OrgRole: identity.RoleAdmin},
+		signedInUser:           &user.SignedInUser{OrgID: 1, Login: "login", Name: "name", Email: "email", OrgRole: identity.RoleAdmin, Namespace: "ns1"},
 	}
 }
 
@@ -802,7 +908,7 @@ type testContext struct {
 
 func metricRequestWithQueries(t *testing.T, rawQueries ...string) dtos.MetricRequest {
 	t.Helper()
-	queries := make([]*simplejson.Json, 0)
+	queries := make([]*simplejson.Json, 0, len(rawQueries))
 	for _, q := range rawQueries {
 		json, err := simplejson.NewJson([]byte(q))
 		require.NoError(t, err)
@@ -820,7 +926,7 @@ type fakeDataSourceRequestValidator struct {
 	err error
 }
 
-func (rv *fakeDataSourceRequestValidator) Validate(ds *datasources.DataSource, req *http.Request) error {
+func (rv *fakeDataSourceRequestValidator) Validate(dsURL string, dsJsonData map[string]any, req *http.Request) error {
 	return rv.err
 }
 
@@ -872,12 +978,15 @@ func (c *fakePluginClient) QueryData(ctx context.Context, req *backend.QueryData
 }
 
 type testClient struct {
-	queryDataLastCalledWith  data.QueryDataRequest
+	queryDataLastCalledWith data.QueryDataRequest
+	// The number of times the QueryData method has been called
+	queryDataCalls           int
 	queryDataStubbedResponse *backend.QueryDataResponse
 	queryDataStubbedError    error
 }
 
 func (c *testClient) QueryData(ctx context.Context, req data.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	c.queryDataCalls++
 	c.queryDataLastCalledWith = req
 	if c.queryDataStubbedError != nil {
 		return nil, c.queryDataStubbedError

@@ -1,27 +1,26 @@
 import { useMemo } from 'react';
 
 import {
-  isLikelyAscendingVector,
-  DataFrame,
+  type DataFrame,
   FieldMatcherID,
   fieldMatchers,
   FieldType,
-  PanelProps,
-  TimeRange,
+  type PanelProps,
+  type TimeRange,
   useDataLinksContext,
 } from '@grafana/data';
-import { config, PanelDataErrorView } from '@grafana/runtime';
+import { PanelDataErrorView } from '@grafana/runtime';
 import { KeyboardPlugin, TooltipDisplayMode, TooltipPlugin2, usePanelContext } from '@grafana/ui';
 import { TooltipHoverMode } from '@grafana/ui/internal';
-import { XYFieldMatchers } from 'app/core/components/GraphNG/types';
+import { getAssistantTooltipContext } from 'app/core/components/AssistantTooltip/buildAssistantContext';
+import { type XYFieldMatchers } from 'app/core/components/GraphNG/types';
 import { preparePlotFrame } from 'app/core/components/GraphNG/utils';
 import { TimeSeries } from 'app/core/components/TimeSeries/TimeSeries';
-import { findFieldIndex } from 'app/features/dimensions/utils';
 
 import { TimeSeriesTooltip } from '../timeseries/TimeSeriesTooltip';
-import { prepareGraphableFields } from '../timeseries/utils';
 
-import { Options } from './panelcfg.gen';
+import { type Options } from './panelcfg.gen';
+import { prepSeries } from './utils';
 
 export const TrendPanel = ({
   data,
@@ -33,6 +32,7 @@ export const TrendPanel = ({
   fieldConfig,
   replaceVariables,
   id,
+  title,
 }: PanelProps<Options>) => {
   const { dataLinkPostProcessor } = useDataLinksContext();
   const { canExecuteActions } = usePanelContext();
@@ -51,49 +51,7 @@ export const TrendPanel = ({
     return preparePlotFrame(frames, dimFields);
   };
 
-  const info = useMemo(() => {
-    if (data.series.length > 1) {
-      return {
-        warning: 'Only one frame is supported, consider adding a join transformation',
-        frames: data.series,
-      };
-    }
-
-    let frames = data.series;
-    let xFieldIdx: number | undefined;
-    if (options.xField) {
-      xFieldIdx = findFieldIndex(options.xField, frames[0]);
-      if (xFieldIdx == null) {
-        return {
-          warning: 'Unable to find field: ' + options.xField,
-          frames: data.series,
-        };
-      }
-    } else {
-      // first number field
-      // Perhaps we can/should support any ordinal rather than an error here
-      xFieldIdx = frames[0] ? frames[0].fields.findIndex((f) => f.type === FieldType.number) : -1;
-      if (xFieldIdx === -1) {
-        return {
-          warning: 'No numeric fields found for X axis',
-          frames,
-        };
-      }
-    }
-
-    // Make sure values are ascending
-    if (xFieldIdx != null) {
-      const field = frames[0].fields[xFieldIdx];
-      if (field.type === FieldType.number && !isLikelyAscendingVector(field.values)) {
-        return {
-          warning: `Values must be in ascending order`,
-          frames,
-        };
-      }
-    }
-
-    return { frames: prepareGraphableFields(frames, config.theme2, undefined, xFieldIdx) };
-  }, [data.series, options.xField]);
+  const info = useMemo(() => prepSeries(data.series, options.xField), [data.series, options.xField]);
 
   if (info.warning || !info.frames) {
     return (
@@ -107,9 +65,11 @@ export const TrendPanel = ({
     );
   }
 
+  const frames = info.frames;
+
   return (
     <TimeSeries // Name change!
-      frames={info.frames}
+      frames={frames}
       structureRev={data.structureRev}
       timeRange={timeRange}
       timeZone={timeZone}
@@ -134,7 +94,7 @@ export const TrendPanel = ({
                 getDataLinks={(seriesIdx, dataIdx) =>
                   alignedDataFrame.fields[seriesIdx].getLinks?.({ valueRowIndex: dataIdx }) ?? []
                 }
-                render={(u, dataIdxs, seriesIdx, isPinned = false, dismiss, timeRange, viaSync, dataLinks) => {
+                render={(u, dataIdxs, seriesIdx, isPinned = false, dismiss, timeRange2, viaSync, dataLinks) => {
                   return (
                     <TimeSeriesTooltip
                       series={alignedDataFrame}
@@ -148,6 +108,7 @@ export const TrendPanel = ({
                       dataLinks={dataLinks}
                       hideZeros={options.tooltip.hideZeros}
                       canExecuteActions={userCanExecuteActions}
+                      assistantContext={getAssistantTooltipContext({ id, title, timeRange, data }, frames)}
                     />
                   );
                 }}

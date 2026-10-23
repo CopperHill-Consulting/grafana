@@ -31,9 +31,17 @@ type IndexViewData struct {
 	CSPEnabled                          bool                 `json:"-"`
 	IsDevelopmentEnv                    bool                 `json:"-"`
 	// Nonce is a cryptographic identifier for use with Content Security Policy.
-	Nonce           string            `json:"-"`
-	NewsFeedEnabled bool              `json:"-"`
-	Assets          *EntryPointAssets `json:"assets"` // Includes CDN info
+	Nonce                  string            `json:"-"`
+	NewsFeedEnabled        bool              `json:"-"`
+	Assets                 *EntryPointAssets `json:"assets"` // Includes CDN info
+	RenderBindingSupported bool              `json:"-"`
+	UseLuxon               bool              `json:"-"`
+	// AutoLoginRedirectURL is the URL the frontend should redirect to for auto-login.
+	// Empty means no auto-login redirect should occur.
+	AutoLoginRedirectURL  string `json:"autoLoginRedirectURL,omitempty"`
+	AssetSriChecksEnabled bool   `json:"-"`
+	NewPreferencesPage    bool   `json:"-"`
+	OFREPRootUrlEnabled   bool   `json:"-"`
 }
 
 type EntryPointAssets struct {
@@ -42,8 +50,6 @@ type EntryPointAssets struct {
 	CSSFiles           []EntryPointAsset `json:"cssFiles"`
 	Dark               string            `json:"dark"`
 	Light              string            `json:"light"`
-	Swagger            []EntryPointAsset `json:"swagger"`
-	SwaggerCSSFiles    []EntryPointAsset `json:"swaggerCssFiles"`
 }
 
 type EntryPointAsset struct {
@@ -63,11 +69,5 @@ func (a *EntryPointAssets) SetContentDeliveryURL(prefix string) {
 	}
 	for i, p := range a.CSSFiles {
 		a.CSSFiles[i].FilePath = prefix + p.FilePath
-	}
-	for i, p := range a.Swagger {
-		a.Swagger[i].FilePath = prefix + p.FilePath
-	}
-	for i, p := range a.SwaggerCSSFiles {
-		a.SwaggerCSSFiles[i].FilePath = prefix + p.FilePath
 	}
 }

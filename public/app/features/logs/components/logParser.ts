@@ -1,10 +1,15 @@
-import { partition } from 'lodash';
-
-import { DataFrame, Field, FieldWithIndex, LinkModel, LogRowModel, ScopedVars } from '@grafana/data';
+import {
+  type DataFrame,
+  type Field,
+  type FieldWithIndex,
+  type LinkModel,
+  type LogRowModel,
+  type ScopedVars,
+} from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { safeStringifyValue } from 'app/core/utils/explore';
-import { ExploreFieldLinkModel } from 'app/features/explore/utils/links';
-import { GetFieldLinksFn } from 'app/plugins/panel/logs/types';
+import { type ExploreFieldLinkModel } from 'app/features/explore/utils/links';
+import { type GetFieldLinksFn } from 'app/plugins/panel/logs/types';
 
 import { parseLogsFrame } from '../logsFrame';
 
@@ -118,39 +123,20 @@ function getVisibleFieldIndices(frame: DataFrame, opts: VisOptions): Set<number>
   return visibleFieldIndices;
 }
 
-// split the dataframe's fields into visible and hidden arrays.
-// note: does not do any row-level checks,
-// for example does not check if the field's values are nullish
-// or not at a givn row.
-export function separateVisibleFields(
-  frame: DataFrame,
-  opts?: VisOptions
-): { visible: FieldWithIndex[]; hidden: FieldWithIndex[] } {
-  const fieldsWithIndex: FieldWithIndex[] = frame.fields.map((field, index) => ({ ...field, index }));
-
-  const visibleFieldIndices = getVisibleFieldIndices(frame, opts ?? {});
-
-  const [visible, hidden] = partition(fieldsWithIndex, (f) => {
-    // hidden fields are always hidden
-    if (f.config.custom?.hidden) {
-      return false;
-    }
-
-    // fields with data-links are visible
-    if ((f.config.links ?? []).length > 0) {
-      return true;
-    }
-
-    return visibleFieldIndices.has(f.index);
-  });
-
-  return { visible, hidden };
+// Memoization cache for getVisibleFieldIndices results to avoid re-processing the same DataFrame structure
+// WeakMap ensures automatic garbage collection when DataFrames are no longer referenced
+const visibleFieldIndicesCache = new WeakMap<DataFrame, Set<number>>();
+function getCachedVisibleFieldIndices(frame: DataFrame): Set<number> {
+  if (!visibleFieldIndicesCache.has(frame)) {
+    visibleFieldIndicesCache.set(frame, getVisibleFieldIndices(frame, {}));
+  }
+  return visibleFieldIndicesCache.get(frame)!;
 }
 
 // Optimized version of separateVisibleFields() to only return visible fields for getAllFields()
-function getNonEmptyVisibleFields(row: LogRowModel, opts?: VisOptions): FieldWithIndex[] {
+function getNonEmptyVisibleFields(row: LogRowModel): FieldWithIndex[] {
   const frame = row.dataFrame;
-  const visibleFieldIndices = getVisibleFieldIndices(frame, opts ?? {});
+  const visibleFieldIndices = getCachedVisibleFieldIndices(frame);
   const visibleFields: FieldWithIndex[] = [];
   for (let index = 0; index < frame.fields.length; index++) {
     const field = frame.fields[index];

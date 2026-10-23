@@ -5,7 +5,6 @@ description: Learn about Grafana Enterprise configuration options that you can s
 labels:
   products:
     - enterprise
-    - oss
 title: Configure Grafana Enterprise
 weight: 100
 ---
@@ -112,6 +111,22 @@ Decide whether or not to enable the TLS (Transport Layer Security) protocol when
 
 Set the tenant ID for Loki communication, which is disabled by default. The tenant ID is required to interact with Loki running in [multi-tenant mode](/docs/loki/latest/operations/multi-tenancy/).
 
+### batch_wait_duration
+
+How long to wait before sending a request to Loki with the batch of events. Uses duration format: e.g. 5s, 1m. Defaults to 5s.
+
+Whatever happens first between `batch_wait_duration` and `batch_size_bytes` will trigger the batch to be sent to Loki.
+
+If the wait duration is very long and the `batch_size_bytes` is very high, events may take a long time to be sent.
+
+### batch_size_bytes
+
+How many events (in bytes) to accumulate in a single batch before sending it to Loki. Defaults to 100 KiB.
+
+Whatever happens first between `batch_wait_duration` and `batch_size_bytes` will trigger the batch to be sent to Loki.
+
+If you wish to always wait for the `batch_wait_duration`, set this to a very high number.
+
 ## [analytics.summaries]
 
 ### buffer_write_interval
@@ -174,9 +189,13 @@ Name of the TrueType font file with bold style.
 
 Name of the TrueType font file with italic style. Default is `DejaVuSansCondensed-Oblique.ttf`.
 
-### max_retries_per_panel
+### font_min_text_size
 
-Maximum number of times the following reporting rendering requests are retried before returning an error: generating PDFs, generating embedded dashboard images for report emails, and generating attached CSV files. To disable the retry feature, enter `0`. This is available in public preview and requires the `reportingRetries` feature toggle. Default is `3`.
+The minimum pixel size that Grafana uses when rendering fonts. Default is `4`.
+
+### max_request_retries
+
+Maximum number of times the following reporting rendering requests are retried before returning an error: generating PDFs, generating embedded dashboard images for report emails, and generating attached CSV files. Default is `0`, which means it is disabled.
 
 ### allowed_domains
 
@@ -200,11 +219,11 @@ Keep dashboard content in the logs (request or response fields). This can signif
 
 ### log_datasource_query_request_body
 
-Whether to record data source queries' request body. This can significantly increase the size of your logs. Enabled by default.
+Whether to record data source queries' request body. This can significantly increase the size of your logs. Disabled by default.
 
 ### log_datasource_query_response_body
 
-Whether to record data source queries' response body. This can significantly increase the size of your logs. Enabled by default.
+Whether to record data source queries' response body. This can significantly increase the size of your logs. Disabled by default.
 
 ### verbose
 
@@ -217,6 +236,10 @@ Set to false to only log requests with 2xx, 3xx, 401, 403, 500 responses.
 ### max_response_size_bytes
 
 Maximum response body (in bytes) to be recorded. May help reducing the memory footprint caused by auditing.
+
+### `snapshot_timeout`
+
+Grafana uses `snapshot_timeout` as a cooperative deadline when resolving resource names before serving a request that may delete resources. Grafana currently uses this setting for `DELETE /api/admin/users/{id}`. Because the backing store must honor context cancellation, the value isn't a strict upper bound on request latency. Use a duration such as `500ms` or `2s`. If you configure zero or a negative duration, Grafana logs a warning and uses the default of `500ms`.
 
 ## [auditing.logs.file]
 
@@ -245,6 +268,30 @@ If true, it establishes a secure connection to Loki. Defaults to true.
 ### tenant_id
 
 Set the tenant ID for Loki communication, which is disabled by default. The tenant ID is required to interact with Loki running in [multi-tenant mode](/docs/loki/latest/operations/multi-tenancy/).
+
+### retries
+
+The amount of times the HTTP or gRPC client will retry a failed request to Loki. The default is `10`.
+
+### timeout
+
+The timeout duration of an HTTP request or gRPC call to Loki. The default is `3s`.
+
+### batch_wait_duration
+
+Only available for the HTTP client. Disabled by default.
+How long to wait before sending a request to Loki with the batch of events. Uses duration format: e.g. 5s, 1m
+Whichever threshold is hit first between `batch_wait_duration` and `batch_size_bytes` triggers the batch to be sent to Loki.
+If the wait duration is very long and the `batch_size_bytes` is very high, events might take a long time to be sent.
+To enable batching, you must also set the `batch_size_bytes` configuration option.
+
+### batch_size_bytes
+
+Only available for the HTTP client. Disabled by default.
+How many events, in bytes, to accumulate in a single batch before sending it to Loki.
+Whichever threshold is hit first between `batch_wait_duration` and `batch_size_bytes` triggers the batch to be sent to Loki.
+If you want to always wait for the `batch_wait_duration`, set `batch_size_bytes` to a very high number.
+To enable batching, you must also set the `batch_wait_duration` configuration option.
 
 ## [auth.saml]
 
@@ -538,10 +585,6 @@ The default is `"grafana"`.
 A space-separated list of memcached servers. Example: `memcached-server-1:11211 memcached-server-2:11212 memcached-server-3:11211`. Or if there's only one server: `memcached-server:11211`.
 
 The default is `"localhost:11211"`.
-
-{{< admonition type="note" >}}
-The following memcached configuration requires the `tlsMemcached` feature toggle.
-{{< /admonition >}}
 
 ### tls_enabled
 

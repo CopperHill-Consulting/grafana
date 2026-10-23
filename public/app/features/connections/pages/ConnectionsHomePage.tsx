@@ -1,21 +1,44 @@
 import { css } from '@emotion/css';
 
-import { GrafanaTheme2 } from '@grafana/data';
-import { GrafanaEdition } from '@grafana/data/internal';
+import { type GrafanaTheme2, type IconName, isIconName } from '@grafana/data';
 import { Trans } from '@grafana/i18n';
 import { config } from '@grafana/runtime';
 import { useStyles2 } from '@grafana/ui';
 import { Page } from 'app/core/components/Page/Page';
+import { useSelector } from 'app/types/store';
 
-import { getCloudCardData, getOssCardData } from '../components/PageCard/CardData';
+import { getConnectionsCardMetadata } from '../components/PageCard/CardMetadata';
 import PageCard from '../components/PageCard/PageCard';
+
+const FALLBACK_ICON: IconName = 'plug';
+
+function resolveIcon(metaIcon: IconName | undefined, navIcon: string | undefined): IconName {
+  if (metaIcon) {
+    return metaIcon;
+  }
+  if (navIcon && isIconName(navIcon)) {
+    return navIcon;
+  }
+  return FALLBACK_ICON;
+}
 
 export default function ConnectionsHomePage() {
   const styles = useStyles2(getStyles);
 
-  const isOSS = config.buildInfo.edition === GrafanaEdition.OpenSource;
-
-  let cardsData = isOSS ? getOssCardData() : getCloudCardData();
+  const isOnPrem = !config.pluginAdminExternalManageEnabled;
+  const cardMetadata = getConnectionsCardMetadata(isOnPrem);
+  const navIndex = useSelector((state) => state.navIndex);
+  const cardsData = (navIndex['connections']?.children ?? [])
+    .filter((item) => item.url)
+    .map((item) => {
+      const meta = cardMetadata[item.url!];
+      return {
+        ...item,
+        text: meta?.text ?? item.text,
+        icon: resolveIcon(meta?.icon, item.icon),
+        subTitle: meta?.subTitle ?? item.subTitle ?? '',
+      };
+    });
 
   return (
     <Page
@@ -31,7 +54,7 @@ export default function ConnectionsHomePage() {
             <Trans i18nKey="connections.connections-home-page.welcome-to-connections">Welcome to Connections</Trans>
           </h1>
           <p className={styles.subTitle}>
-            {isOSS ? (
+            {isOnPrem ? (
               <Trans i18nKey="connections.oss.connections-home-page.subtitle">
                 Manage your data source connections in one place. Use this page to add a new data source or manage your
                 existing connections.
@@ -43,15 +66,15 @@ export default function ConnectionsHomePage() {
               </Trans>
             )}
           </p>
-          {cardsData && cardsData.length > 0 && (
+          {cardsData.length > 0 && (
             <section className={styles.cardsSection}>
-              {cardsData?.map((child, index) => (
+              {cardsData.map((child, index) => (
                 <PageCard
-                  key={index}
+                  key={child.id ?? index}
                   title={child.text}
                   description={child.subTitle}
                   icon={child.icon}
-                  url={child.url}
+                  url={child.url!}
                   index={index}
                 />
               ))}

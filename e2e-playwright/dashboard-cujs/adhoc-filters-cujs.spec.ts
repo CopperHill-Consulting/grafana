@@ -1,6 +1,7 @@
 import { test, expect } from '@grafana/plugin-e2e';
 
-import { setScopes } from '../utils/scope-helpers';
+import { setScopes, setupScopeRoutes } from '../utils/scope-helpers';
+import { testScopes } from '../utils/scopes';
 
 import {
   getAdHocFilterOptionValues,
@@ -13,6 +14,7 @@ import {
 } from './cuj-selectors';
 import { prepareAPIMocks } from './utils';
 
+const USE_LIVE_DATA = Boolean(process.env.API_CONFIG_PATH);
 const DASHBOARD_UNDER_TEST = 'cuj-dashboard-1';
 
 test.use({
@@ -20,6 +22,7 @@ test.use({
     scopeFilters: true,
     groupByVariable: true,
     reloadDashboardsOnParamsChange: true,
+    dashboardUnifiedDrilldownControls: false,
   },
 });
 
@@ -33,6 +36,11 @@ test.describe(
       const apiMocks = await prepareAPIMocks(page);
       const adHocFilterPills = getAdHocFilterPills(page);
       const scopesSelectorInput = getScopesSelectorInput(page);
+
+      // Set up routes before any navigation (only for mocked mode)
+      if (!USE_LIVE_DATA) {
+        await setupScopeRoutes(page, testScopes());
+      }
 
       await test.step('1.Apply filtering to a whole dashboard', async () => {
         const dashboardPage = await gotoDashboardPage({ uid: DASHBOARD_UNDER_TEST });
@@ -149,6 +157,7 @@ test.describe(
         const adHocVariable = getAdhocFiltersInput(dashboardPage, selectors).first();
 
         await defaultDashboardFilter.click();
+        await adHocVariable.click();
         await adHocVariable.fill('new value');
         await adHocVariable.press('Enter');
 
@@ -169,7 +178,7 @@ test.describe(
 
         await setScopes(page);
 
-        await expect(scopesSelectorInput).toHaveValue(/.+/);
+        await expect(scopesSelectorInput).toHaveAttribute('data-value', /.+/);
 
         expect(await adHocFilterPills.count()).toBe(3);
 
@@ -179,6 +188,7 @@ test.describe(
         const adHocVariable = getAdhocFiltersInput(dashboardPage, selectors).first();
 
         await defaultDashboardFilter.click();
+        await adHocVariable.click();
         await adHocVariable.fill('new value');
         await adHocVariable.press('Enter');
 

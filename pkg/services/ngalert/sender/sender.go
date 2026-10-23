@@ -12,7 +12,9 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
+	alertingModels "github.com/grafana/alerting/models"
 	"github.com/prometheus/alertmanager/api/v2/models"
 	"github.com/prometheus/client_golang/prometheus"
 	common_config "github.com/prometheus/common/config"
@@ -29,6 +31,11 @@ const (
 	defaultMaxQueueCapacity = 10000
 	defaultTimeout          = 10 * time.Second
 	defaultDrainOnShutdown  = true
+
+	// DefaultMaxLabelStringSize is the default byte cap applied to any single
+	// label/annotation name or value forwarded to an Alertmanager. The
+	// prometheus stringlabels encoder panics on strings larger than 16 MiB.
+	DefaultMaxLabelStringSize = 1 << 22 // 4 MiB
 )
 
 // ExternalAlertmanager is responsible for dispatching alert notifications to an external Alertmanager service.
@@ -44,14 +51,26 @@ type ExternalAlertmanager struct {
 }
 
 type ExternalAMcfg struct {
-	URL     string
-	Headers http.Header
-	Timeout time.Duration
+	// DatasourceUID is the UID of the datasource this external Alertmanager was configured from.
+	// Used for logging and error tracking, not included in configuration hashing.
+	DatasourceUID string
+	URL           string
+	Headers       http.Header
+	Timeout       time.Duration
+	// InsecureSkipVerify determines whether the server's TLS certificate should be verified.
+	InsecureSkipVerify bool
+	// TLSClientCert specifies the TLS client certificate used for secure communication.
+	TLSClientCert string
+	// TLSClientKey specifies the private key associated with the TLS client certificate for secure communication.
+	TLSClientKey string
 }
 
 type ExternalAMOptions struct {
 	Options
 	sanitizeLabelSetFn func(lbls models.LabelSet) labels.Labels
+	// MaxLabelStringSize caps the byte length of any single label/annotation
+	// name or value. A non-positive value disables the clamp.
+	MaxLabelStringSize int
 }
 
 type Option func(*ExternalAMOptions)
@@ -70,12 +89,21 @@ func WithDoFunc(doFunc doFunc) Option {
 func WithUTF8Labels() Option {
 	return func(opts *ExternalAMOptions) {
 		opts.sanitizeLabelSetFn = func(lbls models.LabelSet) labels.Labels {
-			ls := make(labels.Labels, 0, len(lbls))
+			ls := make([]labels.Label, 0, len(lbls))
 			for k, v := range lbls {
 				ls = append(ls, labels.Label{Name: k, Value: v})
 			}
-			return ls
+			return labels.New(ls...)
 		}
+	}
+}
+
+// WithMaxLabelStringSize overrides the byte cap applied to label/annotation
+// names and values. The default is [DefaultMaxLabelStringSize]; a non-positive
+// value disables the clamp.
+func WithMaxLabelStringSize(size int) Option {
+	return func(opts *ExternalAMOptions) {
+		opts.MaxLabelStringSize = size
 	}
 }
 
@@ -94,7 +122,17 @@ func WithMaxBatchSize(size int) Option {
 }
 
 func (cfg *ExternalAMcfg) SHA256() string {
-	return asSHA256([]string{cfg.headerString(), cfg.URL})
+	skipVerify := "false"
+	if cfg.InsecureSkipVerify {
+		skipVerify = "true"
+	}
+	return asSHA256([]string{
+		cfg.headerString(),
+		cfg.URL,
+		skipVerify,
+		cfg.TLSClientCert,
+		cfg.TLSClientKey,
+	})
 }
 
 // headersString transforms all the headers in a sorted way as a
@@ -126,6 +164,7 @@ func NewExternalAlertmanagerSender(l log.Logger, reg prometheus.Registerer, opts
 			Registerer:      reg,
 			DrainOnShutdown: defaultDrainOnShutdown,
 		},
+		MaxLabelStringSize: DefaultMaxLabelStringSize,
 	}
 
 	for _, opt := range opts {
@@ -166,7 +205,7 @@ func NewExternalAlertmanagerSender(l log.Logger, reg prometheus.Registerer, opts
 
 // ApplyConfig syncs a configuration with the sender.
 func (s *ExternalAlertmanager) ApplyConfig(orgId, id int64, alertmanagers []ExternalAMcfg) error {
-	notifierCfg, headers, err := buildNotifierConfig(alertmanagers)
+	notifierCfg, headers, dataSourceUIDs, err := buildNotifierConfig(alertmanagers)
 	if err != nil {
 		return err
 	}
@@ -174,7 +213,7 @@ func (s *ExternalAlertmanager) ApplyConfig(orgId, id int64, alertmanagers []Exte
 	s.logger = s.logger.New("org", orgId, "cfg", id)
 
 	s.logger.Info("Synchronizing config with external Alertmanager group")
-	if err := s.manager.ApplyConfig(notifierCfg, headers); err != nil {
+	if err := s.manager.ApplyConfig(notifierCfg, headers, dataSourceUIDs); err != nil {
 		return err
 	}
 
@@ -246,52 +285,28 @@ func (s *ExternalAlertmanager) DroppedAlertmanagers() []*url.URL {
 	return s.manager.DroppedAlertmanagers()
 }
 
-func buildNotifierConfig(alertmanagers []ExternalAMcfg) (*config.Config, map[string]http.Header, error) {
+func buildNotifierConfig(alertmanagers []ExternalAMcfg) (*config.Config, map[string]http.Header, map[string]string, error) {
 	amConfigs := make([]*config.AlertmanagerConfig, 0, len(alertmanagers))
 	headers := map[string]http.Header{}
+	dataSourceUIDs := map[string]string{}
 	for i, am := range alertmanagers {
-		u, err := url.Parse(am.URL)
+		amConfig, err := externalAMcfgToAlertmanagerConfig(am)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 
-		sdConfig := discovery.Configs{
-			discovery.StaticConfig{
-				{
-					Targets: []model.LabelSet{{model.AddressLabel: model.LabelValue(u.Host)}},
-				},
-			},
-		}
-
-		timeout := am.Timeout
-		if timeout == 0 {
-			timeout = defaultTimeout
-		}
-
-		amConfig := &config.AlertmanagerConfig{
-			APIVersion:              config.AlertmanagerAPIVersionV2,
-			Scheme:                  u.Scheme,
-			PathPrefix:              u.Path,
-			Timeout:                 model.Duration(timeout),
-			ServiceDiscoveryConfigs: sdConfig,
-		}
+		// The key has the same format as the AlertmanagerConfigs.ToMap() would generate
+		// so we can use it later on when working with the alertmanager config map.
+		key := fmt.Sprintf("config-%d", i)
 
 		if am.Headers != nil {
-			// The key has the same format as the AlertmanagerConfigs.ToMap() would generate
-			// so we can use it later on when working with the alertmanager config map.
-			headers[fmt.Sprintf("config-%d", i)] = am.Headers
+			headers[key] = am.Headers
 		}
 
-		// Check the URL for basic authentication information first
-		if u.User != nil {
-			amConfig.HTTPClientConfig.BasicAuth = &common_config.BasicAuth{
-				Username: u.User.Username(),
-			}
-
-			if password, isSet := u.User.Password(); isSet {
-				amConfig.HTTPClientConfig.BasicAuth.Password = common_config.Secret(password)
-			}
+		if am.DatasourceUID != "" {
+			dataSourceUIDs[key] = am.DatasourceUID
 		}
+
 		amConfigs = append(amConfigs, amConfig)
 	}
 
@@ -301,24 +316,134 @@ func buildNotifierConfig(alertmanagers []ExternalAMcfg) (*config.Config, map[str
 		},
 	}
 
-	return notifierConfig, headers, nil
+	return notifierConfig, headers, dataSourceUIDs, nil
+}
+
+// externalAMcfgToAlertmanagerConfig converts an ExternalAMcfg to a Prometheus AlertmanagerConfig.
+func externalAMcfgToAlertmanagerConfig(am ExternalAMcfg) (*config.AlertmanagerConfig, error) {
+	u, err := url.Parse(am.URL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse alertmanager URL: %w", err)
+	}
+
+	sdConfig := discovery.Configs{
+		discovery.StaticConfig{
+			{
+				Targets: []model.LabelSet{{model.AddressLabel: model.LabelValue(u.Host)}},
+			},
+		},
+	}
+
+	timeout := am.Timeout
+	if timeout == 0 {
+		timeout = defaultTimeout
+	}
+
+	amConfig := &config.AlertmanagerConfig{
+		APIVersion:              config.AlertmanagerAPIVersionV2,
+		Scheme:                  u.Scheme,
+		PathPrefix:              u.Path,
+		Timeout:                 model.Duration(timeout),
+		ServiceDiscoveryConfigs: sdConfig,
+	}
+
+	// Check the URL for basic authentication information first
+	if u.User != nil {
+		amConfig.HTTPClientConfig.BasicAuth = &common_config.BasicAuth{
+			Username: u.User.Username(),
+		}
+
+		if password, isSet := u.User.Password(); isSet {
+			amConfig.HTTPClientConfig.BasicAuth.Password = common_config.Secret(password)
+		}
+	}
+
+	// Validate that if TLS client cert is provided, key must also be provided (and vice versa)
+	if (am.TLSClientCert != "" && am.TLSClientKey == "") || (am.TLSClientCert == "" && am.TLSClientKey != "") {
+		return nil, fmt.Errorf("TLS client certificate and key must both be provided or both be empty")
+	}
+
+	// Set TLS configuration if any TLS options are provided
+	if am.InsecureSkipVerify || am.TLSClientCert != "" {
+		amConfig.HTTPClientConfig.TLSConfig = common_config.TLSConfig{
+			InsecureSkipVerify: am.InsecureSkipVerify,
+			Cert:               am.TLSClientCert,
+			Key:                common_config.Secret(am.TLSClientKey),
+		}
+	}
+
+	return amConfig, nil
 }
 
 func (s *ExternalAlertmanager) alertToNotifierAlert(alert models.PostableAlert) *Alert {
+	alertName := alert.Labels[model.AlertNameLabel]
+	ruleUID := alert.Labels[alertingModels.RuleUIDLabel]
 	// Prometheus alertmanager has stricter rules for annotations/labels than grafana's internal alertmanager, so we sanitize invalid keys.
 	return &Alert{
-		Labels:       s.options.sanitizeLabelSetFn(alert.Labels),
-		Annotations:  s.options.sanitizeLabelSetFn(alert.Annotations),
+		Labels:       s.options.sanitizeLabelSetFn(s.clampLabelSet(alert.Labels, "label", alertName, ruleUID)),
+		Annotations:  s.options.sanitizeLabelSetFn(s.clampLabelSet(alert.Annotations, "annotation", alertName, ruleUID)),
 		StartsAt:     time.Time(alert.StartsAt),
 		EndsAt:       time.Time(alert.EndsAt),
 		GeneratorURL: alert.GeneratorURL.String(),
 	}
 }
 
+// clampLabelSet bounds every name and value to MaxLabelStringSize so labels.New
+// cannot hit the prometheus stringlabels panic on strings larger than 16 MiB.
+// Oversized values are truncated; oversized names are dropped, since truncating
+// names risks key collisions.
+func (s *ExternalAlertmanager) clampLabelSet(lbls models.LabelSet, kind, alertName, ruleUID string) models.LabelSet {
+	maxSize := s.options.MaxLabelStringSize
+	if maxSize <= 0 {
+		return lbls
+	}
+
+	needsClamp := false
+	for k, v := range lbls {
+		if len(k) > maxSize || len(v) > maxSize {
+			needsClamp = true
+			break
+		}
+	}
+	if !needsClamp {
+		return lbls
+	}
+
+	clamped := make(models.LabelSet, len(lbls))
+	for k, v := range lbls {
+		if len(k) > maxSize {
+			s.logger.Warn("Dropping label/annotation with name exceeding size cap",
+				"kind", kind, "namePrefix", truncateUTF8(k, 64), "size", len(k), "cap", maxSize, "alertname", alertName, "rule_uid", ruleUID)
+			s.manager.metrics.clampedStrings.WithLabelValues(kind, "name_dropped").Inc()
+			continue
+		}
+		if len(v) > maxSize {
+			s.logger.Warn("Truncating label/annotation value exceeding size cap",
+				"kind", kind, "name", k, "size", len(v), "cap", maxSize, "alertname", alertName, "rule_uid", ruleUID)
+			s.manager.metrics.clampedStrings.WithLabelValues(kind, "value_truncated").Inc()
+			v = truncateUTF8(v, maxSize)
+		}
+		clamped[k] = v
+	}
+	return clamped
+}
+
+// truncateUTF8 truncates s to at most n bytes without splitting a multi-byte
+// rune; the Alertmanager API rejects invalid UTF-8 label values.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
 // sanitizeLabelSet sanitizes all given LabelSet keys according to sanitizeLabelName.
 // If there is a collision as a result of sanitization, a short (6 char) md5 hash of the original key will be added as a suffix.
 func (s *ExternalAlertmanager) sanitizeLabelSet(lbls models.LabelSet) labels.Labels {
-	ls := make(labels.Labels, 0, len(lbls))
+	ls := make([]labels.Label, 0, len(lbls))
 	set := make(map[string]struct{})
 
 	// Must sanitize labels in order otherwise resulting label set can be inconsistent when there are collisions.
@@ -339,7 +464,7 @@ func (s *ExternalAlertmanager) sanitizeLabelSet(lbls models.LabelSet) labels.Lab
 		ls = append(ls, labels.Label{Name: sanitizedLabelName, Value: lbls[k]})
 	}
 
-	return ls
+	return labels.New(ls...)
 }
 
 // sanitizeLabelName will fix a given label name so that it is compatible with prometheus alertmanager character restrictions.

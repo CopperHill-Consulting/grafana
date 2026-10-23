@@ -1,37 +1,43 @@
 import { config } from '@grafana/runtime';
 import {
-  AdHocFiltersVariable,
-  GroupByVariable,
-  MultiValueVariable,
+  type AdHocFiltersVariable,
+  type GroupByVariable,
+  type MultiValueVariable,
   sceneGraph,
   SceneRefreshPicker,
 } from '@grafana/scenes';
-import { Dashboard, VariableModel } from '@grafana/schema';
+import { type Dashboard, type VariableModel } from '@grafana/schema';
 import {
-  Spec as DashboardV2Spec,
+  type Spec as DashboardV2Spec,
   defaultSpec as defaultDashboardV2Spec,
   defaultDataQueryKind,
+  defaultPanelQueryKind,
   defaultPanelSpec,
-  defaultTimeSettingsSpec,
-  GridLayoutKind,
-  PanelKind,
-  PanelSpec,
-  QueryVariableKind,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
+  type GridLayoutKind,
+  type PanelKind,
+  type PanelSpec,
+  type QueryVariableKind,
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
 import { DEFAULT_ANNOTATION_COLOR } from '@grafana/ui';
-import { AnnoKeyDashboardSnapshotOriginalUrl } from 'app/features/apiserver/types';
-import { SaveDashboardAsOptions } from 'app/features/dashboard/components/SaveDashboard/types';
+import {
+  AnnoKeyDashboardSnapshotOriginalUrl,
+  AnnoKeyIgnorePredefinedVariables,
+  DENY_ALL_PREDEFINED,
+} from 'app/features/apiserver/types';
+import { type SaveDashboardAsOptions } from 'app/features/dashboard/components/SaveDashboard/types';
 import { DASHBOARD_SCHEMA_VERSION } from 'app/features/dashboard/state/DashboardMigrator';
 
 import { buildPanelEditScene } from '../panel-edit/PanelEditor';
-import { DashboardScene } from '../scene/DashboardScene';
-import { transformSaveModelToScene } from '../serialization/transformSaveModelToScene';
-import { transformSceneToSaveModel } from '../serialization/transformSceneToSaveModel';
+import { type DashboardScene } from '../scene/DashboardScene';
+import { serializeIgnorePredefinedVariables } from '../utils/predefinedVariableDenyList';
+import { getTestDashboardSceneFromSaveModel } from '../utils/test-utils';
 import { findVizPanelByKey } from '../utils/utils';
 
 import { V1DashboardSerializer, V2DashboardSerializer } from './DashboardSceneSerializer';
-import { getPanelElement, transformSaveModelSchemaV2ToScene } from './transformSaveModelSchemaV2ToScene';
-import { transformSceneToSaveModelSchemaV2 } from './transformSceneToSaveModelSchemaV2';
+import nestedDashboard from './testfiles/nested_dashboard.json';
+import { getPanelElement } from './transformSaveModelSchemaV2ToScene';
+import { transformSaveModelToScene } from './transformSaveModelToScene';
+import { transformSceneToSaveModel } from './transformSceneToSaveModel';
 
 jest.mock('@grafana/runtime', () => ({
   ...jest.requireActual('@grafana/runtime'),
@@ -104,6 +110,30 @@ describe('DashboardSceneSerializer', () => {
       expect(result.hasChanges).toBe(true);
       expect(result.diffCount).toBe(0); // Diff count is 0 because the diff contemplate only the model
       expect(result.hasFolderChanges).toBe(true);
+    });
+
+    it('Can detect predefined variables denylist change', () => {
+      const dashboard = setup();
+      dashboard.onEnterEditMode();
+
+      const annotation = serializeIgnorePredefinedVariables([DENY_ALL_PREDEFINED]);
+      dashboard.setState({
+        meta: {
+          ...dashboard.state.meta,
+          k8s: {
+            ...dashboard.state.meta.k8s,
+            annotations: {
+              ...dashboard.state.meta.k8s?.annotations,
+              [AnnoKeyIgnorePredefinedVariables]: annotation,
+            },
+          },
+        },
+      });
+
+      const result = dashboard.getDashboardChanges(false);
+      expect(result.hasChanges).toBe(true);
+      expect(result.diffCount).toBe(0);
+      expect(result.hasPredefinedVariablesChanges).toBe(true);
     });
 
     it('Can detect refresh changed', () => {
@@ -314,6 +344,9 @@ describe('DashboardSceneSerializer', () => {
               type: 'text',
             },
             {
+              type: 'row',
+            },
+            {
               type: 'text',
             },
             {
@@ -326,14 +359,30 @@ describe('DashboardSceneSerializer', () => {
               {
                 type: 'query',
                 name: 'server',
+                datasource: {
+                  type: 'influxdb',
+                },
               },
               {
                 type: 'query',
                 name: 'host',
+                datasource: {
+                  type: 'elasticsearch',
+                },
               },
               {
                 type: 'textbox',
                 name: 'search',
+              },
+              {
+                name: 'custom_csv',
+                type: 'custom',
+                valuesFormat: 'csv',
+              },
+              {
+                name: 'custom_json',
+                type: 'custom',
+                valuesFormat: 'json',
               },
             ],
           },
@@ -343,13 +392,21 @@ describe('DashboardSceneSerializer', () => {
           uid: 'my-uid',
           title: 'hello',
           schemaVersion: DASHBOARD_SCHEMA_VERSION,
-          panels_count: 3,
+          panels_count: 4,
           panel_type_text_count: 2,
           panel_type_timeseries_count: 1,
+          panel_type_row_count: 1,
           variable_type_query_count: 2,
           variable_type_textbox_count: 1,
+          variable_type_custom_count: 2,
+          variable_type_custom_csv_count: 1,
+          variable_type_custom_json_count: 1,
           settings_nowdelay: undefined,
           settings_livenow: true,
+          varsWithDataSource: [
+            { type: 'query', datasource: 'influxdb' },
+            { type: 'query', datasource: 'elasticsearch' },
+          ],
         });
       });
     });
@@ -498,6 +555,30 @@ describe('DashboardSceneSerializer', () => {
       expect(result.hasFolderChanges).toBe(true);
     });
 
+    it('Can detect predefined variables denylist change', () => {
+      const dashboard = setupV2();
+      dashboard.onEnterEditMode();
+
+      const annotation = serializeIgnorePredefinedVariables([DENY_ALL_PREDEFINED]);
+      dashboard.setState({
+        meta: {
+          ...dashboard.state.meta,
+          k8s: {
+            ...dashboard.state.meta.k8s,
+            annotations: {
+              ...dashboard.state.meta.k8s?.annotations,
+              [AnnoKeyIgnorePredefinedVariables]: annotation,
+            },
+          },
+        },
+      });
+
+      const result = dashboard.getDashboardChanges(false);
+      expect(result.hasChanges).toBe(true);
+      expect(result.diffCount).toBe(0);
+      expect(result.hasPredefinedVariablesChanges).toBe(true);
+    });
+
     it('Can detect refresh changed', () => {
       const dashboard = setupV2();
 
@@ -549,7 +630,7 @@ describe('DashboardSceneSerializer', () => {
 
         expect(result.hasVariableValueChanges).toBe(true);
         expect(result.hasChanges).toBe(true);
-        expect(result.diffCount).toBe(2);
+        expect(result.diffCount).toBe(3);
       });
 
       describe('Experimental variables', () => {
@@ -672,30 +753,48 @@ describe('DashboardSceneSerializer', () => {
         expect(serializer.getTrackingInformation(dashboard)).toBe(undefined);
       });
 
-      it('provides dashboard tracking information with from initial save model', () => {
-        const dashboard = setupV2({
-          timeSettings: {
-            nowDelay: '10s',
-            from: '',
-            to: '',
-            autoRefresh: '',
-            autoRefreshIntervals: [],
-            hideTimepicker: false,
-            fiscalYearStartMonth: 0,
-            timezone: '',
-          },
-          liveNow: true,
-        });
+      it('provides dashboard tracking information from initial save model', () => {
+        const dashboard = setupV2(nestedDashboard as Partial<DashboardV2Spec>);
 
         expect(dashboard.getTrackingInformation()).toEqual({
           uid: 'dashboard-test',
-          title: 'hello',
-          panels_count: 1,
-          panel_type__count: 1,
-          variable_type_custom_count: 1,
+          title: 'Cloudwatch ec2 new layout',
+          panels_count: 6,
+          rowCount: 2,
+          schemaVersion: DASHBOARD_SCHEMA_VERSION,
           settings_nowdelay: undefined,
           settings_livenow: true,
-          schemaVersion: DASHBOARD_SCHEMA_VERSION,
+          panel_type_timeseries_count: 6,
+          variable_type_adhoc_count: 1,
+          variable_type_datasource_count: 1,
+          variable_type_custom_count: 3,
+          variable_type_custom_csv_count: 2,
+          variable_type_custom_json_count: 1,
+          variable_type_query_count: 1,
+          varsWithDataSource: [
+            { type: 'query', datasource: 'cloudwatch' },
+            { type: 'adhoc', datasource: 'opensearch' },
+            { type: 'datasource', datasource: 'bigquery' },
+          ],
+        });
+
+        expect(dashboard.getDynamicDashboardsTrackingInformation()).toEqual({
+          panelCount: 6,
+          rowCount: 6,
+          tabCount: 4,
+          templateVariableCount: 6,
+          maxNestingLevel: 3,
+          dashStructure:
+            '[{"kind":"row","children":[{"kind":"row","children":[{"kind":"tab","children":[{"kind":"panel"},{"kind":"panel"},{"kind":"panel"}]},{"kind":"tab","children":[]}]},{"kind":"row","children":[{"kind":"row","children":[{"kind":"panel"}]}]}]},{"kind":"row","children":[{"kind":"row","children":[{"kind":"tab","children":[{"kind":"panel"}]},{"kind":"tab","children":[{"kind":"panel"}]}]}]}]',
+          conditionalRenderRulesCount: 3,
+          autoLayoutCount: 3,
+          customGridLayoutCount: 2,
+          rowsLayoutCount: 4,
+          tabsLayoutCount: 2,
+          panelsByDatasourceType: {
+            cloudwatch: 5,
+            datasource: 1,
+          },
         });
       });
     });
@@ -775,7 +874,7 @@ describe('DashboardSceneSerializer', () => {
             data: {
               kind: 'QueryGroup',
               spec: {
-                queries: [],
+                queries: [defaultPanelQueryKind()],
                 queryOptions: {},
                 transformations: [],
               },
@@ -835,6 +934,7 @@ describe('DashboardSceneSerializer', () => {
               query: 'app1',
               skipUrlSync: false,
               allowCustomValue: true,
+              valuesFormat: 'csv',
             },
           },
         ]);
@@ -1378,8 +1478,8 @@ describe('DashboardSceneSerializer', () => {
         serializer.initializeDSReferencesMapping(v1SaveModel as unknown as DashboardV2Spec);
         expect(serializer.getDSReferencesMapping()).toEqual({
           panels: new Map(),
-          variables: new Set(),
-          annotations: new Set(),
+          variables: new Map(),
+          annotations: new Map(),
         });
         expect(serializer.getDSReferencesMapping().panels.size).toBe(0);
       });
@@ -1396,8 +1496,8 @@ describe('DashboardSceneSerializer', () => {
         serializer.initializeDSReferencesMapping(undefined);
         expect(serializer.getDSReferencesMapping()).toEqual({
           panels: expect.any(Map),
-          variables: expect.any(Set),
-          annotations: expect.any(Set),
+          variables: expect.any(Map),
+          annotations: expect.any(Map),
         });
         expect(serializer.getDSReferencesMapping().panels.size).toBe(0);
       });
@@ -1407,6 +1507,11 @@ describe('DashboardSceneSerializer', () => {
   describe('onSaveComplete', () => {
     it('should set the initialSaveModel correctly', () => {
       const serializer = new V2DashboardSerializer();
+      serializer.metadata = {
+        name: 'source-uid',
+        resourceVersion: '1',
+        creationTimestamp: '2023-01-01T00:00:00Z',
+      };
       const saveModel = defaultDashboardV2Spec();
       const response = {
         id: 1,
@@ -1422,6 +1527,9 @@ describe('DashboardSceneSerializer', () => {
       expect(serializer.initialSaveModel).toEqual({
         ...saveModel,
       });
+      // Save As create must update metadata.name so follow-up saves don't PUT the source.
+      expect(serializer.metadata?.name).toBe('aa');
+      expect(serializer.metadata?.generation).toBe(2);
     });
 
     it('should allow retrieving snapshot url', () => {
@@ -1478,87 +1586,5 @@ function setup(override: Partial<Dashboard> = {}) {
 }
 
 function setupV2(spec?: Partial<DashboardV2Spec>) {
-  const dashboard = transformSaveModelSchemaV2ToScene({
-    kind: 'DashboardWithAccessInfo',
-    spec: {
-      ...defaultDashboardV2Spec(),
-      title: 'hello',
-      timeSettings: {
-        ...defaultTimeSettingsSpec(),
-        autoRefresh: '10s',
-        from: 'now-1h',
-        to: 'now',
-      },
-      elements: {
-        'panel-1': {
-          kind: 'Panel',
-          spec: {
-            ...defaultPanelSpec(),
-            id: 1,
-            title: 'Panel 1',
-          },
-        },
-      },
-      layout: {
-        kind: 'GridLayout',
-        spec: {
-          items: [
-            {
-              kind: 'GridLayoutItem',
-              spec: {
-                x: 0,
-                y: 0,
-                width: 12,
-                height: 8,
-                element: {
-                  kind: 'ElementReference',
-                  name: 'panel-1',
-                },
-              },
-            },
-          ],
-        },
-      },
-      variables: [
-        {
-          kind: 'CustomVariable',
-          spec: {
-            name: 'app',
-            label: 'Query Variable',
-            description: 'A query variable',
-            skipUrlSync: false,
-            hide: 'dontHide',
-            options: [],
-            multi: false,
-            current: {
-              text: 'app1',
-              value: 'app1',
-            },
-            query: 'app1',
-            allValue: '',
-            includeAll: false,
-            allowCustomValue: true,
-          },
-        },
-      ],
-      ...spec,
-    },
-    apiVersion: 'v1',
-    metadata: {
-      name: 'dashboard-test',
-      resourceVersion: '1',
-      creationTimestamp: '2023-01-01T00:00:00Z',
-    },
-    access: {
-      canEdit: true,
-      canSave: true,
-      canStar: true,
-      canShare: true,
-    },
-  });
-
-  const initialSaveModel = transformSceneToSaveModelSchemaV2(dashboard);
-  dashboard.setInitialSaveModel(initialSaveModel);
-
-  return dashboard;
+  return getTestDashboardSceneFromSaveModel(spec);
 }

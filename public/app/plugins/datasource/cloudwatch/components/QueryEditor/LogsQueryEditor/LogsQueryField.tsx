@@ -1,11 +1,18 @@
 import { css } from '@emotion/css';
-import { ReactNode, useCallback } from 'react';
+import { type ReactNode, useCallback } from 'react';
 
-import { GrafanaTheme2, QueryEditorProps } from '@grafana/data';
+import { type GrafanaTheme2, type QueryEditorProps } from '@grafana/data';
 import { useStyles2 } from '@grafana/ui';
 
-import { CloudWatchDatasource } from '../../../datasource';
-import { CloudWatchJsonData, CloudWatchLogsQuery, CloudWatchQuery, LogsQueryLanguage } from '../../../types';
+import {
+  type CloudWatchLogsQuery,
+  type LogGroupClass,
+  LogsQueryLanguage,
+  type LogsQueryScope,
+} from '../../../dataquery.gen';
+import { type CloudWatchDatasource } from '../../../datasource';
+import { type CloudWatchJsonData, type CloudWatchQuery } from '../../../types';
+import { DataSourcesField } from '../../shared/DataSources/DataSourcesField';
 import { LogGroupsFieldWrapper } from '../../shared/LogGroups/LogGroupsField';
 
 import { LogsQLCodeEditor } from './code-editors/LogsQLCodeEditor';
@@ -39,9 +46,34 @@ export const CloudWatchLogsQueryField = (props: CloudWatchLogsQueryFieldProps) =
         onChange={(logGroups) => {
           onChangeLogs({ ...query, logGroups, logGroupNames: undefined });
         }}
+        queryLanguage={query.queryLanguage}
+        logsQueryScope={query.logsQueryScope}
+        onLogsQueryScopeChange={(scope: LogsQueryScope) => {
+          onChangeLogs({ ...query, logsQueryScope: scope });
+        }}
+        logGroupPrefixes={query.logGroupPrefixes}
+        onLogGroupPrefixesChange={(prefixes: string[]) => {
+          onChangeLogs({ ...query, logGroupPrefixes: prefixes });
+        }}
+        logGroupClass={query.logGroupClass}
+        onLogGroupClassChange={(logGroupClass: LogGroupClass) => {
+          onChangeLogs({ ...query, logGroupClass });
+        }}
+        selectedAccountIds={query.selectedAccountIds}
+        onSelectedAccountIdsChange={(accountIds: string[]) => {
+          onChangeLogs({ ...query, selectedAccountIds: accountIds });
+        }}
         //legacy props
         legacyOnChange={(logGroupNames) => {
           onChangeLogs({ ...query, logGroupNames });
+        }}
+      />
+      <DataSourcesField
+        region={query.region}
+        datasource={datasource}
+        dataSources={query.logDataSources}
+        onChange={(logDataSources) => {
+          onChangeLogs({ ...query, logDataSources });
         }}
       />
       <div>

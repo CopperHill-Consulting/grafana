@@ -2,11 +2,11 @@ import { css, cx } from '@emotion/css';
 import { useCallback, useRef, useState, useEffect } from 'react';
 import * as React from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { t } from '@grafana/i18n';
 
 import { useStyles2 } from '../../themes/ThemeContext';
-import { Button, ButtonProps } from '../Button/Button';
+import { Button, type ButtonProps } from '../Button/Button';
 import { Icon } from '../Icon/Icon';
 import { InlineToast } from '../InlineToast/InlineToast';
 
@@ -21,6 +21,11 @@ export type Props = ButtonProps & {
 
 const SHOW_SUCCESS_DURATION = 2 * 1000;
 
+/**
+ * A control for allowing the user to copy text to their clipboard. Uses native APIs on modern browsers, falling back to the old `document.execCommand('copy')` API on other browsers. The text to be copied should be provided via `getText` prop.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/inputs-clipboardbutton--docs
+ */
 export function ClipboardButton({
   onClipboardCopy,
   onClipboardError,

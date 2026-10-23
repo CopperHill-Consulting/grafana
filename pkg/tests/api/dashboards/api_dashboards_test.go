@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/grafana/pkg/setting"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -38,8 +39,15 @@ func TestMain(m *testing.M) {
 func TestIntegrationDashboardServiceValidation(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
+	unifiedConfig := make(map[string]setting.UnifiedStorageConfig)
+	for _, resource := range []string{"folders.folder.grafana.app", "dashboards.dashboard.grafana.app"} {
+		unifiedConfig[resource] = setting.UnifiedStorageConfig{
+			EnableMigration: true,
+		}
+	}
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableAnonymous: true,
+		DisableAnonymous:     true,
+		UnifiedStorageConfig: unifiedConfig,
 	})
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
 
@@ -218,7 +226,7 @@ func TestIntegrationDashboardServiceValidation(t *testing.T) {
 		require.NoError(t, err)
 	})
 
-	t.Run("When updating uid with id", func(t *testing.T) {
+	t.Run("When saving a dashboard with an already used legacy ID", func(t *testing.T) {
 		resp, err := postDashboard(t, grafanaListedAddr, "admin", "admin", map[string]interface{}{
 			"dashboard": map[string]interface{}{
 				"id":    savedDashInFolder.ID, // nolint:staticcheck
@@ -229,11 +237,28 @@ func TestIntegrationDashboardServiceValidation(t *testing.T) {
 			"overwrite": true,
 		})
 		require.NoError(t, err)
+		assert.Equal(t, http.StatusConflict, resp.StatusCode)
+		err = resp.Body.Close()
+		require.NoError(t, err)
+	})
+
+	t.Run("When updating a dashboard already using that uid", func(t *testing.T) {
+		resp, err := postDashboard(t, grafanaListedAddr, "admin", "admin", map[string]interface{}{
+			"dashboard": map[string]interface{}{
+				"id":    savedDashInFolder.ID,
+				"uid":   savedDashInFolder.UID,
+				"title": "Dashboard with existing UID",
+			},
+			"folderUid": savedDashInFolder.FolderUID,
+			"overwrite": true,
+		})
+		require.NoError(t, err)
 		assert.Equal(t, http.StatusOK, resp.StatusCode)
 		err = resp.Body.Close()
 		require.NoError(t, err)
 	})
-	t.Run("When updating uid with a dashboard already using that uid", func(t *testing.T) {
+
+	t.Run("When updating id with a dashboard already using that uid", func(t *testing.T) {
 		resp, err := postDashboard(t, grafanaListedAddr, "admin", "admin", map[string]interface{}{
 			"dashboard": map[string]interface{}{
 				"id":    savedDashInFolder.ID, // nolint:staticcheck
@@ -266,6 +291,31 @@ func TestIntegrationDashboardServiceValidation(t *testing.T) {
 		err = resp.Body.Close()
 		require.NoError(t, err)
 	})
+
+	// Obs: in legacy, the dashboard request would fail
+	// After the dashboard is created, the user can see that there is an error with the library panel and can remove them manually
+	t.Run("When creating a dashboard that references a non-existent library panel", func(t *testing.T) {
+		resp, err := postDashboard(t, grafanaListedAddr, "admin", "admin", map[string]interface{}{
+			"dashboard": map[string]interface{}{
+				"title": "Bad dashboard",
+				"panels": []interface{}{
+					map[string]interface{}{
+						"gridPos": map[string]int{"h": 0, "w": 0, "x": 0, "y": 0},
+						"libraryPanel": map[string]string{
+							"name": "Bad panel",
+							"uid":  "invalid-uid",
+						},
+					},
+				},
+			},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		_, err = io.ReadAll(resp.Body)
+		require.NoError(t, err)
+		err = resp.Body.Close()
+		require.NoError(t, err)
+	})
 }
 
 func TestIntegrationDashboardQuota(t *testing.T) {
@@ -276,6 +326,7 @@ func TestIntegrationDashboardQuota(t *testing.T) {
 		DisableAnonymous:  true,
 		EnableQuota:       true,
 		DashboardOrgQuota: &dashboardQuota,
+		DBMaxConns:        10,
 	})
 
 	grafanaListedAddr, _ := testinfra.StartGrafanaEnv(t, dir, path)
@@ -303,7 +354,7 @@ func TestIntegrationDashboardQuota(t *testing.T) {
 		dashboardDTO := &plugindashboards.PluginDashboard{}
 		err = json.Unmarshal(b, dashboardDTO)
 		require.NoError(t, err)
-		require.EqualValues(t, 1, dashboardDTO.DashboardId)
+		require.EqualValues(t, "just testing", dashboardDTO.Title)
 	})
 
 	t.Run("when quota limit exceeds importing a dashboard should fail", func(t *testing.T) {
@@ -352,7 +403,7 @@ providers:
 	input, err := os.ReadFile(filepath.Join("./home.json"))
 	require.NoError(t, err)
 	provDashboardFile := filepath.Join(provDashboardsDir, "home.json")
-	err = os.WriteFile(provDashboardFile, input, 0644)
+	err = os.WriteFile(provDashboardFile, input, 0644) // #nosec G703 -- test writes to caller-provided temp dir
 	require.NoError(t, err)
 	grafanaListedAddr, _ := testinfra.StartGrafanaEnv(t, dir, path)
 
@@ -392,7 +443,7 @@ providers:
 			dashboardUID = d.UID
 			dashboardID = d.ID // nolint:staticcheck
 		}
-		assert.Equal(t, int64(1), dashboardID)
+		assert.Len(t, *dashboardList, 1)
 
 		testCases := []struct {
 			desc          string
@@ -635,10 +686,6 @@ func createFolder(t *testing.T, grafanaListedAddr string, title string) *dtos.Fo
 	return f
 }
 
-func intPtr(n int) *int {
-	return &n
-}
-
 func TestIntegrationPreserveSchemaVersion(t *testing.T) {
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
 		DisableAnonymous: true,
@@ -646,7 +693,7 @@ func TestIntegrationPreserveSchemaVersion(t *testing.T) {
 
 	grafanaListedAddr, _ := testinfra.StartGrafanaEnv(t, dir, path)
 
-	schemaVersions := []*int{intPtr(1), intPtr(36), intPtr(40), nil}
+	schemaVersions := []*int{new(1), new(36), new(40), nil}
 	for _, schemaVersion := range schemaVersions {
 		var title string
 		if schemaVersion == nil {
@@ -752,7 +799,7 @@ func TestIntegrationImportDashboardWithLibraryPanels(t *testing.T) {
 				},
 				{
 					"id": 2,
-					"title": "Library Panel 2", 
+					"title": "Library Panel 2",
 					"type": "stat",
 					"gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
 					"libraryPanel": {
@@ -776,7 +823,7 @@ func TestIntegrationImportDashboardWithLibraryPanels(t *testing.T) {
 					}
 				},
 				"test-lib-panel-2": {
-					"uid": "test-lib-panel-2", 
+					"uid": "test-lib-panel-2",
 					"name": "Test Library Panel 2",
 					"kind": 1,
 					"type": "stat",
@@ -986,7 +1033,8 @@ func TestIntegrationDashboardServicePermissions(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
 	dir, path := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableAnonymous: true,
+		DisableAnonymous:        true,
+		DisableAuthZClientCache: true,
 	})
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, path)
 	tests.CreateUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
@@ -1210,6 +1258,138 @@ func TestIntegrationDashboardServicePermissions(t *testing.T) {
 
 			assert.Contains(t, foundTitles, "dashboard in parent", "Should return dashboard in parent folder")
 			assert.NotContains(t, foundTitles, "dashboard in child", "Should not return dashboard in child folder")
+		})
+
+		t.Run("user with edit permissions on dashboard but not on parent folder should be able to edit the dashboard", func(t *testing.T) {
+			testFolder := createFolder(t, grafanaListedAddr, "restricted folder")
+			testDash := createDashboard(t, grafanaListedAddr, "dashboard with specific permissions", testFolder.ID, testFolder.UID) // nolint:staticcheck
+			restrictedUserID := tests.CreateUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
+				DefaultOrgRole: string(org.RoleNone),
+				Login:          "restricteduser",
+				Password:       "restricteduser",
+				IsAdmin:        false,
+			})
+			setDashboardPermissions := func(t *testing.T, grafanaListedAddr string, dashboardUID string, permissions []map[string]interface{}) {
+				t.Helper()
+
+				permissionPayload := map[string]interface{}{
+					"items": permissions,
+				}
+
+				payloadBytes, err := json.Marshal(permissionPayload)
+				require.NoError(t, err)
+
+				u := fmt.Sprintf("http://admin:admin@%s/api/dashboards/uid/%s/permissions", grafanaListedAddr, dashboardUID)
+				req, err := http.NewRequest(http.MethodPost, u, bytes.NewBuffer(payloadBytes))
+				require.NoError(t, err)
+				req.Header.Set("Content-Type", "application/json")
+
+				client := &http.Client{}
+				resp, err := client.Do(req)
+				require.NoError(t, err)
+				assert.Equal(t, http.StatusOK, resp.StatusCode)
+				err = resp.Body.Close()
+				require.NoError(t, err)
+			}
+			editPermissions := []map[string]interface{}{
+				{
+					"permission": 2,
+					"userId":     restrictedUserID,
+				},
+			}
+			setDashboardPermissions(t, grafanaListedAddr, testDash.UID, editPermissions)
+
+			// user cannot access the folder
+			u := fmt.Sprintf("http://restricteduser:restricteduser@%s/api/folders/%s", grafanaListedAddr, testFolder.UID)
+			resp, err := http.Get(u) // nolint:gosec
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, "User should not have access to the folder")
+			err = resp.Body.Close()
+			require.NoError(t, err)
+
+			// but can edit the dashboard
+			dashboardPayload := map[string]interface{}{
+				"dashboard": map[string]interface{}{
+					"uid":   testDash.UID,
+					"title": "Updated title by restricted user",
+				},
+				"folderUid": testFolder.UID,
+				"overwrite": true,
+			}
+			resp, err = postDashboard(t, grafanaListedAddr, "restricteduser", "restricteduser", dashboardPayload)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, "User should be able to edit dashboard even without folder access")
+			err = resp.Body.Close()
+			require.NoError(t, err)
+		})
+
+		t.Run("user with no permissions on dashboard or parent folder should not be able to edit the dashboard", func(t *testing.T) {
+			testFolder := createFolder(t, grafanaListedAddr, "restricted folder")
+			testDash := createDashboard(t, grafanaListedAddr, "dashboard with specific permissions", testFolder.ID, testFolder.UID) // nolint:staticcheck
+
+			// user cannot access the folder
+			u := fmt.Sprintf("http://restricteduser:restricteduser@%s/api/folders/%s", grafanaListedAddr, testFolder.UID)
+			resp, err := http.Get(u) // nolint:gosec
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, "User should not have access to the folder")
+			err = resp.Body.Close()
+			require.NoError(t, err)
+
+			// and cannot edit the dashboard
+			dashboardPayload := map[string]interface{}{
+				"dashboard": map[string]interface{}{
+					"uid":   testDash.UID,
+					"title": "Updated title by restricted user",
+				},
+				"folderUid": testFolder.UID,
+				"overwrite": true,
+			}
+			resp, err = postDashboard(t, grafanaListedAddr, "restricteduser", "restricteduser", dashboardPayload)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusForbidden, resp.StatusCode, "User should not be able to edit dashboard without any permissions")
+			err = resp.Body.Close()
+			require.NoError(t, err)
+		})
+
+		t.Run("user with edit permissions on parent folder should be able to edit dashboard through permission inheritance", func(t *testing.T) {
+			inheritedPermissionsUserID := tests.CreateUser(t, env.SQLStore, env.Cfg, user.CreateUserCommand{
+				DefaultOrgRole: string(org.RoleNone),
+				Login:          "inheriteduser",
+				Password:       "inheriteduser",
+				IsAdmin:        false,
+			})
+			testFolder := createFolder(t, grafanaListedAddr, "folder with inherited permissions")
+			editFolderPermissions := []map[string]interface{}{
+				{
+					"permission": 2,
+					"userId":     inheritedPermissionsUserID,
+				},
+			}
+			setFolderPermissions(t, grafanaListedAddr, testFolder.UID, editFolderPermissions)
+
+			// create dashboard in the folder without specific dashboard permissions
+			testDash := createDashboard(t, grafanaListedAddr, "dashboard inheriting permissions", testFolder.ID, testFolder.UID) // nolint:staticcheck
+			u := fmt.Sprintf("http://inheriteduser:inheriteduser@%s/api/folders/%s", grafanaListedAddr, testFolder.UID)
+			resp, err := http.Get(u) // nolint:gosec
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, "User should have access to the folder")
+			err = resp.Body.Close()
+			require.NoError(t, err)
+
+			// and can edit the dashboard by inheriting permissions from the folder
+			dashboardPayload := map[string]interface{}{
+				"dashboard": map[string]interface{}{
+					"uid":   testDash.UID,
+					"title": "Updated title via inherited permissions",
+				},
+				"folderUid": testFolder.UID,
+				"overwrite": true,
+			}
+			resp, err = postDashboard(t, grafanaListedAddr, "inheriteduser", "inheriteduser", dashboardPayload)
+			require.NoError(t, err)
+			assert.Equal(t, http.StatusOK, resp.StatusCode, "User should be able to edit dashboard through inherited folder permissions")
+			err = resp.Body.Close()
+			require.NoError(t, err)
 		})
 	})
 }

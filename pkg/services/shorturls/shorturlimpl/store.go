@@ -3,13 +3,13 @@ package shorturlimpl
 import (
 	"context"
 
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/services/shorturls"
-	"github.com/grafana/grafana/pkg/services/user"
 )
 
 type store interface {
-	Get(ctx context.Context, user *user.SignedInUser, uid string) (*shorturls.ShortUrl, error)
+	Get(ctx context.Context, user identity.Requester, uid string) (*shorturls.ShortUrl, error)
 	Update(ctx context.Context, shortURL *shorturls.ShortUrl) error
 	Insert(ctx context.Context, shortURL *shorturls.ShortUrl) error
 	Delete(ctx context.Context, cmd *shorturls.DeleteShortUrlCommand) error
@@ -20,10 +20,10 @@ type sqlStore struct {
 	db db.DB
 }
 
-func (s sqlStore) Get(ctx context.Context, user *user.SignedInUser, uid string) (*shorturls.ShortUrl, error) {
+func (s sqlStore) Get(ctx context.Context, user identity.Requester, uid string) (*shorturls.ShortUrl, error) {
 	var shortURL shorturls.ShortUrl
 	err := s.db.WithDbSession(ctx, func(dbSession *db.Session) error {
-		exists, err := dbSession.Where("org_id=? AND uid=?", user.OrgID, uid).Get(&shortURL)
+		exists, err := dbSession.Where("org_id=? AND uid=?", user.GetOrgID(), uid).Get(&shortURL)
 		if err != nil {
 			return err
 		}
@@ -59,12 +59,15 @@ func (s sqlStore) Insert(ctx context.Context, shortURL *shorturls.ShortUrl) erro
 }
 
 func (s sqlStore) Delete(ctx context.Context, cmd *shorturls.DeleteShortUrlCommand) error {
-	// If a UID is provided, delete that specific short URL
+	// If a UID is provided, delete that specific short URL scoped to the caller's org
 	if cmd.Uid != "" {
+		if cmd.OrgId == 0 {
+			return shorturls.ErrShortURLBadRequest.Errorf("org id is required to delete a short URL by uid")
+		}
 		return s.db.WithTransactionalDbSession(ctx, func(session *db.Session) error {
-			var rawSql = "DELETE FROM short_url WHERE uid = ?"
+			var rawSql = "DELETE FROM short_url WHERE org_id = ? AND uid = ?"
 
-			if result, err := session.Exec(rawSql, cmd.Uid); err != nil {
+			if result, err := session.Exec(rawSql, cmd.OrgId, cmd.Uid); err != nil {
 				return err
 			} else if cmd.NumDeleted, err = result.RowsAffected(); err != nil {
 				return err

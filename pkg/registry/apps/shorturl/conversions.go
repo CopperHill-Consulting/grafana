@@ -8,7 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	shorturl "github.com/grafana/grafana/apps/shorturl/pkg/apis/shorturl/v1alpha1"
+	shorturl "github.com/grafana/grafana/apps/shorturl/pkg/apis/shorturl/v1beta1"
 	"github.com/grafana/grafana/pkg/api/dtos"
 	"github.com/grafana/grafana/pkg/services/apiserver/endpoints/request"
 	"github.com/grafana/grafana/pkg/services/shorturls"
@@ -21,11 +21,18 @@ func convertToK8sResource(v *shorturls.ShortUrl, namespacer request.NamespaceMap
 	status := shorturl.ShortURLStatus{
 		LastSeenAt: v.LastSeenAt,
 	}
+
+	// resourceVersion can't be 0, since we are using the lastSeenAt value, when it's zero we default to current time
+	resourceVersion := fmt.Sprintf("%d", v.LastSeenAt)
+	if v.LastSeenAt == 0 {
+		resourceVersion = fmt.Sprintf("%d", time.Now().Unix())
+	}
+
 	p := &shorturl.ShortURL{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:              v.Uid,
-			ResourceVersion:   fmt.Sprintf("%d", v.LastSeenAt),
-			CreationTimestamp: metav1.NewTime(time.UnixMilli(v.CreatedAt)),
+			ResourceVersion:   resourceVersion,
+			CreationTimestamp: metav1.NewTime(time.Unix(v.CreatedAt, 0)),
 			Namespace:         namespacer(v.OrgId),
 		},
 		Spec:   spec,
@@ -57,13 +64,30 @@ func UnstructuredToLegacyShortURLDTO(item unstructured.Unstructured, appURL stri
 	}
 }
 
-func UnstructuredToLegacyShortURL(item unstructured.Unstructured) *shorturls.ShortUrl {
-	spec := item.Object["spec"].(map[string]interface{})
-	status := item.Object["status"].(map[string]interface{})
+func UnstructuredToLegacyShortURL(item unstructured.Unstructured) (*shorturls.ShortUrl, error) {
+	path, found, err := unstructured.NestedString(item.Object, "spec", "path")
+	if err != nil {
+		return nil, fmt.Errorf("shorturl %q: invalid spec.path: %w", item.GetName(), err)
+	}
+	if !found {
+		return nil, fmt.Errorf("shorturl %q: missing spec.path", item.GetName())
+	}
+
+	// lastSeenAt is optional. Numbers in an Unstructured may be decoded as either int64
+	// (k8s codec) or float64 (plain JSON unmarshal), so accept both rather than asserting
+	// a single concrete type.
+	lastSeen, found, err := unstructured.NestedNumberAsFloat64(item.Object, "status", "lastSeenAt")
+	if err != nil {
+		return nil, fmt.Errorf("shorturl %q: invalid status.lastSeenAt: %w", item.GetName(), err)
+	}
+	var lastSeenAt int64
+	if found {
+		lastSeenAt = int64(lastSeen)
+	}
 
 	return &shorturls.ShortUrl{
 		Uid:        item.GetName(),
-		Path:       spec["path"].(string),
-		LastSeenAt: status["lastSeenAt"].(int64),
-	}
+		Path:       path,
+		LastSeenAt: lastSeenAt,
+	}, nil
 }

@@ -10,9 +10,9 @@ import {
   useInteractions,
   safePolygon,
 } from '@floating-ui/react';
-import { forwardRef, cloneElement, isValidElement, useCallback, useId, useRef, useState } from 'react';
+import { forwardRef, cloneElement, isValidElement, useCallback, useId, useRef, useState, type JSX } from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 
 import { useStyles2 } from '../../themes/ThemeContext';
@@ -20,7 +20,7 @@ import { getPositioningMiddleware } from '../../utils/floating';
 import { buildTooltipTheme, getPlacement } from '../../utils/tooltipUtils';
 import { Portal } from '../Portal/Portal';
 
-import { PopoverContent, TooltipPlacement } from './types';
+import { type PopoverContent, type TooltipPlacement } from './types';
 
 export interface TooltipProps {
   theme?: 'info' | 'error' | 'info-alt';
@@ -34,6 +34,9 @@ export interface TooltipProps {
   interactive?: boolean;
 }
 
+/**
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/overlays-tooltip--docs
+ */
 export const Tooltip = forwardRef<HTMLElement, TooltipProps>(
   ({ children, theme, interactive, show, placement, content }, forwardedRef) => {
     const arrowRef = useRef(null);
@@ -49,6 +52,7 @@ export const Tooltip = forwardRef<HTMLElement, TooltipProps>(
       ...getPositioningMiddleware(floatingUIPlacement),
       arrow({
         element: arrowRef,
+        padding: 12,
       }),
     ];
 
@@ -102,18 +106,28 @@ export const Tooltip = forwardRef<HTMLElement, TooltipProps>(
         })}
         {isOpen && (
           <Portal>
-            <div ref={refs.setFloating} style={floatingStyles} {...getFloatingProps()}>
-              <FloatingArrow className={style.arrow} ref={arrowRef} context={context} />
-              <div
-                data-testid={selectors.components.Tooltip.container}
-                id={tooltipId}
-                role="tooltip"
-                className={style.container}
-              >
-                {typeof content === 'string' && content}
-                {isValidElement(content) && cloneElement(content)}
-                {contentIsFunction && content({})}
-              </div>
+            <div
+              ref={refs.setFloating}
+              style={floatingStyles}
+              data-testid={selectors.components.Tooltip.container}
+              id={tooltipId}
+              role="tooltip"
+              className={style.container}
+              {...getFloatingProps()}
+            >
+              <FloatingArrow
+                strokeWidth={0.3}
+                stroke={style.borderColor}
+                width={8}
+                height={4}
+                tipRadius={2}
+                className={style.arrow}
+                ref={arrowRef}
+                context={context}
+              />
+              {typeof content === 'string' && content}
+              {isValidElement(content) && cloneElement(content)}
+              {contentIsFunction && content({})}
             </div>
           </Portal>
         )}
@@ -124,7 +138,8 @@ export const Tooltip = forwardRef<HTMLElement, TooltipProps>(
 
 Tooltip.displayName = 'Tooltip';
 
-export const getStyles = (theme: GrafanaTheme2) => {
+const getStyles = (theme: GrafanaTheme2) => {
+  const visualRefreshEnabled = theme.flags.visualDesignRefresh;
   const info = buildTooltipTheme(
     theme,
     theme.components.tooltip.background,
@@ -134,9 +149,9 @@ export const getStyles = (theme: GrafanaTheme2) => {
   );
   const error = buildTooltipTheme(
     theme,
-    theme.colors.error.main,
-    theme.colors.error.main,
-    theme.colors.error.contrastText,
+    theme.colors.error[visualRefreshEnabled ? 'background' : 'main'],
+    theme.colors.error[visualRefreshEnabled ? 'border' : 'main'],
+    theme.colors.error[visualRefreshEnabled ? 'text' : 'contrastText'],
     { topBottom: 0.5, rightLeft: 1 }
   );
 

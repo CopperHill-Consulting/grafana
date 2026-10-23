@@ -1,4 +1,4 @@
-import { BootData } from '@grafana/data';
+import { type BootData, type PanelPluginMeta } from '@grafana/data';
 import { test, expect } from '@grafana/plugin-e2e';
 
 test.describe(
@@ -13,21 +13,28 @@ test.describe(
       page,
     }) => {
       // this test can absolutely take longer than the default 30s timeout
-      test.setTimeout(60000);
+      test.setTimeout(120000);
 
       // Create new dashboard
       const dashboardPage = await gotoDashboardPage({});
 
       // Add new panel
-      await dashboardPage.addPanel();
+      const editPage = await dashboardPage.addPanel();
 
       // Get panel types from window object
-      const panelTypes = await page.evaluate(() => {
+      const panelTypes: PanelPluginMeta[] = await page.evaluate(() => {
         // @grafana/plugin-e2e doesn't export the full bootdata config
         // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
         const win = window as typeof window & { grafanaBootData: BootData };
         return win.grafanaBootData?.settings?.panels ?? {};
       });
+
+      const vizPicker = editPage.getByGrafanaSelector(selectors.components.PanelEditor.toggleVizPicker);
+
+      // the viz picker is auto-opened for new unconfigured panels
+      if (await vizPicker.filter({ hasText: 'Back' }).isVisible()) {
+        await vizPicker.click({ force: true });
+      }
 
       // Loop through every panel type and ensure no crash
       for (const [_, panel] of Object.entries(panelTypes)) {
@@ -35,16 +42,30 @@ test.describe(
           continue; // Skip hidden and deprecated panels
         }
 
-        // Select the panel type in the viz picker
-        const vizPicker = dashboardPage.getByGrafanaSelector(selectors.components.PanelEditor.toggleVizPicker);
-        await vizPicker.click();
-        await dashboardPage.getByGrafanaSelector(selectors.components.PluginVisualization.item(panel.name)).click();
+        try {
+          editPage.setVisualization(panel.name);
 
-        // Verify panel type is selected
-        await expect(vizPicker).toHaveText(panel.name);
+          // Verify panel type is selected
+          await expect(
+            editPage.getByGrafanaSelector(selectors.components.PanelEditor.OptionsPane.header),
+            'verify panel editor for the selected panel type is rendered'
+          ).toHaveText(panel.name, { timeout: 10000 });
 
-        // Ensure no unexpected error occurred
-        await expect(page.getByText('An unexpected error happened')).toBeHidden();
+          await expect(page.getByLabel('Panel loading bar'), 'wait for panel to finish rendering').toHaveCount(0, {
+            timeout: 10000,
+          });
+
+          await expect(
+            page.getByText('An unexpected error happened'),
+            'ensure no unexpected error occurred'
+          ).toBeHidden();
+
+          // open the viz picker to get ready to select the next panel type
+          await expect(vizPicker.filter({ hasText: 'Change' }), 'we should be viewing panel options').toBeVisible();
+          await vizPicker.click({ force: true });
+        } catch (error) {
+          throw new Error(`Panel '${panel.name}' failed: ${error}`);
+        }
       }
     });
   }

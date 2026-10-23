@@ -1,33 +1,48 @@
 import { css } from '@emotion/css';
-import { cloneDeep, isArray, isObject } from 'lodash';
+import { cloneDeep, isArray, isObject, isString } from 'lodash';
 import * as React from 'react';
 import { useAsync } from 'react-use';
 
 import {
+  type AppPluginConfig,
   type PluginExtensionEventHelpers,
   type PluginExtensionOpenModalOptions,
   isDateTime,
   dateTime,
   PluginContextProvider,
-  PluginExtensionLink,
-  PanelMenuItem,
-  PluginExtensionAddedLinkConfig,
+  type PluginExtensionAddedLinkConfig,
+  type PluginExtensionLink,
+  PluginExtensionTypes,
+  type PluginMeta,
   urlUtil,
-  PluginExtensionPoints,
-  ExtensionInfo,
 } from '@grafana/data';
-import { reportInteraction, config, AppPluginConfig } from '@grafana/runtime';
+import { reportInteraction, config } from '@grafana/runtime';
+import { getAppPluginMetas } from '@grafana/runtime/internal';
+import { getPluginSettings } from '@grafana/runtime/unstable';
 import { Modal } from '@grafana/ui';
-import appEvents from 'app/core/app_events';
-import { getPluginSettings } from 'app/features/plugins/pluginSettings';
-import { CloseExtensionSidebarEvent, OpenExtensionSidebarEvent, ShowModalReactEvent } from 'app/types/events';
+import { appEvents } from 'app/core/app_events';
+import { isRecord } from 'app/core/utils/isRecord';
+import {
+  CloseExtensionSidebarEvent,
+  OpenExtensionSidebarEvent,
+  ShowModalReactEvent,
+  ToggleExtensionSidebarEvent,
+} from 'app/types/events';
 
 import { RestrictedGrafanaApisProvider } from '../components/restrictedGrafanaApis/RestrictedGrafanaApisProvider';
 
 import { ExtensionErrorBoundary } from './ExtensionErrorBoundary';
-import { ExtensionsLog, log as baseLog } from './logs/log';
-import { AddedLinkRegistryItem } from './registry/AddedLinksRegistry';
-import { assertIsNotPromise, assertLinkPathIsValid, assertStringProps, isPromise } from './validators';
+import {
+  getAppPluginConfigsSync,
+  getAppPluginsToPreloadSync,
+  getExposedComponentPluginDependenciesSync,
+  getExtensionPointPluginDependenciesSync,
+  getExtensionPointPluginMetaSync,
+  type ExtensionPointPluginMeta,
+} from './appUtils';
+import { type ExtensionsLog, log as baseLog } from './logs/log';
+import { type AddedLinkRegistryItem } from './registry/AddedLinksRegistry';
+import { assertIsNotPromise, assertStringProps, isPromise } from './validators';
 
 export function handleErrorsInFn(fn: Function, errorMessagePrefix = '') {
   return (...args: unknown[]) => {
@@ -67,18 +82,35 @@ export const wrapWithPluginContext = <T,>({
   extensionTitle,
   Component,
   log,
+  pluginMeta,
 }: {
   pluginId: string;
   extensionTitle: string;
   Component: React.ComponentType<T>;
   log: ExtensionsLog;
+  pluginMeta?: PluginMeta;
 }) => {
+  const renderWithContext = (props: T & React.JSX.IntrinsicAttributes, meta: PluginMeta) => (
+    <PluginContextProvider meta={meta}>
+      <ExtensionErrorBoundary pluginId={pluginId} extensionTitle={extensionTitle} log={log}>
+        <RestrictedGrafanaApisProvider pluginId={pluginId}>
+          <Component
+            {...writableProxy(props, { log, source: 'extension', pluginId, pluginVersion: meta.info?.version })}
+          />
+        </RestrictedGrafanaApisProvider>
+      </ExtensionErrorBoundary>
+    </PluginContextProvider>
+  );
+
+  // When the plugin meta is already known (e.g. captured at registration time, right after the
+  // plugin was imported), render synchronously. The async variant below renders `null` for at
+  // least one commit, which makes extension content pop in after the host page has painted.
+  if (pluginMeta) {
+    return (props: T & React.JSX.IntrinsicAttributes) => renderWithContext(props, pluginMeta);
+  }
+
   const WrappedExtensionComponent = (props: T & React.JSX.IntrinsicAttributes) => {
-    const {
-      error,
-      loading,
-      value: pluginMeta,
-    } = useAsync(() => getPluginSettings(pluginId, { showErrorAlert: false }));
+    const { error, loading, value: fetchedPluginMeta } = useAsync(() => getPluginSettings(pluginId, false));
 
     if (loading) {
       return null;
@@ -92,22 +124,12 @@ export const wrapWithPluginContext = <T,>({
       return null;
     }
 
-    if (!pluginMeta) {
+    if (!fetchedPluginMeta) {
       log.error(`Fetched plugin meta information is empty for "${pluginId}", aborting.`);
       return null;
     }
 
-    return (
-      <PluginContextProvider meta={pluginMeta}>
-        <ExtensionErrorBoundary pluginId={pluginId} extensionTitle={extensionTitle} log={log}>
-          <RestrictedGrafanaApisProvider pluginId={pluginId}>
-            <Component
-              {...writableProxy(props, { log, source: 'extension', pluginId, pluginVersion: pluginMeta.info?.version })}
-            />
-          </RestrictedGrafanaApisProvider>
-        </ExtensionErrorBoundary>
-      </PluginContextProvider>
-    );
+    return renderWithContext(props, fetchedPluginMeta);
   };
 
   return WrappedExtensionComponent;
@@ -129,8 +151,8 @@ const getModalWrapper = ({
   const ModalWrapper = ({ onDismiss }: ModalWrapperProps) => {
     return (
       <Modal title={title} className={className} isOpen onDismiss={onDismiss} onClickBackdrop={onDismiss}>
-        {/* 
-          We also add an error boundary here (apart from the one in the `wrapWithPluginContext`) 
+        {/*
+          We also add an error boundary here (apart from the one in the `wrapWithPluginContext`)
           so the error appears inside the modal (and not at the bottom of the page.)
         */}
         <ExtensionErrorBoundary
@@ -199,13 +221,6 @@ export function generateExtensionId(pluginId: string, extensionPointId: string, 
 
 const _isReadOnlyProxy = Symbol('isReadOnlyProxy');
 const _isMutationObserverProxy = Symbol('isMutationObserverProxy');
-
-export class ReadOnlyProxyError extends Error {
-  constructor(message?: string) {
-    super(message ?? 'Mutating a read-only proxy object');
-    this.name = 'ReadOnlyProxyError';
-  }
-}
 
 /**
  * Returns a proxy that wraps the given object in a way that makes it read only.
@@ -368,10 +383,6 @@ export function writableProxy<T>(value: T, options?: ProxyOptions): T {
   return getMutationObserverProxy(cloneDeep(value), { log, pluginId, pluginVersion, source });
 }
 
-function isRecord(value: unknown): value is Record<string | number | symbol, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 export function isReadOnlyProxy(value: unknown): boolean {
   return isRecord(value) && value[_isReadOnlyProxy] === true;
 }
@@ -402,57 +413,6 @@ export function truncateTitle(title: string, length: number): string {
   return `${part.trimEnd()}...`;
 }
 
-export function createExtensionSubMenu(extensions: PluginExtensionLink[]): PanelMenuItem[] {
-  const categorized: Record<string, PanelMenuItem[]> = {};
-  const uncategorized: PanelMenuItem[] = [];
-
-  for (const extension of extensions) {
-    const category = extension.category;
-
-    if (!category) {
-      uncategorized.push({
-        text: truncateTitle(extension.title, 25),
-        href: extension.path,
-        onClick: extension.onClick,
-      });
-      continue;
-    }
-
-    if (!Array.isArray(categorized[category])) {
-      categorized[category] = [];
-    }
-
-    categorized[category].push({
-      text: truncateTitle(extension.title, 25),
-      href: extension.path,
-      onClick: extension.onClick,
-    });
-  }
-
-  const subMenu = Object.keys(categorized).reduce((subMenu: PanelMenuItem[], category) => {
-    subMenu.push({
-      text: truncateTitle(category, 25),
-      type: 'group',
-      subMenu: categorized[category],
-    });
-    return subMenu;
-  }, []);
-
-  if (uncategorized.length > 0) {
-    if (subMenu.length > 0) {
-      subMenu.push({
-        // eslint-disable-next-line @grafana/i18n/no-untranslated-strings
-        text: 'divider',
-        type: 'divider',
-      });
-    }
-
-    Array.prototype.push.apply(subMenu, uncategorized);
-  }
-
-  return subMenu;
-}
-
 export function getLinkExtensionOverrides(
   pluginId: string,
   config: AddedLinkRegistryItem,
@@ -467,12 +427,15 @@ export function getLinkExtensionOverrides(
       return undefined;
     }
 
+    // Only allowing to override the following properties
     let {
       title = config.title,
       description = config.description,
       path = config.path,
       icon = config.icon,
       category = config.category,
+      group = config.group,
+      openInNewTab = config.openInNewTab,
       ...rest
     } = overrides;
 
@@ -481,7 +444,6 @@ export function getLinkExtensionOverrides(
       `The configure() function for "${config.title}" returned a promise, skipping updates.`
     );
 
-    path && assertLinkPathIsValid(pluginId, path);
     assertStringProps({ title, description }, ['title', 'description']);
 
     if (Object.keys(rest).length > 0) {
@@ -498,6 +460,8 @@ export function getLinkExtensionOverrides(
       path,
       icon,
       category,
+      group,
+      openInNewTab,
     };
   } catch (error) {
     if (error instanceof Error) {
@@ -513,7 +477,7 @@ export function getLinkExtensionOverrides(
   }
 }
 
-export function getLinkExtensionOnClick(
+function getLinkExtensionOnClick(
   pluginId: string,
   extensionPointId: string,
   config: AddedLinkRegistryItem,
@@ -537,6 +501,7 @@ export function getLinkExtensionOnClick(
 
       const helpers: PluginExtensionEventHelpers = {
         context,
+        extensionPointId,
         openModal: createOpenModalFunction(config),
         openSidebar: (componentTitle, context) => {
           appEvents.publish(
@@ -549,6 +514,15 @@ export function getLinkExtensionOnClick(
         },
         closeSidebar: () => {
           appEvents.publish(new CloseExtensionSidebarEvent());
+        },
+        toggleSidebar: (componentTitle, context) => {
+          appEvents.publish(
+            new ToggleExtensionSidebarEvent({
+              props: context,
+              pluginId,
+              componentTitle,
+            })
+          );
         },
       };
 
@@ -576,7 +550,7 @@ export function getLinkExtensionOnClick(
   };
 }
 
-export function getLinkExtensionPathWithTracking(pluginId: string, path: string, extensionPointId: string): string {
+function getLinkExtensionPathWithTracking(pluginId: string, path: string, extensionPointId: string): string {
   return urlUtil.appendQueryToUrl(
     path,
     urlUtil.toUrlParams({
@@ -586,128 +560,90 @@ export function getLinkExtensionPathWithTracking(pluginId: string, path: string,
   );
 }
 
+export type LinkExtensionOverrides = ReturnType<typeof getLinkExtensionOverrides>;
+
+/**
+ * Builds a PluginExtensionLink from an added link config and optional configure() overrides.
+ * Shared by getPluginExtensions and usePluginLinks.
+ */
+export function addedLinkToExtensionLink(
+  pluginId: string,
+  extensionPointId: string,
+  addedLink: AddedLinkRegistryItem,
+  overrides: LinkExtensionOverrides,
+  linkLog: ExtensionsLog,
+  frozenContext: object
+): PluginExtensionLink {
+  const path = overrides?.path ?? addedLink.path;
+  const group = overrides?.group ?? addedLink.group;
+  const category = overrides?.category ?? addedLink.category;
+  return {
+    id: generateExtensionId(pluginId, extensionPointId, addedLink.title),
+    type: PluginExtensionTypes.link,
+    pluginId,
+    onClick: getLinkExtensionOnClick(pluginId, extensionPointId, addedLink, linkLog, frozenContext),
+    icon: overrides?.icon ?? addedLink.icon,
+    title: overrides?.title ?? addedLink.title,
+    description: overrides?.description ?? addedLink.description ?? '',
+    path: isString(path) ? getLinkExtensionPathWithTracking(pluginId, path, extensionPointId) : undefined,
+    category,
+    group,
+    openInNewTab: overrides?.openInNewTab ?? addedLink.openInNewTab,
+  };
+}
+
 // Comes from the `app_mode` setting in the Grafana config (defaults to "development")
 // Can be set with the `GF_DEFAULT_APP_MODE` environment variable
 export const isGrafanaDevMode = () => config.buildInfo.env === 'development';
 
-export const getAppPluginConfigs = (pluginIds: string[] = []) =>
-  Object.values(config.apps).filter((app) => pluginIds.includes(app.id));
+/**
+ * Returns a list of app plugin configs that match the given plugin ids.
+ * @param pluginIds - The list of plugin ids to filter by.
+ * @returns A list of app plugin configs that match the given plugin ids.
+ */
+export async function getAppPluginConfigs(pluginIds: string[] = []): Promise<AppPluginConfig[]> {
+  const apps = await getAppPluginMetas();
+  return getAppPluginConfigsSync(pluginIds, apps);
+}
 
-export const getAppPluginIdFromExposedComponentId = (exposedComponentId: string) => {
-  return exposedComponentId.split('/')[0];
-};
-
-// Returns a list of app plugin ids that are registering extensions to this extension point.
-// (These plugins are necessary to be loaded to use the extension point.)
-// (The function also returns the plugin ids that the plugins - that extend the extension point - depend on.)
-export const getExtensionPointPluginDependencies = (extensionPointId: string): string[] => {
-  return Object.values(config.apps)
-    .filter(
-      (app) =>
-        app.extensions.addedLinks.some((link) => link.targets.includes(extensionPointId)) ||
-        app.extensions.addedComponents.some((component) => component.targets.includes(extensionPointId))
-    )
-    .map((app) => app.id)
-    .reduce((acc: string[], id: string) => {
-      return [...acc, id, ...getAppPluginDependencies(id)];
-    }, []);
-};
-
-export type ExtensionPointPluginMeta = Map<
-  string,
-  {
-    readonly addedComponents: ExtensionInfo[];
-    readonly addedLinks: ExtensionInfo[];
-  }
->;
+/**
+ * Returns a list of app plugin ids that are registering extensions to this extension point.
+ * (These plugins are necessary to be loaded to use the extension point.)
+ * (The function also returns the plugin ids that the plugins - that extend the extension point - depend on.)
+ * @param extensionPointId - The id of the extension point.
+ * @returns A list of app plugin ids that are registering extensions to this extension point.
+ */
+export async function getExtensionPointPluginDependencies(extensionPointId: string): Promise<string[]> {
+  const apps = await getAppPluginMetas();
+  return getExtensionPointPluginDependenciesSync(extensionPointId, apps);
+}
 
 /**
  * Returns a map of plugin ids and their addedComponents and addedLinks to the extension point.
  * @param extensionPointId - The id of the extension point.
  * @returns A map of plugin ids and their addedComponents and addedLinks to the extension point.
  */
-export const getExtensionPointPluginMeta = (extensionPointId: string): ExtensionPointPluginMeta => {
-  return new Map(
-    getExtensionPointPluginDependencies(extensionPointId)
-      .map((pluginId) => {
-        const app = config.apps[pluginId];
-        // if the plugin does not exist or does not expose any components or links to the extension point, return undefined
-        if (
-          !app ||
-          (!app.extensions.addedComponents.some((component) => component.targets.includes(extensionPointId)) &&
-            !app.extensions.addedLinks.some((link) => link.targets.includes(extensionPointId)))
-        ) {
-          return undefined;
-        }
-        return [
-          pluginId,
-          {
-            addedComponents: app.extensions.addedComponents.filter((component) =>
-              component.targets.includes(extensionPointId)
-            ),
-            addedLinks: app.extensions.addedLinks.filter((link) => link.targets.includes(extensionPointId)),
-          },
-        ] as const;
-      })
-      .filter((c): c is NonNullable<typeof c> => c !== undefined)
-  );
-};
+export async function getExtensionPointPluginMeta(extensionPointId: string): Promise<ExtensionPointPluginMeta> {
+  const apps = await getAppPluginMetas();
+  return getExtensionPointPluginMetaSync(extensionPointId, apps);
+}
 
-// Returns a list of app plugin ids that are necessary to be loaded to use the exposed component.
-// (It is first the plugin that exposes the component, and then the ones that it depends on.)
-export const getExposedComponentPluginDependencies = (exposedComponentId: string) => {
-  const pluginId = getAppPluginIdFromExposedComponentId(exposedComponentId);
+/**
+ * Returns a list of app plugin ids that are necessary to be loaded to use the exposed component.
+ * (It is first the plugin that exposes the component, and then the ones that it depends on.)
+ * @param exposedComponentId - The id of the exposed component.
+ * @returns A list of app plugin ids that are necessary to be loaded to use the exposed component.
+ */
+export async function getExposedComponentPluginDependencies(exposedComponentId: string): Promise<string[]> {
+  const apps = await getAppPluginMetas();
+  return getExposedComponentPluginDependenciesSync(exposedComponentId, apps);
+}
 
-  return [pluginId].reduce((acc: string[], pluginId: string) => {
-    return [...acc, pluginId, ...getAppPluginDependencies(pluginId)];
-  }, []);
-};
-
-// Returns a list of app plugin ids that are necessary to be loaded, based on the `dependencies.extensions`
-// metadata field. (For example the plugins that expose components that the app depends on.)
-// Heads up! This is a recursive function.
-export const getAppPluginDependencies = (pluginId: string, visited: string[] = []): string[] => {
-  if (!config.apps[pluginId]) {
-    return [];
-  }
-
-  // Prevent infinite recursion (it would happen if there is a circular dependency between app plugins)
-  if (visited.includes(pluginId)) {
-    return [];
-  }
-
-  const pluginIdDependencies = config.apps[pluginId].dependencies.extensions.exposedComponents.map(
-    getAppPluginIdFromExposedComponentId
-  );
-
-  return (
-    pluginIdDependencies
-      .reduce((acc, _pluginId) => {
-        return [...acc, ...getAppPluginDependencies(_pluginId, [...visited, pluginId])];
-      }, pluginIdDependencies)
-      // We don't want the plugin to "depend on itself"
-      .filter((id) => id !== pluginId)
-  );
-};
-
-// Returns a list of app plugins that has to be loaded before core Grafana could finish the initialization.
-export const getAppPluginsToAwait = () => {
-  const pluginIds = [
-    // The "cloud-home-app" is registering banners once it's loaded, and this can cause a rerender in the AppChrome if it's loaded after the Grafana app init.
-    'cloud-home-app',
-  ];
-
-  return Object.values(config.apps).filter((app) => pluginIds.includes(app.id));
-};
-
-// Returns a list of app plugins that has to be preloaded in parallel with the core Grafana initialization.
-export const getAppPluginsToPreload = () => {
-  // The DashboardPanelMenu extension point is using the `getPluginExtensions()` API in scenes at the moment, which means that it cannot yet benefit from dynamic plugin loading.
-  const dashboardPanelMenuPluginIds = getExtensionPointPluginDependencies(PluginExtensionPoints.DashboardPanelMenu);
-  const awaitedPluginIds = getAppPluginsToAwait().map((app) => app.id);
-  const isNotAwaited = (app: AppPluginConfig) => !awaitedPluginIds.includes(app.id);
-
-  return Object.values(config.apps).filter((app) => {
-    return isNotAwaited(app) && (app.preload || dashboardPanelMenuPluginIds.includes(app.id));
-  });
-};
+/**
+ * Returns a list of app plugins that has to be preloaded in parallel with the core Grafana initialization.
+ * @returns An array of app plugin configs that has to be preloaded in parallel with the core Grafana initialization.
+ */
+export async function getAppPluginsToPreload(): Promise<AppPluginConfig[]> {
+  const apps = await getAppPluginMetas();
+  return getAppPluginsToPreloadSync(apps);
+}

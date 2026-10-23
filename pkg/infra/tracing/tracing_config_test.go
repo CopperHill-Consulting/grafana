@@ -2,10 +2,13 @@ package tracing
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/grafana/grafana/pkg/configprovider"
 	"github.com/grafana/grafana/pkg/setting"
 )
 
@@ -52,6 +55,74 @@ func TestSplitCustomAttribs_Malformed(t *testing.T) {
 		_, err := splitCustomAttribs(test.input)
 		assert.Error(t, err)
 	}
+}
+
+func TestTracingConfig_FileExporter(t *testing.T) {
+	parse := func(t *testing.T, ini string) *TracingConfig {
+		t.Helper()
+		cfg := setting.NewCfg()
+		require.NoError(t, cfg.Raw.Append([]byte(ini)))
+		cfgProvider, err := configprovider.ProvideService(cfg)
+		require.NoError(t, err)
+		tc, err := ProvideTracingConfig(cfgProvider)
+		require.NoError(t, err)
+		return tc
+	}
+
+	t.Run("path enables the file exporter with defaults and always-on sampling", func(t *testing.T) {
+		tc := parse(t, `
+		[tracing.opentelemetry.file]
+		path = /tmp/traces.json
+		`)
+		assert.Equal(t, fileExporter, tc.enabled)
+		assert.Equal(t, "/tmp/traces.json", tc.FilePath)
+		assert.Equal(t, defaultTraceFileMaxSize, tc.FileMaxSize)
+		assert.Equal(t, defaultTraceCaptureDuration, tc.FileCaptureDuration)
+		// Capturing should sample everything by default so the file isn't empty.
+		assert.Equal(t, "const", tc.Sampler)
+		assert.Equal(t, 1.0, tc.SamplerParam)
+	})
+
+	t.Run("max_file_size_bytes and capture_duration are parsed", func(t *testing.T) {
+		tc := parse(t, `
+		[tracing.opentelemetry.file]
+		path = /tmp/traces.json
+		max_file_size_bytes = 2048
+		capture_duration = 90s
+		`)
+		assert.Equal(t, int64(2048), tc.FileMaxSize)
+		assert.Equal(t, 90*time.Second, tc.FileCaptureDuration)
+	})
+
+	t.Run("an explicitly configured sampler is not overridden", func(t *testing.T) {
+		tc := parse(t, `
+		[tracing.opentelemetry]
+		sampler_type = probabilistic
+		sampler_param = 0.25
+		[tracing.opentelemetry.file]
+		path = /tmp/traces.json
+		`)
+		assert.Equal(t, fileExporter, tc.enabled)
+		assert.Equal(t, "probabilistic", tc.Sampler)
+		assert.Equal(t, 0.25, tc.SamplerParam)
+	})
+
+	t.Run("an otlp endpoint takes precedence over the file exporter", func(t *testing.T) {
+		tc := parse(t, `
+		[tracing.opentelemetry.otlp]
+		address = otlp.example.com:4317
+		[tracing.opentelemetry.file]
+		path = /tmp/traces.json
+		`)
+		assert.Equal(t, otlpExporter, tc.enabled)
+		assert.Empty(t, tc.FilePath)
+	})
+
+	t.Run("no path leaves the file exporter disabled", func(t *testing.T) {
+		tc := parse(t, `[tracing.opentelemetry.file]`)
+		assert.Equal(t, noopExporter, tc.enabled)
+		assert.Empty(t, tc.FilePath)
+	})
 }
 
 func TestTracingConfig(t *testing.T) {
@@ -189,7 +260,9 @@ func TestTracingConfig(t *testing.T) {
 			err := cfg.Raw.Append([]byte(test.Cfg))
 			assert.NoError(t, err)
 			// create tracingConfig
-			tracingConfig, err := ProvideTracingConfig(cfg)
+			cfgProvider, err := configprovider.ProvideService(cfg)
+			assert.NoError(t, err)
+			tracingConfig, err := ProvideTracingConfig(cfgProvider)
 			assert.NoError(t, err)
 			// make sure tracker is properly configured
 			assert.Equal(t, test.ExpectedExporter, tracingConfig.enabled)

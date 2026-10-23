@@ -11,7 +11,6 @@ import (
 
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/provisioning/values"
-	"github.com/grafana/grafana/pkg/util"
 )
 
 type RuleDelete struct {
@@ -151,10 +150,6 @@ func (rule *AlertRuleV1) mapToModel(orgID int64) (models.AlertRule, error) {
 		noDataState = models.NoData
 	}
 	alertRule.NoDataState = noDataState
-	alertRule.Condition = rule.Condition.Value()
-	if alertRule.Condition == "" {
-		return models.AlertRule{}, fmt.Errorf("rule '%s' failed to parse: no condition set", alertRule.Title)
-	}
 	alertRule.Annotations = rule.Annotations.Raw
 	alertRule.Labels = rule.Labels.Value()
 	for _, queryV1 := range rule.Data {
@@ -173,7 +168,7 @@ func (rule *AlertRuleV1) mapToModel(orgID int64) (models.AlertRule, error) {
 		if err != nil {
 			return models.AlertRule{}, fmt.Errorf("rule '%s' failed to parse: %w", alertRule.Title, err)
 		}
-		alertRule.NotificationSettings = append(alertRule.NotificationSettings, ns)
+		alertRule.NotificationSettings = &ns
 	}
 	if rule.Record != nil {
 		record, err := rule.Record.mapToModel()
@@ -181,6 +176,10 @@ func (rule *AlertRuleV1) mapToModel(orgID int64) (models.AlertRule, error) {
 			return models.AlertRule{}, fmt.Errorf("rule '%s' failed to parse: %w", alertRule.Title, err)
 		}
 		alertRule.Record = &record
+	}
+	alertRule.Condition = rule.Condition.Value()
+	if alertRule.Condition == "" && alertRule.Record == nil {
+		return models.AlertRule{}, fmt.Errorf("rule '%s' failed to parse: no condition set", alertRule.Title)
 	}
 	return alertRule, nil
 }
@@ -242,21 +241,21 @@ func (nsV1 *NotificationSettingsV1) mapToModel() (models.NotificationSettings, e
 		if err != nil {
 			return models.NotificationSettings{}, fmt.Errorf("failed to parse group wait: %w", err)
 		}
-		gw = util.Pointer(dur)
+		gw = &dur
 	}
 	if nsV1.GroupInterval.Value() != "" {
 		dur, err := model.ParseDuration(nsV1.GroupInterval.Value())
 		if err != nil {
 			return models.NotificationSettings{}, fmt.Errorf("failed to parse group interval: %w", err)
 		}
-		gi = util.Pointer(dur)
+		gi = &dur
 	}
 	if nsV1.RepeatInterval.Value() != "" {
 		dur, err := model.ParseDuration(nsV1.RepeatInterval.Value())
 		if err != nil {
 			return models.NotificationSettings{}, fmt.Errorf("failed to parse repeat interval: %w", err)
 		}
-		ri = util.Pointer(dur)
+		ri = &dur
 	}
 
 	var groupBy []string
@@ -291,7 +290,7 @@ func (nsV1 *NotificationSettingsV1) mapToModel() (models.NotificationSettings, e
 		}
 	}
 
-	return models.NotificationSettings{
+	return models.NotificationSettingsFromContact(models.ContactPointRouting{
 		Receiver:            nsV1.Receiver.Value(),
 		GroupBy:             groupBy,
 		GroupWait:           gw,
@@ -299,17 +298,19 @@ func (nsV1 *NotificationSettingsV1) mapToModel() (models.NotificationSettings, e
 		RepeatInterval:      ri,
 		MuteTimeIntervals:   mute,
 		ActiveTimeIntervals: active,
-	}, nil
+	}), nil
 }
 
 type RecordV1 struct {
-	Metric values.StringValue `json:"metric" yaml:"metric"`
-	From   values.StringValue `json:"from" yaml:"from"`
+	Metric              values.StringValue `json:"metric" yaml:"metric"`
+	From                values.StringValue `json:"from" yaml:"from"`
+	TargetDatasourceUID values.StringValue `json:"targetDatasourceUid" yaml:"targetDatasourceUid"`
 }
 
 func (record *RecordV1) mapToModel() (models.Record, error) {
 	return models.Record{
-		Metric: record.Metric.Value(),
-		From:   record.From.Value(),
+		Metric:              record.Metric.Value(),
+		From:                record.From.Value(),
+		TargetDatasourceUID: record.TargetDatasourceUID.Value(),
 	}, nil
 }

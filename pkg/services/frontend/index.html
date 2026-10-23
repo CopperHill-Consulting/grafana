@@ -1,10 +1,6 @@
 <!DOCTYPE html>
 <html class="fs-loading">
   <head>
-    [[ if and .CSPEnabled .IsDevelopmentEnv ]]
-    <!-- Cypress overwrites CSP headers in HTTP requests, so this is required for e2e tests-->
-    <meta http-equiv="Content-Security-Policy" content="[[.CSPContent]]"/>
-    [[ end ]]
     <meta charset="utf-8" />
     <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1" />
     <meta name="viewport" content="width=device-width" />
@@ -14,7 +10,16 @@
 
     <base href="[[.AppSubUrl]]/" />
 
-    <link rel="icon" type="image/png" href="[[.Assets.ContentDeliveryURL]]public/build/img/fav32.png" />
+    [[if .MeticulousAIEnabled]]
+    <script
+      data-is-production-environment="[[.MeticulousAIProductionEnvironmentFlag]]"
+      data-recording-token="[[.MeticulousAIRecordingToken]]"
+      nonce="[[.Nonce]]"
+      src="https://snippet.meticulous.ai/v1/meticulous.js"
+    ></script>
+    [[end]]
+
+    <link rel="icon" id="grafana_favicon" type="image/png" href="[[.Assets.ContentDeliveryURL]]public/build/img/fav32.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="[[.Assets.ContentDeliveryURL]]public/build/img/apple-touch-icon.png" />
     <link rel="mask-icon" href="[[.Assets.ContentDeliveryURL]]public/build/img/grafana_mask_icon.svg" color="#F05A28" />
 
@@ -25,8 +30,6 @@
     <script nonce="[[.Nonce]]">
       performance.mark('frontend_boot_css_time_seconds');
     </script>
-
-
   </head>
 
   <body>
@@ -79,6 +82,7 @@
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
             Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
             "Segoe UI Symbol";
+          line-height: 1; /* prevent shift when css loads in that changes the body line-height */
         }
 
         .fs-variant-loader, .fs-variant-error {
@@ -151,7 +155,35 @@
 
         <p class="fs-loader-text">Error loading Grafana</p>
       </div>
-    </div>
+  </div>
+
+    <noscript>
+      <style>
+        .preloader {
+          display: none;
+        }
+
+        .js-required-message {
+          margin: 48px auto;
+          max-width: 720px;
+          padding: 0 16px;
+          font-family: Sans-serif;
+          line-height: 1.5;
+          color: #52545c;
+        }
+
+        /* No theme-* body classes here without JS; follow system preference like the loader. */
+        @media (prefers-color-scheme: dark) {
+          .js-required-message {
+            color: #d8d9da;
+          }
+        }
+      </style>
+      <main class="js-required-message">
+        <h1>JavaScript is required to run Grafana</h1>
+        <p>Please enable JavaScript in your browser and reload the page.</p>
+      </main>
+    </noscript>
 
     <div id="reactRoot"></div>
 
@@ -163,138 +195,86 @@
       [[if .Assets.ContentDeliveryURL]]
         window.public_cdn_path = '[[.Assets.ContentDeliveryURL]]public/build/';
       [[end]]
+
+      [[if .RenderBindingSupported]]
+        // For the image-renderer to check support for render binding calls
+        window.__grafanaRenderBindingSupported = true;
+      [[end]]
+
+      [[if .UseLuxon]]
+        window.__grafanaUseLuxon = true;
+      [[end]]
+
+      [[if .AssetSriChecksEnabled]]
+        // For enabling SRI checks on dynamically loaded Grafana assets
+        window.__grafanaAssetSriChecksEnabled = true;
+      [[end]]
+
+      [[if .ReduceBootdataAPI]]
+        window.__grafanaReduceBootdataAPI = true;
+      [[end]]
+
+      [[if .NewPreferencesPage]]
+        window.__grafanaNewPreferencesPage = true;
+      [[end]]
+
+      [[if .OFREPRootUrlEnabled]]
+        window.__grafanaOFREPRootUrlEnabled = true;
+      [[end]]
+
+      [[if .PreviewAssetsFolder]]
+        // Set when the assets on this page come from a PR preview build
+        window.__grafanaPreviewAssets = '[[.PreviewAssetsFolder]]';
+      [[end]]
+
+      window.__grafanaLegacyAPIMode = [[.LegacyAPIMode]];
+      window.__grafanaPublicDashboardAccessToken = [[.PublicDashboardAccessToken]];
+
+      [[if .FullSettings]]
+        // global config
+        window.grafanaBootData = {
+          _femt: true, // isFrontendService() needs this
+          assets: [[.Assets]],
+          navTree: [],
+          settings: [[.FullSettings]],
+          user: [[.DefaultUser]],
+        }
+      [[else]]
+        // global config
+        window.grafanaBootData = {
+          _femt: true, // isFrontendService() needs this
+          assets: [[.Assets]],
+          navTree: [],
+          settings: [[.Settings]],
+          user: [[.DefaultUser]],
+        }
+      [[end]]
+
     </script>
 
     <script nonce="[[.Nonce]]">
-      // Wrap in an IIFE to avoid polluting the global scope. Intentionally global-scope properties
-      // are explicitly assigned to the `window` object.
-      (() => {
-        window.__grafana_load_failed = function(...args) {
-          console.error('Failed to load Grafana', ...args);
-          document.querySelector('.fs-variant-loader').classList.add('fs-hidden');
-          document.querySelector('.fs-variant-error').classList.remove('fs-hidden');
-        };
-
-        window.onload = function() {
-          if (window.__grafana_app_bundle_loaded) {
-            return;
-          }
-          window.__grafana_load_failed();
-        };
-
-        let hasSetLoading = false;
-        function setLoading() {
-          if (hasSetLoading) {
-            return;
-          }
-
-          document.querySelector('.preloader').classList.add('fs-loader-starting-up');
-          hasSetLoading = true;
-        }
-
-        const CHECK_INTERVAL = 1 * 1000;
-
-        /**
-         * Fetches boot data from the server. If it returns undefined, it should be retried later.
-         * Will return a rejected promise on unrecoverable errors.
-         **/
-        async function fetchBootData() {
-          const resp = await fetch("/bootdata");
-          const textResponse = await resp.text();
-
-          let rawBootData;
-          try {
-            rawBootData = JSON.parse(textResponse);
-          } catch {
-            throw new Error("Unexpected response type: " + textResponse);
-          }
-
-          // If the response is 503, instruct the caller to retry again later.
-          if (resp.status === 503 && rawBootData.code === 'Loading') {
-            return;
-          }
-
-          if (!resp.ok) {
-            throw new Error("Unexpected response body: " + textResponse);
-          }
-
-          return rawBootData;
-        }
-
-        /**
-         * Loads the boot data from the server, retrying if it's unavailable.
-         **/
-        function loadBootData() {
-          return new Promise((resolve, reject) => {
-            const attemptFetch = async () => {
-              try {
-                const bootData = await fetchBootData();
-
-                // If the boot data is undefined, retry after a delay
-                if (!bootData) {
-                  setLoading();
-                  setTimeout(attemptFetch, CHECK_INTERVAL);
-                  return;
-                }
-
-                resolve(bootData);
-              } catch (error) {
-                reject(error);
-              }
-            };
-
-            // Start the first attempt immediately
-            attemptFetch();
-          });
-        }
-
-        async function initGrafana() {
-          // global config
-          window.grafanaBootData = {
-            _femt: true, // isFrontendService() needs this
-            assets: [[.Assets]],
-            navTree: [],
-            settings: [[.Settings]],
-            user: [[.DefaultUser]],
-          }
-
-          // tenant-specific config
-          // TODO split this into separate API calls
-          const { navTree, settings, user } = await loadBootData();
-          window.grafanaBootData.settings = settings;
-          window.grafanaBootData.navTree = navTree;
-          window.grafanaBootData.user = user;
-
-          // The per-theme CSS still contains some global styles needed
-          // to render the page correctly.
-          const cssLink = document.createElement("link");
-          cssLink.rel = 'stylesheet';
-
-          const theme = window.grafanaBootData.user.theme;
-          if (theme === "system") {
-            const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
-            window.grafanaBootData.user.lightTheme = !darkQuery.matches;
-          }
-
-          const isLightTheme = window.grafanaBootData.user.lightTheme;
-
-          document.body.classList.add(isLightTheme ? "theme-light" : "theme-dark");
-
-          cssLink.href = window.grafanaBootData.assets[isLightTheme ? 'light' : 'dark'];
-          document.head.appendChild(cssLink);
-        }
-
-
-        window.__grafana_boot_data_promise = initGrafana()
-        window.__grafana_boot_data_promise.catch((err) => {
-          console.error("__grafana_boot_data_promise rejected", err);
-          window.__grafana_load_failed(err);
-        });
-      })();
+      [[.BootScript]]
     </script>
 
-    [[range $asset := .Assets.JSFiles]]
+    [[if .AssetSriChecksEnabled ]]
+      [[range $asset := .Assets.JSFiles]]
+        <script
+        nonce="[[$.Nonce]]"
+        src="[[$asset.FilePath]]"
+        integrity="[[$asset.Integrity]]"
+        crossorigin="anonymous"
+        type="text/javascript"
+        defer
+      ></script>
+      [[end]]
+    [[else]]
+      [[range $asset := .Assets.JSFiles]]
       <script nonce="[[$.Nonce]]" src="[[$asset.FilePath]]" type="text/javascript" defer></script>
+      [[end]]
     [[end]]
+
+     <script nonce="[[.Nonce]]">
+      performance.mark('frontend_boot_js_done_time_seconds');
+    </script>
   </body>
 </html>

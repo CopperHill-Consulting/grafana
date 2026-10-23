@@ -5,6 +5,7 @@ import (
 	sysruntime "runtime"
 
 	"github.com/grafana/grafana/apps/advisor/pkg/app/checks"
+	"github.com/grafana/grafana/apps/advisor/pkg/translations"
 	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/plugins/repo"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginchecker"
@@ -17,7 +18,7 @@ const (
 
 func New(
 	pluginStore pluginstore.Store,
-	pluginRepo repo.Service,
+	pluginRepo checks.PluginInfoGetter,
 	updateChecker pluginchecker.PluginUpdateChecker,
 	pluginErrorResolver plugins.ErrorResolver,
 	grafanaVersion string,
@@ -33,7 +34,7 @@ func New(
 
 type check struct {
 	PluginStore         pluginstore.Store
-	PluginRepo          repo.Service
+	PluginRepo          checks.PluginInfoGetter
 	updateChecker       pluginchecker.PluginUpdateChecker
 	pluginErrorResolver plugins.ErrorResolver
 	GrafanaVersion      string
@@ -45,7 +46,7 @@ func (c *check) ID() string {
 }
 
 func (c *check) Name() string {
-	return "plugin"
+	return translations.CheckName(CheckID)
 }
 
 type pluginItem struct {
@@ -132,5 +133,6 @@ func (c *check) Steps() []checks.Step {
 		&unsignedStep{
 			pluginIndex: c.pluginIndex,
 		},
+		&twinmakerSceneViewerStep{},
 	}
 }

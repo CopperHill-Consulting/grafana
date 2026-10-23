@@ -4,7 +4,7 @@ import ForkTsCheckerWebpackPlugin from 'fork-ts-checker-webpack-plugin';
 import path from 'path';
 import ReplaceInFileWebpackPlugin from 'replace-in-file-webpack-plugin';
 import TerserPlugin from 'terser-webpack-plugin';
-import webpack, { type Configuration } from 'webpack';
+import webpack, { type Configuration, type Compiler } from 'webpack';
 import { BundleAnalyzerPlugin } from 'webpack-bundle-analyzer';
 import VirtualModulesPlugin from 'webpack-virtual-modules';
 
@@ -31,12 +31,42 @@ function skipFiles(f: string): boolean {
   return true;
 }
 
+class BuildModeWebpackPlugin {
+  apply(compiler: Compiler) {
+    compiler.hooks.compilation.tap('BuildModeWebpackPlugin', (compilation) => {
+      compilation.hooks.processAssets.tap(
+        {
+          name: 'BuildModeWebpackPlugin',
+          stage: webpack.Compilation.PROCESS_ASSETS_STAGE_ADDITIONS,
+        },
+        async () => {
+          const assets = compilation.getAssets();
+          for (const asset of assets) {
+            if (asset.name.endsWith('plugin.json')) {
+              const pluginJsonString = asset.source.source().toString();
+              const pluginJsonWithBuildMode = JSON.stringify(
+                {
+                  ...JSON.parse(pluginJsonString),
+                  buildMode: compilation.options.mode,
+                },
+                null,
+                4
+              );
+              compilation.updateAsset(asset.name, new webpack.sources.RawSource(pluginJsonWithBuildMode));
+            }
+          }
+        }
+      );
+    });
+  }
+}
+
 export type Env = {
   [key: string]: true | string | Env;
 };
 
-const config = async (env: Env): Promise<Configuration> => {
-  const pluginJson = getPluginJson();
+const config = async (env: Env, pluginDir = process.cwd()): Promise<Configuration> => {
+  const pluginJson = getPluginJson(pluginDir);
   // Inject module
   const virtualPublicPath = new VirtualModulesPlugin({
     'node_modules/grafana-public-path.js': `
@@ -66,7 +96,7 @@ const config = async (env: Env): Promise<Configuration> => {
 
     devtool: env.production ? 'source-map' : 'eval-source-map',
 
-    entry: await getEntries(),
+    entry: await getEntries(pluginDir),
 
     externals: [
       // Required for dynamic publicPath resolution
@@ -82,6 +112,8 @@ const config = async (env: Env): Promise<Configuration> => {
       'slate-plain-serializer',
       '@grafana/slate-react',
       'react',
+      'react/jsx-runtime',
+      'react/jsx-dev-runtime',
       'react-dom',
       'react-redux',
       'redux',
@@ -221,7 +253,7 @@ const config = async (env: Env): Promise<Configuration> => {
           // To `compiler.options.output`
           { from: 'README.md', to: '.', force: true },
           { from: 'plugin.json', to: '.' },
-          { from: hasLicense() ? 'LICENSE' : '../../../../../LICENSE', to: '.' }, // Point to Grafana License by default
+          { from: hasLicense(pluginDir) ? 'LICENSE' : '../../../../../LICENSE', to: '.' }, // Point to Grafana License by default
           { from: 'CHANGELOG.md', to: '.', force: true },
           { from: '**/*.json', to: '.', filter: skipFiles }, // TODO<Add an error for checking the basic structure of the repo>
           { from: '**/*.svg', to: '.', noErrorOnMissing: true, filter: skipFiles }, // Optional
@@ -229,6 +261,7 @@ const config = async (env: Env): Promise<Configuration> => {
           { from: '**/*.html', to: '.', noErrorOnMissing: true, filter: skipFiles }, // Optional
           { from: 'img/**/*', to: '.', noErrorOnMissing: true, filter: skipFiles }, // Optional
           { from: 'libs/**/*', to: '.', noErrorOnMissing: true, filter: skipFiles }, // Optional
+          { from: 'schema/**/*', to: '.', noErrorOnMissing: true, filter: skipFiles }, // Optional
           { from: 'static/**/*', to: '.', noErrorOnMissing: true, filter: skipFiles }, // Optional
         ],
       }),
@@ -240,7 +273,9 @@ const config = async (env: Env): Promise<Configuration> => {
           rules: [
             {
               search: /\%VERSION\%/g,
-              replace: env.commit ? `${getPackageJson().version}-${env.commit}` : getPackageJson().version,
+              replace: env.commit
+                ? `${getPackageJson(pluginDir).version}-${env.commit}`
+                : getPackageJson(pluginDir).version,
             },
             {
               search: /\%TODAY\%/g,
@@ -253,6 +288,8 @@ const config = async (env: Env): Promise<Configuration> => {
           ],
         },
       ]),
+      // Add buildMode to plugin.json
+      new BuildModeWebpackPlugin(),
       ...(env.development
         ? [
             new ForkTsCheckerWebpackPlugin({
@@ -280,6 +317,7 @@ const config = async (env: Env): Promise<Configuration> => {
 
     resolve: {
       extensions: ['.ts', '.tsx', '.js', '.jsx'],
+      conditionNames: ['@grafana-app/source', '...'],
       unsafeCache: true,
     },
 

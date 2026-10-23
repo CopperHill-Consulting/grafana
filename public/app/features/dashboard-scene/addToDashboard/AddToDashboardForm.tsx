@@ -1,17 +1,18 @@
 import { partial } from 'lodash';
-import { ReactElement, useEffect, useState } from 'react';
-import { Controller, DeepMap, FieldError, FieldErrors, useForm } from 'react-hook-form';
+import { type ReactElement, useEffect, useState } from 'react';
+import { Controller, type DeepMap, type FieldError, type FieldErrors, useForm } from 'react-hook-form';
 
-import { SelectableValue, TimeRange } from '@grafana/data';
+import { type SelectableValue, type TimeRange } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import { reportInteraction } from '@grafana/runtime';
-import { Panel } from '@grafana/schema';
+import { type Panel } from '@grafana/schema';
 import { Alert, Button, Field, Modal, RadioButtonGroup } from '@grafana/ui';
 import { DashboardPicker } from 'app/core/components/Select/DashboardPicker';
-import { contextSrv } from 'app/core/core';
+import { contextSrv } from 'app/core/services/context_srv';
 import { AccessControlAction } from 'app/types/accessControl';
 
-import { addToDashboard, SubmissionError } from './addToDashboard';
+import { addToDashboard, type SubmissionError } from './addToDashboard';
 
 enum SaveTarget {
   NewDashboard = 'new-dashboard',
@@ -41,7 +42,11 @@ export interface Props<TOptions = undefined> {
   children?: React.ReactNode;
 }
 
-export function AddToDashboardForm<TOptions = undefined>({
+/**
+ * Internal implementation used by the exposed versioned wrapper.
+ * For stability/versioning guidance, refer to AddToDashboardFormExposedComponent.
+ */
+export function AddToDashboardForm<TOptions extends AbsolutePathOptions | undefined = undefined>({
   onClose,
   buildPanel,
   timeRange,
@@ -91,7 +96,7 @@ export function AddToDashboardForm<TOptions = undefined>({
       queries: panel.targets,
     });
 
-    const error = addToDashboard({ dashboardUid, panel, openInNewTab, timeRange });
+    const error = addToDashboard({ dashboardUid, panel, openInNewTab, timeRange, options });
     if (error) {
       setSubmissionError(error);
       return;
@@ -187,7 +192,13 @@ export function AddToDashboardForm<TOptions = undefined>({
         >
           <Trans i18nKey="dashboard-scene.add-to-dashboard-form.open-in-new-tab">Open in new tab</Trans>
         </Button>
-        <Button type="submit" variant="primary" onClick={handleSubmit(partial(onSubmit, false))} icon="apps">
+        <Button
+          type="submit"
+          variant="primary"
+          onClick={handleSubmit(partial(onSubmit, false))}
+          icon="apps"
+          data-testid={selectors.components.AddToDashboard.confirmButton}
+        >
           <Trans i18nKey="dashboard-scene.add-to-dashboard-form.open-dashboard">Open dashboard</Trans>
         </Button>
       </Modal.ButtonRow>
@@ -202,3 +213,9 @@ function assertIsSaveToExistingDashboardError(
   // explicitly assert its type so that TS can narrow down FormDTO to SaveToExistingDashboard
   // when we use it in the form.
 }
+
+export interface AbsolutePathOptions {
+  useAbsolutePath: boolean;
+}
+
+export default AddToDashboardForm;

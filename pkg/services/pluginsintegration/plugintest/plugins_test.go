@@ -15,39 +15,22 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	"github.com/grafana/grafana-plugin-sdk-go/backend/httpclient"
 
-	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/fs"
 	"github.com/grafana/grafana/pkg/infra/tracing"
 	"github.com/grafana/grafana/pkg/plugins"
-	"github.com/grafana/grafana/pkg/plugins/backendplugin/coreplugin"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration"
+	"github.com/grafana/grafana/pkg/services/pluginsintegration/coreplugin"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/pluginstore"
-	"github.com/grafana/grafana/pkg/services/searchV2"
-	"github.com/grafana/grafana/pkg/services/sqlstore"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
 	"github.com/grafana/grafana/pkg/tests/testsuite"
 	"github.com/grafana/grafana/pkg/tsdb/azuremonitor"
-	cloudmonitoring "github.com/grafana/grafana/pkg/tsdb/cloud-monitoring"
 	"github.com/grafana/grafana/pkg/tsdb/cloudwatch"
-	"github.com/grafana/grafana/pkg/tsdb/elasticsearch"
-	postgres "github.com/grafana/grafana/pkg/tsdb/grafana-postgresql-datasource"
-	pyroscope "github.com/grafana/grafana/pkg/tsdb/grafana-pyroscope-datasource"
 	testdatasource "github.com/grafana/grafana/pkg/tsdb/grafana-testdata-datasource"
 	"github.com/grafana/grafana/pkg/tsdb/grafanads"
 	"github.com/grafana/grafana/pkg/tsdb/graphite"
-	"github.com/grafana/grafana/pkg/tsdb/influxdb"
-	"github.com/grafana/grafana/pkg/tsdb/jaeger"
-	"github.com/grafana/grafana/pkg/tsdb/loki"
-	"github.com/grafana/grafana/pkg/tsdb/mssql"
-	"github.com/grafana/grafana/pkg/tsdb/mysql"
-	"github.com/grafana/grafana/pkg/tsdb/opentsdb"
-	"github.com/grafana/grafana/pkg/tsdb/parca"
-	"github.com/grafana/grafana/pkg/tsdb/prometheus"
-	"github.com/grafana/grafana/pkg/tsdb/tempo"
-	"github.com/grafana/grafana/pkg/tsdb/zipkin"
 	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
@@ -152,26 +135,10 @@ func TestIntegrationPluginManager(t *testing.T) {
 	hcp := httpclient.NewProvider()
 	am := azuremonitor.ProvideService(hcp)
 	cw := cloudwatch.ProvideService()
-	cm := cloudmonitoring.ProvideService(hcp)
-	es := elasticsearch.ProvideService(hcp)
 	grap := graphite.ProvideService(hcp, tracer)
-	idb := influxdb.ProvideService(hcp)
-	lk := loki.ProvideService(hcp, tracer)
-	otsdb := opentsdb.ProvideService(hcp)
-	pr := prometheus.ProvideService(hcp)
-	tmpo := tempo.ProvideService(hcp, tracer)
 	td := testdatasource.ProvideService()
-	pg := postgres.ProvideService(cfg, features)
-	my := mysql.ProvideService()
-	ms := mssql.ProvideService(cfg)
-	db := db.InitTestDB(t, sqlstore.InitTestDBOpt{Cfg: cfg})
-	sv2 := searchV2.ProvideService(cfg, db, nil, nil, tracer, features, nil, nil, nil)
-	graf := grafanads.ProvideService(sv2, nil, features)
-	pyroscope := pyroscope.ProvideService(hcp)
-	parca := parca.ProvideService(hcp)
-	zipkin := zipkin.ProvideService(hcp)
-	jaeger := jaeger.ProvideService(hcp)
-	coreRegistry := coreplugin.ProvideCoreRegistry(tracing.InitializeTracerForTest(), am, cw, cm, es, grap, idb, lk, otsdb, pr, tmpo, td, pg, my, ms, graf, pyroscope, parca, zipkin, jaeger)
+	graf := grafanads.ProvideService(nil, features)
+	coreRegistry := coreplugin.ProvideCoreRegistry(tracing.InitializeTracerForTest(), am, cw, grap, td, graf)
 
 	testCtx := pluginsintegration.CreateIntegrationTestCtx(t, cfg, coreRegistry)
 
@@ -225,6 +192,7 @@ func verifyCorePluginCatalogue(t *testing.T, ctx context.Context, ps *pluginstor
 		"histogram":      {},
 		"live":           {},
 		"logs":           {},
+		"logstable":      {},
 		"candlestick":    {},
 		"news":           {},
 		"nodeGraph":      {},
@@ -240,32 +208,17 @@ func verifyCorePluginCatalogue(t *testing.T, ctx context.Context, ps *pluginstor
 		"trend":          {},
 		"welcome":        {},
 		"xychart":        {},
-		"datagrid":       {},
 	}
 
 	expDataSources := map[string]struct{}{
 		"cloudwatch":                       {},
 		"grafana-azure-monitor-datasource": {},
-		"stackdriver":                      {},
-		"elasticsearch":                    {},
 		"graphite":                         {},
-		"influxdb":                         {},
-		"loki":                             {},
-		"opentsdb":                         {},
-		"prometheus":                       {},
-		"tempo":                            {},
 		"grafana-testdata-datasource":      {},
-		"grafana-postgresql-datasource":    {},
-		"mysql":                            {},
-		"mssql":                            {},
 		"grafana":                          {},
 		"alertmanager":                     {},
 		"dashboard":                        {},
-		"jaeger":                           {},
 		"mixed":                            {},
-		"zipkin":                           {},
-		"grafana-pyroscope-datasource":     {},
-		"parca":                            {},
 	}
 
 	expApps := map[string]struct{}{

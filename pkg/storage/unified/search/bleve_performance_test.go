@@ -7,20 +7,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
+	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
 	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
+	"github.com/grafana/grafana/pkg/storage/unified/search"
 
 	"github.com/stretchr/testify/require"
 )
 
-func setupIndex(b testing.TB, useFullNgram bool) resource.ResourceIndex {
+func setupIndex(b testing.TB) resource.ResourceIndex {
 	// size := 1000000  // TODO: 200k documents standard size?
 	size := 200000
 	// batchSize := 1000 slower 8s (for 200k documents) - 34s (for 1M documents)
 	// batchSize := 10000 // faster 5s  (for 200k documents) - 27s (for 1M documents)
 	batchSize := 100000 // fasterer 3.5s  (for 200k documents) - 27s  (for 1M documents)
 	writer := newTestWriter(size, batchSize)
-	return newTestDashboardsIndex(b, 1, int64(size), int64(batchSize), writer, useFullNgram)
+	return newTestDashboardsIndex(b, 1, int64(size), writer)
 }
 
 const maxAllowedTime = 20 * time.Millisecond // Reasonable (can vary per env) performance threshold per query (e.g., 20ms)
@@ -32,13 +35,59 @@ const verbose = false
 // changes the the indexer settings can cause unforeseen performance issues ( for example: using wildcard queries )
 // this will fail if the stats exceed the "normal" thresholds
 func BenchmarkBleveQuery(b *testing.B) {
-	testIndex := setupIndex(b, false)
+	testIndex := setupIndex(b)
 	runBenchmark(b, testIndex)
 }
 
-func BenchmarkBleveQueryFullNgram(b *testing.B) {
-	testIndex := setupIndex(b, true)
-	runBenchmark(b, testIndex)
+// BenchmarkBleveBuildIndexStorageSelection compares direct filesystem builds
+// with adaptive memory-to-filesystem builds. It is intended to catch obvious
+// regressions in adaptive promotion overhead, not to model end-to-end search
+// server build latency.
+func BenchmarkBleveBuildIndexStorageSelection(b *testing.B) {
+	for _, docs := range []int{100, 1000} {
+		b.Run(fmt.Sprintf("docs=%d", docs), func(b *testing.B) {
+			b.Run("direct-file", func(b *testing.B) {
+				benchmarkBuildIndex(b, docs, 0)
+			})
+			b.Run("adaptive", func(b *testing.B) {
+				benchmarkBuildIndex(b, docs, 50)
+			})
+		})
+	}
+}
+
+func benchmarkBuildIndex(b *testing.B, docs int, fileThreshold int64) {
+	backend, err := search.NewBleveBackend(search.BleveOptions{
+		Root:          b.TempDir(),
+		FileThreshold: fileThreshold,
+		BuildVersion:  "12.3.45-789",
+		SearchFields: resource.NewSearchFieldsRegistry(nil, nil, map[resource.LowerGroupResource]resource.SearchFieldsProvider{
+			resource.NewLowerGroupResource("dashboard.grafana.app", "dashboards"): search.DashboardSearchFieldsProviderForTest(),
+		}),
+	}, nil)
+	require.NoError(b, err)
+	defer backend.Stop()
+
+	ctx := identity.WithRequester(context.Background(), &user.SignedInUser{Namespace: "ns"})
+	key := resource.NamespacedResource{
+		Namespace: "default",
+		Group:     "dashboard.grafana.app",
+		Resource:  "dashboards",
+	}
+	writer := newTestWriter(docs, docs)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		idx, err := backend.BuildIndex(ctx, key, int64(docs), "benchmark", writer, nil, true, time.Time{}, 0)
+		require.NoError(b, err)
+
+		b.StopTimer()
+		count, err := idx.DocCount(ctx, "", nil)
+		require.NoError(b, err)
+		require.Equal(b, int64(docs), count)
+		b.StartTimer()
+	}
 }
 
 func runBenchmark(b *testing.B, testIndex resource.ResourceIndex) {
@@ -57,12 +106,12 @@ func runBenchmark(b *testing.B, testIndex resource.ResourceIndex) {
 	b.ResetTimer()   // Reset timer before benchmarking
 	b.ReportAllocs() // Track memory allocations
 
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		start := time.Now() // Start timer
 		var memStatsBefore, memStatsAfter runtime.MemStats
 		runtime.ReadMemStats(&memStatsBefore)
 
-		_, err := testIndex.Search(context.Background(), nil, searchRequest, nil)
+		_, err := testIndex.Search(context.Background(), nil, searchRequest, nil, nil)
 
 		elapsed := time.Since(start) // Calculate elapsed time
 		runtime.ReadMemStats(&memStatsAfter)
@@ -101,7 +150,7 @@ func newTestWriter(size int, batchSize int) resource.BuildFn {
 		// Create a batch of items
 		batch := make([]*resource.BulkIndexItem, 0, batchSize)
 
-		for i := 0; i < size; i++ {
+		for i := range size {
 			name := fmt.Sprintf("name%d", i)
 			item := &resource.BulkIndexItem{
 				Action: resource.ActionIndex,

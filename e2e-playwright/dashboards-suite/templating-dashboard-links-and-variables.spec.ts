@@ -4,7 +4,7 @@ const DASHBOARD_UID = 'yBCC3aKGk';
 
 test.use({
   featureToggles: {
-    kubernetesDashboards: process.env.KUBERNETES_DASHBOARDS === 'true',
+    dashboardNewLayouts: true,
   },
 });
 

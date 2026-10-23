@@ -53,7 +53,7 @@ export const TooltipPlugin = ({
   renderTooltip,
   ...otherProps
 }: TooltipPluginProps) => {
-  const plotInstance = useRef<uPlot>();
+  const plotInstance = useRef<uPlot>(undefined);
   const theme = useTheme2();
   const [focusedSeriesIdx, setFocusedSeriesIdx] = useState<number | null>(null);
   const [focusedPointIdx, setFocusedPointIdx] = useState<number | null>(null);
@@ -267,7 +267,7 @@ function isCursorOutsideCanvas({ left, top }: uPlot.Cursor, canvas: DOMRect) {
  * Tooltip is positioned relatively to a viewport
  * @internal
  **/
-export function positionTooltip(u: uPlot, bbox: DOMRect) {
+function positionTooltip(u: uPlot, bbox: DOMRect) {
   let x, y;
   const cL = u.cursor.left || 0;
   const cT = u.cursor.top || 0;

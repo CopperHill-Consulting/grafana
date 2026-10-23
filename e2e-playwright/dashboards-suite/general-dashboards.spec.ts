@@ -4,7 +4,7 @@ const PAGE_UNDER_TEST = 'edediimbjhdz4b/a-tall-dashboard';
 
 test.use({
   featureToggles: {
-    kubernetesDashboards: process.env.KUBERNETES_DASHBOARDS === 'true',
+    dashboardNewLayouts: true,
   },
 });
 

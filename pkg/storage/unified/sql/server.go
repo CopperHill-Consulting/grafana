@@ -6,20 +6,26 @@ import (
 	"os"
 	"strings"
 
+	"github.com/grafana/authlib/types"
+	"github.com/grafana/dskit/services"
+	"github.com/grafana/grafana/pkg/services/sqlstore/migrator"
+	"github.com/grafana/grafana/pkg/storage/unified/search/builders"
+	"github.com/grafana/grafana/pkg/storage/unified/search/embed"
+	"github.com/grafana/grafana/pkg/storage/unified/search/embed/dashboard"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/grafana/authlib/types"
-	"github.com/grafana/dskit/services"
-
-	infraDB "github.com/grafana/grafana/pkg/infra/db"
 	secrets "github.com/grafana/grafana/pkg/registry/apis/secret/contracts"
 	inlinesecurevalue "github.com/grafana/grafana/pkg/registry/apis/secret/inline"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
-	"github.com/grafana/grafana/pkg/services/sqlstore/migrator"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
-	"github.com/grafana/grafana/pkg/storage/unified/sql/db/dbimpl"
+	"github.com/grafana/grafana/pkg/storage/unified/resourcepb"
+	"github.com/grafana/grafana/pkg/storage/unified/search/embed/backfill"
+	"github.com/grafana/grafana/pkg/storage/unified/search/embed/embedder"
+	"github.com/grafana/grafana/pkg/storage/unified/search/embed/reconciler"
+	"github.com/grafana/grafana/pkg/storage/unified/search/rerank"
+	"github.com/grafana/grafana/pkg/storage/unified/search/vector"
 )
 
 type QOSEnqueueDequeuer interface {
@@ -30,92 +36,315 @@ type QOSEnqueueDequeuer interface {
 
 // ServerOptions contains the options for creating a new ResourceServer
 type ServerOptions struct {
-	DB             infraDB.DB
-	Cfg            *setting.Cfg
-	Tracer         trace.Tracer
-	Reg            prometheus.Registerer
-	AccessClient   types.AccessClient
-	SearchOptions  resource.SearchOptions
-	StorageMetrics *resource.StorageMetrics
-	IndexMetrics   *resource.BleveIndexMetrics
-	Features       featuremgmt.FeatureToggles
-	QOSQueue       QOSEnqueueDequeuer
-	SecureValues   secrets.InlineSecureValueSupport
-	OwnsIndexFn    func(key resource.NamespacedResource) (bool, error)
+	Backend          resource.StorageBackend
+	VectorBackend    vector.VectorBackend
+	Embedder         *embedder.Embedder
+	Reranker         *rerank.Reranker
+	OverridesService *resource.OverridesService
+	Cfg              *setting.Cfg
+	Tracer           trace.Tracer
+	Reg              prometheus.Registerer
+	AccessClient     types.AccessClient
+	SearchOptions    resource.SearchOptions
+	SearchClient     resourcepb.ResourceIndexClient
+	StorageMetrics   *resource.StorageMetrics
+	IndexMetrics     *resource.BleveIndexMetrics
+	VectorMetrics    *resource.VectorMetrics
+	Features         featuremgmt.FeatureToggles
+	QOSQueue         QOSEnqueueDequeuer
+	SecureValues     secrets.InlineSecureValueSupport
+	OwnsIndexFn      func(key resource.NamespacedResource) (bool, error)
+
+	// DashboardStats is optional; nil disables the backfill views filter.
+	DashboardStats builders.DashboardStats
+
+	// DisableStorageServices is used for standalone search server
+	DisableStorageServices bool
 }
 
-func NewResourceServer(opts ServerOptions) (resource.ResourceServer, error) {
-	apiserverCfg := opts.Cfg.SectionWithEnvOverrides("grafana-apiserver")
-
-	if opts.SecureValues == nil && opts.Cfg != nil && opts.Cfg.SecretsManagement.GrpcClientEnable {
-		inlineSecureValueService, err := inlinesecurevalue.ProvideInlineSecureValueService(
-			opts.Cfg,
-			opts.Tracer,
-			nil, // not needed for gRPC client mode
-			nil, // not needed for gRPC client mode
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create inline secure value service: %w", err)
-		}
-		opts.SecureValues = inlineSecureValueService
+// NewUninitializedResourceServer creates a new ResourceServer without calling Init.
+// The caller must call Init on the returned server before it handles requests.
+func NewUninitializedResourceServer(opts ServerOptions) (resource.ResourceServer, error) {
+	if opts.DisableStorageServices {
+		return nil, fmt.Errorf("cannot create ResourceServer with storage services disabled")
 	}
+	resourceOpts, err := buildResourceServerOptions(&opts,
+		withSecureValueService,
+		withBlobConfig,
+		withAccessClient,
+		withMaxPageSizeBytes,
+		withBackend,
+		withVectorBackend,
+		withEmbedder,
+		withReranker,
+		withVectorMetrics,
+		withVectorIndexers,
+		withQOSQueue,
+		withOverridesService,
+		withSearch,
+		withSearchClient,
+		withQuotaConfig,
+		withStorageMetrics,
+		withUsageStats,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return resource.NewUninitializedResourceServer(*resourceOpts)
+}
 
-	serverOptions := resource.ResourceServerOptions{
-		Tracer: opts.Tracer,
+// NewResourceServer creates a new ResourceServer with support for both storage and search capabilities.
+func NewResourceServer(opts ServerOptions) (resource.ResourceServer, error) {
+	server, err := NewUninitializedResourceServer(opts)
+	if err != nil {
+		return nil, err
+	}
+	if err := server.Init(context.Background()); err != nil {
+		return nil, err
+	}
+	return server, nil
+}
+
+// NewUninitializedSearchServer creates a new SearchServer without calling Init.
+// The caller must call Init on the returned server before it handles requests.
+func NewUninitializedSearchServer(opts ServerOptions) (resource.SearchServer, error) {
+	opts.DisableStorageServices = true
+	resourceOpts, err := buildResourceServerOptions(&opts,
+		withBlobConfig,
+		withAccessClient,
+		withBackend,
+		withVectorBackend,
+		withEmbedder,
+		withReranker,
+		withVectorMetrics,
+		withSearch,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return resource.NewUninitializedSearchServer(*resourceOpts)
+}
+
+type buildResourceServerOpts func(*ServerOptions, *resource.ResourceServerOptions) error
+
+// buildResourceServerOptions builds the resource.ResourceServerOptions from sql.ServerOptions.
+func buildResourceServerOptions(opts *ServerOptions, withOpts ...buildResourceServerOpts) (*resource.ResourceServerOptions, error) {
+	apiserverCfg := opts.Cfg.SectionWithEnvOverrides("grafana-apiserver")
+	serverOptions := &resource.ResourceServerOptions{
 		Blob: resource.BlobConfig{
 			URL: apiserverCfg.Key("blob_url").MustString(""),
 		},
 		Reg:          opts.Reg,
 		SecureValues: opts.SecureValues,
 	}
-	if opts.AccessClient != nil {
-		serverOptions.AccessClient = resource.NewAuthzLimitedClient(opts.AccessClient, resource.AuthzOptions{Tracer: opts.Tracer, Registry: opts.Reg})
-	}
-	// Support local file blob
-	if strings.HasPrefix(serverOptions.Blob.URL, "./data/") {
-		dir := strings.Replace(serverOptions.Blob.URL, "./data", opts.Cfg.DataPath, 1)
-		err := os.MkdirAll(dir, 0700)
-		if err != nil {
+	for _, optFn := range withOpts {
+		if err := optFn(opts, serverOptions); err != nil {
 			return nil, err
 		}
-		serverOptions.Blob.URL = "file:///" + dir
 	}
+	return serverOptions, nil
+}
 
-	// This is mostly for testing, being able to influence when we paginate
-	// based on the page size during tests.
+func withSecureValueService(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	if opts.SecureValues != nil || opts.Cfg == nil || !opts.Cfg.SecretsManagement.GrpcClientEnable {
+		return nil
+	}
+	inlineSecureValueService, err := inlinesecurevalue.ProvideInlineSecureValueService(
+		opts.Cfg,
+		opts.Tracer,
+		nil, // not needed for gRPC client mode
+		nil, // not needed for gRPC client mode
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create inline secure value service: %w", err)
+	}
+	resourceOpts.SecureValues = inlineSecureValueService
+	return nil
+}
+
+func withAccessClient(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	authzOpts := resource.AuthzOptions{
+		Registry:         opts.Reg,
+		ExemptionEnabled: opts.Cfg.UnifiedStorageAuthzExemptionEnabled,
+		ExemptResources:  opts.Cfg.UnifiedStorageAuthzExemptResources,
+	}
+	if err := resource.ValidateAuthzOptions(authzOpts); err != nil {
+		return err
+	}
+	if opts.AccessClient != nil {
+		resourceOpts.AccessClient = resource.NewAuthzLimitedClient(opts.AccessClient, authzOpts)
+	}
+	return nil
+}
+
+func withBlobConfig(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	apiserverCfg := opts.Cfg.SectionWithEnvOverrides("grafana-apiserver")
+	resourceOpts.Blob = resource.BlobConfig{
+		URL: apiserverCfg.Key("blob_url").MustString(""),
+	}
+	// Support local file blob
+	if strings.HasPrefix(resourceOpts.Blob.URL, "./data/") {
+		dir := strings.Replace(resourceOpts.Blob.URL, "./data", opts.Cfg.DataPath, 1)
+		err := os.MkdirAll(dir, 0700)
+		if err != nil {
+			return err
+		}
+		resourceOpts.Blob.URL = "file:///" + dir
+	}
+	return nil
+}
+
+func withMaxPageSizeBytes(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
 	unifiedStorageCfg := opts.Cfg.SectionWithEnvOverrides("unified_storage")
 	maxPageSizeBytes := unifiedStorageCfg.Key("max_page_size_bytes")
-	serverOptions.MaxPageSizeBytes = maxPageSizeBytes.MustInt(0)
+	resourceOpts.MaxPageSizeBytes = maxPageSizeBytes.MustInt(0)
+	return nil
+}
 
-	eDB, err := dbimpl.ProvideResourceDB(opts.DB, opts.Cfg, opts.Tracer)
-	if err != nil {
-		return nil, err
+func withUsageStats(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	unifiedStorageCfg := opts.Cfg.SectionWithEnvOverrides("unified_storage")
+	resourceOpts.UsageStatsEnabled = unifiedStorageCfg.Key("usage_stats_enabled").MustBool(false)
+	return nil
+}
+
+func withBackend(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	if opts.Backend == nil {
+		return fmt.Errorf("missing storage backend")
 	}
 
-	isHA := isHighAvailabilityEnabled(opts.Cfg.SectionWithEnvOverrides("database"),
-		opts.Cfg.SectionWithEnvOverrides("resource_api"))
-	withPruner := opts.Features.IsEnabledGlobally(featuremgmt.FlagUnifiedStorageHistoryPruner)
+	resourceOpts.Backend = opts.Backend
+	//nolint: staticcheck
+	if diagnostics, ok := opts.Backend.(resourcepb.DiagnosticsServer); ok {
+		resourceOpts.Diagnostics = diagnostics
+	}
+	return nil
+}
 
-	store, err := NewBackend(BackendOptions{
-		DBProvider:     eDB,
-		Tracer:         opts.Tracer,
-		Reg:            opts.Reg,
-		IsHA:           isHA,
-		withPruner:     withPruner,
-		storageMetrics: opts.StorageMetrics,
+// withVectorBackend propagates the optional VectorBackend through. nil is
+// allowed; callers fall back to non-vector search paths when it's absent.
+func withVectorBackend(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.VectorBackend = opts.VectorBackend
+	return nil
+}
+
+// withEmbedder propagates the optional Embedder through. nil is allowed;
+// the VectorSearch handler returns Unimplemented when it's absent.
+func withEmbedder(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.Embedder = opts.Embedder
+	return nil
+}
+
+// withReranker propagates the optional Reranker through. nil is allowed;
+// HybridSearch then returns RRF ordering and min_relevance is a no-op.
+func withReranker(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.Reranker = opts.Reranker
+	return nil
+}
+
+// withVectorIndexers builds the optional vector backfiller and
+// reconciler. Both providers return (nil, nil) when their feature is
+// off, so nil is normal and propagates through to the resource server
+// which simply doesn't start the goroutine.
+func withVectorIndexers(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	if !opts.Cfg.VectorIndexingEnabled ||
+		opts.Cfg.EmbeddingProvider == "" ||
+		opts.Backend == nil ||
+		opts.VectorBackend == nil ||
+		opts.Embedder == nil {
+		return nil
+	}
+	batchEmbedder := embedder.NewBatchEmbedder(*opts.Embedder)
+	builders := []embed.Builder{dashboard.New()}
+
+	backfiller, err := backfill.NewVectorBackfiller(backfill.Options{
+		Storage:        opts.Backend,
+		VectorBackend:  opts.VectorBackend,
+		BatchEmbedder:  batchEmbedder,
+		Builders:       builders,
+		DashboardStats: opts.DashboardStats,
+		Metrics:        resourceOpts.VectorMetrics,
 	})
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("create vector backfiller: %w", err)
 	}
-	serverOptions.Backend = store
-	serverOptions.Diagnostics = store
-	serverOptions.Lifecycle = store
-	serverOptions.Search = opts.SearchOptions
-	serverOptions.IndexMetrics = opts.IndexMetrics
-	serverOptions.QOSQueue = opts.QOSQueue
-	serverOptions.OwnsIndexFn = opts.OwnsIndexFn
 
-	return resource.NewResourceServer(serverOptions)
+	resourceOpts.VectorReconciler, err = reconciler.New(reconciler.Options{
+		Storage:       opts.Backend,
+		VectorBackend: opts.VectorBackend,
+		BatchEmbedder: batchEmbedder,
+		Builders:      builders,
+		Backfiller:    backfiller,
+		Interval:      opts.Cfg.VectorReconcilerInterval,
+		Metrics:       resourceOpts.VectorMetrics,
+
+		EmbeddingCountInterval: opts.Cfg.VectorEmbeddingCountInterval,
+	})
+	if err != nil {
+		return fmt.Errorf("create vector reconciler: %w", err)
+	}
+	return nil
+}
+
+func withSearchClient(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.SearchClient = opts.SearchClient
+	return nil
+}
+
+func withSearch(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.Search = opts.SearchOptions
+	resourceOpts.IndexMetrics = opts.IndexMetrics
+	resourceOpts.OwnsIndexFn = opts.OwnsIndexFn
+
+	if opts.VectorBackend != nil {
+		resourceOpts.Search.AllowedInternalCollections = opts.Cfg.VectorAllowedInternalCollections
+		resourceOpts.Search.AllowedExternalCollections = opts.Cfg.VectorAllowedExternalCollections
+		if opts.Cfg.VectorQueryCacheEnabled {
+			if cache, ok := opts.VectorBackend.(vector.QueryEmbeddingCache); ok {
+				resourceOpts.Search.QueryCache = cache
+				resourceOpts.Search.QueryCacheMaxPerTenant = opts.Cfg.VectorQueryCacheMaxPerTenant
+			}
+		}
+		if opts.Cfg.VectorRateLimitEnabled {
+			if rl, ok := opts.VectorBackend.(vector.RateLimiter); ok {
+				resourceOpts.Search.RateLimiter = rl
+				resourceOpts.Search.RateLimitPerTenant = opts.Cfg.VectorRateLimitPerTenant
+				resourceOpts.Search.RateLimitWindow = opts.Cfg.VectorRateLimitWindow
+			}
+		}
+	}
+	return nil
+}
+
+func withQOSQueue(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.QOSQueue = opts.QOSQueue
+	return nil
+}
+
+func withOverridesService(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.OverridesService = opts.OverridesService
+	return nil
+}
+
+func withQuotaConfig(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	enforced := make(map[string]bool, len(opts.Cfg.EnforcedQuotaResources))
+	for _, r := range opts.Cfg.EnforcedQuotaResources {
+		enforced[r] = true
+	}
+	resourceOpts.QuotasConfig = resource.QuotasConfig{
+		EnforcedResources: enforced,
+		SupportMessage:    opts.Cfg.QuotasErrorMessageSupportInfo,
+	}
+	return nil
+}
+
+func withStorageMetrics(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.StorageMetrics = opts.StorageMetrics
+	return nil
+}
+
+func withVectorMetrics(opts *ServerOptions, resourceOpts *resource.ResourceServerOptions) error {
+	resourceOpts.VectorMetrics = opts.VectorMetrics
+	return nil
 }
 
 // isHighAvailabilityEnabled determines if high availability mode should

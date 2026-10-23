@@ -1,14 +1,15 @@
 import { useMemo } from 'react';
 import { useLocation } from 'react-router-dom-v5-compat';
 
-import { GrafanaPlugin, NavModelItem, PluginIncludeType, PluginType } from '@grafana/data';
+import { type GrafanaPlugin, type NavModelItem, PluginIncludeType, PluginType } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { config } from '@grafana/runtime';
-import { contextSrv } from 'app/core/core';
+import { contextSrv } from 'app/core/services/context_srv';
 import { AccessControlAction } from 'app/types/accessControl';
 
+import { ASSISTANT_PLUGIN_ID } from '../components/AssistantOverview/constants';
 import { usePluginConfig } from '../hooks/usePluginConfig';
-import { CatalogPlugin, PluginTabIds, PluginTabLabels } from '../types';
+import { type CatalogPlugin, PluginTabIds, PluginTabLabels } from '../types';
 
 type ReturnType = {
   error: Error | undefined;
@@ -18,9 +19,9 @@ type ReturnType = {
 };
 
 function getCurrentPageId(
-  pageId: PluginTabIds | undefined,
   isNarrowScreen: boolean | undefined,
-  defaultTab: string
+  defaultTab: string,
+  pageId?: PluginTabIds | string | null
 ): PluginTabIds | string {
   if (!isNarrowScreen && pageId === PluginTabIds.PLUGINDETAILS) {
     return defaultTab;
@@ -30,7 +31,7 @@ function getCurrentPageId(
 
 export const usePluginDetailsTabs = (
   plugin?: CatalogPlugin,
-  pageId?: PluginTabIds,
+  pageId?: PluginTabIds | string | null,
   isNarrowScreen?: boolean
 ): ReturnType => {
   const { loading, error, value: pluginConfig } = usePluginConfig(plugin);
@@ -38,7 +39,7 @@ export const usePluginDetailsTabs = (
   const defaultTab = useDefaultPage(plugin, pluginConfig);
   const isPublished = Boolean(plugin?.isPublished);
 
-  const currentPageId = getCurrentPageId(pageId, isNarrowScreen, defaultTab);
+  const currentPageId = getCurrentPageId(isNarrowScreen, defaultTab, pageId);
 
   const navModelChildren = useMemo(() => {
     const canConfigurePlugins = plugin && contextSrv.hasPermissionInMetadata(AccessControlAction.PluginsWrite, plugin);
@@ -85,7 +86,8 @@ export const usePluginDetailsTabs = (
     }
 
     // Not extending the tabs with the config pages if the plugin is not installed
-    if (!pluginConfig) {
+    // also wait if the plugin config is still loading to avoid showing default tabs prematurely
+    if (!pluginConfig || loading) {
       return navModelChildren;
     }
 
@@ -99,10 +101,7 @@ export const usePluginDetailsTabs = (
       });
     }
 
-    if (
-      config.featureToggles.panelTitleSearch &&
-      (pluginConfig.meta.type === PluginType.panel || pluginConfig.meta.type === PluginType.datasource)
-    ) {
+    if (pluginConfig.meta?.type === PluginType.panel || pluginConfig.meta?.type === PluginType.datasource) {
       navModelChildren.push({
         text: PluginTabLabels.USAGE,
         icon: 'list-ul',
@@ -151,7 +150,7 @@ export const usePluginDetailsTabs = (
     }
 
     return navModelChildren;
-  }, [plugin, pluginConfig, pathname, isPublished, currentPageId, isNarrowScreen]);
+  }, [plugin, pluginConfig, pathname, isPublished, currentPageId, isNarrowScreen, loading]);
 
   const navModel: NavModelItem = {
     text: plugin?.name ?? '',
@@ -179,6 +178,10 @@ export const usePluginDetailsTabs = (
 
 function useDefaultPage(plugin: CatalogPlugin | undefined, pluginConfig: GrafanaPlugin | undefined | null) {
   if (!plugin || !pluginConfig) {
+    return PluginTabIds.OVERVIEW;
+  }
+
+  if (plugin.id === ASSISTANT_PLUGIN_ID) {
     return PluginTabIds.OVERVIEW;
   }
 

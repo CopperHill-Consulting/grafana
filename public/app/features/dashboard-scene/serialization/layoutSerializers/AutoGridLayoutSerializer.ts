@@ -1,28 +1,35 @@
 import {
-  Spec as DashboardV2Spec,
+  type Spec as DashboardV2Spec,
   defaultAutoGridLayoutSpec,
-  AutoGridLayoutItemKind,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
+  type AutoGridLayoutItemKind,
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
 
 import { AutoGridItem } from '../../scene/layout-auto-grid/AutoGridItem';
 import { AutoGridLayout } from '../../scene/layout-auto-grid/AutoGridLayout';
 import {
   AUTO_GRID_DEFAULT_COLUMN_WIDTH,
   AUTO_GRID_DEFAULT_ROW_HEIGHT,
-  AutoGridColumnWidth,
-  AutoGridRowHeight,
+  type AutoGridColumnWidth,
+  type AutoGridRowHeight,
   getAutoRowsTemplate,
   getTemplateColumnsTemplate,
   AutoGridLayoutManager,
 } from '../../scene/layout-auto-grid/AutoGridLayoutManager';
-import { dashboardSceneGraph } from '../../utils/dashboardSceneGraph';
+import { dashboardSceneGraph, type PanelIdGenerator } from '../../utils/dashboardSceneGraph';
 import { getGridItemKeyForPanelId } from '../../utils/utils';
 
 import { buildLibraryPanel, buildVizPanel, getConditionalRendering } from './utils';
 
-export function serializeAutoGridLayout(layoutManager: AutoGridLayoutManager): DashboardV2Spec['layout'] {
+export function serializeAutoGridLayout(
+  layoutManager: AutoGridLayoutManager,
+  isSnapshot?: boolean
+): DashboardV2Spec['layout'] {
   const { maxColumnCount, fillScreen, columnWidth, rowHeight, layout } = layoutManager.state;
   const defaults = defaultAutoGridLayoutSpec();
+
+  const items = isSnapshot
+    ? layout.state.children.flatMap(getRepeatedPanelsForSnapshot)
+    : layout.state.children.map((item) => serializeAutoGridItem(item));
 
   return {
     kind: 'AutoGridLayout',
@@ -31,14 +38,17 @@ export function serializeAutoGridLayout(layoutManager: AutoGridLayoutManager): D
       fillScreen: fillScreen === defaults.fillScreen ? undefined : fillScreen,
       ...serializeAutoGridColumnWidth(columnWidth),
       ...serializeAutoGridRowHeight(rowHeight),
-      items: layout.state.children.map(serializeAutoGridItem),
+      items,
     },
   };
 }
 
-export function serializeAutoGridItem(item: AutoGridItem): AutoGridLayoutItemKind {
-  // For serialization we should retrieve the original element key
-  const elementKey = dashboardSceneGraph.getElementIdentifierForVizPanel(item.state?.body);
+export function serializeAutoGridItem(item: AutoGridItem, isSnapshot = false): AutoGridLayoutItemKind {
+  // For serialization we should retrieve the original element key. In snapshot mode we must also
+  // disambiguate panels that live inside a repeated row/tab clone (they reuse the source keys).
+  const elementKey = isSnapshot
+    ? dashboardSceneGraph.getSnapshotElementIdentifierForVizPanel(item.state?.body)
+    : dashboardSceneGraph.getElementIdentifierForVizPanel(item.state?.body);
 
   const layoutItem: AutoGridLayoutItemKind = {
     kind: 'AutoGridLayoutItem',
@@ -66,11 +76,41 @@ export function serializeAutoGridItem(item: AutoGridItem): AutoGridLayoutItemKin
   return layoutItem;
 }
 
+function getRepeatedPanelsForSnapshot(child: AutoGridItem): AutoGridLayoutItemKind[] {
+  const base = serializeAutoGridItem(child, true);
+  // Snapshots should contain explicit panels, not a repeater definition.
+  delete base.spec.repeat;
+
+  if (!child.state.repeatedPanels?.length) {
+    return [base];
+  }
+
+  const cloneItems = child.state.repeatedPanels.map((panel) => {
+    if (!panel.state.key) {
+      throw new Error('Snapshot serialization expected repeat clone to have a key');
+    }
+
+    const layoutItem: AutoGridLayoutItemKind = {
+      kind: 'AutoGridLayoutItem',
+      spec: {
+        element: {
+          kind: 'ElementReference',
+          name: dashboardSceneGraph.getSnapshotElementIdentifierForVizPanel(panel),
+        },
+      },
+    };
+
+    return layoutItem;
+  });
+
+  return [base, ...cloneItems];
+}
+
 export function deserializeAutoGridLayout(
   layout: DashboardV2Spec['layout'],
   elements: DashboardV2Spec['elements'],
   preload: boolean,
-  panelIdGenerator?: () => number
+  panelIdGenerator?: PanelIdGenerator
 ): AutoGridLayoutManager {
   if (layout.kind !== 'AutoGridLayout') {
     throw new Error('Invalid layout kind');
@@ -117,7 +157,7 @@ function serializeAutoGridRowHeight(rowHeight: AutoGridRowHeight) {
 export function deserializeAutoGridItem(
   item: AutoGridLayoutItemKind,
   elements: DashboardV2Spec['elements'],
-  panelIdGenerator?: () => number
+  panelIdGenerator?: PanelIdGenerator
 ): AutoGridItem {
   const panel = elements[item.spec.element.name];
   if (!panel) {

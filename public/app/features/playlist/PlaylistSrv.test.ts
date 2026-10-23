@@ -1,14 +1,14 @@
-import { Store } from 'redux';
+import { type Store } from 'redux';
 import configureMockStore from 'redux-mock-store';
 
 import { locationService } from '@grafana/runtime';
 import { setStore } from 'app/store/store';
 
-import { Playlist } from '../../api/clients/playlist/v0alpha1';
-import { DashboardQueryResult } from '../search/service/types';
+import { type Playlist } from '../../api/clients/playlist/v1';
+import { type DashboardQueryResult } from '../search/service/types';
 
 import { PlaylistSrv } from './PlaylistSrv';
-import { PlaylistItemUI } from './types';
+import { type PlaylistItemUI } from './types';
 
 jest.mock('./utils', () => ({
   loadDashboards: (items: PlaylistItemUI[]) => {
@@ -22,6 +22,8 @@ jest.mock('./utils', () => ({
 }));
 
 const mockPlaylist: Playlist = {
+  apiVersion: 'playlist.grafana.app/v1',
+  kind: 'Playlist',
   spec: {
     interval: '1s',
     title: 'The display',
@@ -155,9 +157,9 @@ describe('PlaylistSrv', () => {
     // Start the playlist
     await srv.start(mockPlaylist);
 
-    // Get history entries
+    // Get history entries via the underlying MemoryHistory (test-env only)
     const history = locationService.getHistory();
-    const entries = (history as unknown as { entries: Location[] }).entries;
+    const entries = (history as unknown as { base: { entries: Location[] } }).base.entries;
 
     // The current entry should be the first dashboard
     expect(entries[entries.length - 1].pathname).toBe('/url/to/aaa');

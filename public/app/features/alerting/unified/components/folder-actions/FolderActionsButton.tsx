@@ -7,16 +7,12 @@ import { useDispatch } from 'app/types/store';
 
 import { alertingFolderActionsApi } from '../../api/alertingFolderActionsApi';
 import { shouldUseAlertingListViewV2, shouldUsePrometheusRulesPrimary } from '../../featureToggles';
-import {
-  AlertingAction,
-  FolderBulkAction,
-  useAlertingAbility,
-  useFolderBulkActionAbility,
-} from '../../hooks/useAbilities';
+import { useFolderBulkActionAbility } from '../../hooks/abilities/otherAbilities';
+import { useGlobalRuleAbility } from '../../hooks/abilities/rules/ruleAbilities';
+import { FolderBulkAction, RuleAction } from '../../hooks/abilities/types';
 import { useFolder } from '../../hooks/useFolder';
 import { fetchAllPromAndRulerRulesAction, fetchAllPromRulesAction, fetchRulerRulesAction } from '../../state/actions';
 import { GRAFANA_RULES_SOURCE_NAME } from '../../utils/datasource';
-import { makeFolderLink } from '../../utils/misc';
 import { createRelativeUrl } from '../../utils/url';
 import MoreButton from '../MoreButton';
 import { GrafanaRuleFolderExporter } from '../export/GrafanaRuleFolderExporter';
@@ -36,16 +32,13 @@ export const FolderActionsButton = ({ folderUID }: Props) => {
   const bulkActionsEnabled = config.featureToggles.alertingBulkActionsInUI;
   const listView2Enabled = shouldUseAlertingListViewV2();
 
-  const [exportRulesSupported, exportRulesAllowed] = useAlertingAbility(AlertingAction.ExportGrafanaManagedRules);
-
-  const canExportRules = exportRulesSupported && exportRulesAllowed;
+  const { granted: canExportRules } = useGlobalRuleAbility(RuleAction.ExportRules);
 
   const [deleteGrafanaRulesFromFolder, deleteState] =
     alertingFolderActionsApi.endpoints.deleteGrafanaRulesFromFolder.useMutation();
 
   const { folder } = useFolder(folderUID);
   const folderName = folder?.title || 'unknown folder';
-  const folderUrl = makeFolderLink(folderUID);
   const viewComponent = listView2Enabled ? 'list' : 'grouped';
 
   // URLs
@@ -62,12 +55,6 @@ export const FolderActionsButton = ({ folderUID }: Props) => {
 
   const menuItems = (
     <>
-      <Menu.Item
-        url={folderUrl}
-        icon="eye"
-        aria-label={t('alerting.list-view.folder-actions.view.aria-label', 'View folder')}
-        label={t('alerting.list-view.folder-actions.view.label', 'View folder')}
-      />
       <BulkActions folderUID={folderUID} onClickDelete={setIsDeleteModalOpen} isLoading={deleteState.isLoading} />
       {canExportRules && (
         <>
@@ -142,11 +129,8 @@ function BulkActions({
   const bulkActionsEnabled = config.featureToggles.alertingBulkActionsInUI;
 
   // abilities
-  const [pauseSupported, pauseAllowed] = useFolderBulkActionAbility(FolderBulkAction.Pause);
-  const [deleteSupported, deleteAllowed] = useFolderBulkActionAbility(FolderBulkAction.Delete);
-
-  const canPause = pauseSupported && pauseAllowed;
-  const canDelete = deleteSupported && deleteAllowed;
+  const { granted: canPause } = useFolderBulkActionAbility(FolderBulkAction.Pause);
+  const { granted: canDelete } = useFolderBulkActionAbility(FolderBulkAction.Delete);
 
   // mutations
   const [pauseFolder, updateState] = alertingFolderActionsApi.endpoints.pauseFolder.useMutation();

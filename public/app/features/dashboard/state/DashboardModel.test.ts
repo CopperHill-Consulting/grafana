@@ -1,23 +1,18 @@
 import { keys as _keys } from 'lodash';
 
-import { dateTime, TimeRange, VariableHide } from '@grafana/data';
-import { Dashboard, defaultVariableModel, RowPanel } from '@grafana/schema';
+import { dateTime, type TimeRange } from '@grafana/data';
+import { type Dashboard, type RowPanel } from '@grafana/schema';
 
 import { getDashboardModel } from '../../../../test/helpers/getDashboardModel';
 import { variableAdapters } from '../../variables/adapters';
 import { createAdHocVariableAdapter } from '../../variables/adhoc/adapter';
 import { createCustomVariableAdapter } from '../../variables/custom/adapter';
 import { createQueryVariableAdapter } from '../../variables/query/adapter';
-import { setTimeSrv, TimeSrv } from '../services/TimeSrv';
+import { setTimeSrv, type TimeSrv } from '../services/TimeSrv';
 import { DashboardModel } from '../state/DashboardModel';
 import { PanelModel } from '../state/PanelModel';
 
-import {
-  createAnnotationJSONFixture,
-  createDashboardModelFixture,
-  createPanelSaveModel,
-  createVariableJSONFixture,
-} from './__fixtures__/dashboardFixtures';
+import { createDashboardModelFixture, createPanelSaveModel } from './__fixtures__/dashboardFixtures';
 
 jest.mock('app/core/services/context_srv');
 
@@ -331,102 +326,6 @@ describe('DashboardModel', () => {
 
     it('Should format timestamp with millisecond resolution if format is passed as parameter', () => {
       expect(dashboard.formatDate(1234567890007, 'YYYY-MM-DD HH:mm:ss.SSS')).toBe('2009-02-13 23:31:30.007');
-    });
-  });
-
-  describe('isSubMenuVisible with empty lists', () => {
-    let model: DashboardModel;
-
-    beforeEach(() => {
-      model = createDashboardModelFixture();
-    });
-
-    it('should not show submenu', () => {
-      expect(model.isSubMenuVisible()).toBe(false);
-    });
-  });
-
-  describe('isSubMenuVisible with annotation', () => {
-    let model: DashboardModel;
-
-    beforeEach(() => {
-      model = createDashboardModelFixture({
-        schemaVersion: 30,
-        annotations: {
-          list: [
-            {
-              datasource: { uid: 'fake-uid', type: 'prometheus' },
-              name: 'Fake annotation',
-              type: 'dashboard',
-              iconColor: 'rgba(0, 211, 255, 1)',
-              enable: true,
-              hide: false,
-            },
-          ],
-        },
-      });
-    });
-
-    it('should show submmenu', () => {
-      expect(model.isSubMenuVisible()).toBe(true);
-    });
-  });
-
-  describe('isSubMenuVisible with template var', () => {
-    let model: DashboardModel;
-
-    beforeEach(() => {
-      model = createDashboardModelFixture(
-        {
-          templating: {
-            list: [createVariableJSONFixture({})],
-          },
-        },
-        {},
-        // getVariablesFromState stub to return a variable
-        jest.fn().mockImplementation(() => [{}])
-      );
-    });
-
-    it('should enable submmenu', () => {
-      expect(model.isSubMenuVisible()).toBe(true);
-    });
-  });
-
-  describe('isSubMenuVisible with hidden template var', () => {
-    let model: DashboardModel;
-
-    beforeEach(() => {
-      model = createDashboardModelFixture({
-        templating: {
-          list: [
-            {
-              ...defaultVariableModel,
-              hide: VariableHide.hideVariable,
-            },
-          ],
-        },
-      });
-    });
-
-    it('should not enable submmenu', () => {
-      expect(model.isSubMenuVisible()).toBe(false);
-    });
-  });
-
-  describe('isSubMenuVisible with hidden annotation toggle', () => {
-    let dashboard: DashboardModel;
-
-    beforeEach(() => {
-      dashboard = createDashboardModelFixture({
-        annotations: {
-          list: [createAnnotationJSONFixture({ hide: true })],
-        },
-      });
-    });
-
-    it('should not enable submmenu', () => {
-      expect(dashboard.isSubMenuVisible()).toBe(false);
     });
   });
 
@@ -912,6 +811,31 @@ describe('DashboardModel', () => {
     });
   });
 
+  describe('Given model with a variable type that has no registered adapter', () => {
+    it('getSaveModelCloneOld should not throw and should include the variable as-is', () => {
+      const groupByVariable = {
+        name: 'groupby',
+        type: 'groupby' as const,
+        datasource: { type: 'prometheus', uid: 'abc' },
+        label: 'Group by',
+        options: [],
+        current: { text: 'host', value: 'host' },
+      };
+
+      const json = { templating: { list: [] } } as unknown as Dashboard;
+      const model = new DashboardModel(json, undefined, {
+        getVariablesFromState: () => [groupByVariable as any],
+      });
+
+      const saveModel = model.getSaveModelCloneOld();
+
+      expect(saveModel.templating.list).toHaveLength(1);
+      expect(saveModel.templating.list[0].type).toBe('groupby');
+      expect(saveModel.templating.list[0].name).toBe('groupby');
+      expect(saveModel.templating.list[0].current.text).toBe('host');
+    });
+  });
+
   describe('Given a dashboard with one panel legend on and two off', () => {
     let model: DashboardModel;
 
@@ -948,7 +872,7 @@ describe('DashboardModel', () => {
       ${false} | ${true}         | ${true}  | ${true}
       ${true}  | ${false}        | ${true}  | ${true}
       ${true}  | ${true}         | ${true}  | ${true}
-      ${false} | ${false}        | ${true}  | ${false}
+      ${false} | ${false}        | ${true}  | ${true}
       ${false} | ${true}         | ${false} | ${false}
       ${true}  | ${false}        | ${false} | ${false}
       ${true}  | ${true}         | ${false} | ${false}
@@ -961,7 +885,6 @@ describe('DashboardModel', () => {
           {
             annotationsPermissions: {
               dashboard: { canAdd, canEdit: true, canDelete: true },
-              organization: { canAdd: false, canEdit: false, canDelete: false },
             },
           }
         );
@@ -980,7 +903,7 @@ describe('DashboardModel', () => {
       ${false} | ${true}         | ${true}                  | ${true}
       ${true}  | ${false}        | ${true}                  | ${true}
       ${true}  | ${true}         | ${true}                  | ${true}
-      ${false} | ${false}        | ${true}                  | ${false}
+      ${false} | ${false}        | ${true}                  | ${true}
       ${false} | ${true}         | ${false}                 | ${false}
       ${true}  | ${false}        | ${false}                 | ${false}
       ${true}  | ${true}         | ${false}                 | ${false}
@@ -992,8 +915,7 @@ describe('DashboardModel', () => {
           {},
           {
             annotationsPermissions: {
-              dashboard: { canAdd: false, canEdit: false, canDelete: true },
-              organization: { canAdd: false, canEdit: canEditWithOrgPermission, canDelete: false },
+              dashboard: { canAdd: false, canEdit: canEditWithOrgPermission, canDelete: true },
             },
           }
         );
@@ -1010,7 +932,7 @@ describe('DashboardModel', () => {
       ${false} | ${true}         | ${true}                        | ${true}
       ${true}  | ${false}        | ${true}                        | ${true}
       ${true}  | ${true}         | ${true}                        | ${true}
-      ${false} | ${false}        | ${true}                        | ${false}
+      ${false} | ${false}        | ${true}                        | ${true}
       ${false} | ${true}         | ${false}                       | ${false}
       ${true}  | ${false}        | ${false}                       | ${false}
       ${true}  | ${true}         | ${false}                       | ${false}
@@ -1023,7 +945,6 @@ describe('DashboardModel', () => {
           {
             annotationsPermissions: {
               dashboard: { canAdd: false, canEdit: canEditWithDashboardPermission, canDelete: true },
-              organization: { canAdd: false, canEdit: false, canDelete: false },
             },
           }
         );
@@ -1042,7 +963,7 @@ describe('DashboardModel', () => {
       ${false} | ${true}         | ${true}                    | ${true}
       ${true}  | ${false}        | ${true}                    | ${true}
       ${true}  | ${true}         | ${true}                    | ${true}
-      ${false} | ${false}        | ${true}                    | ${false}
+      ${false} | ${false}        | ${true}                    | ${true}
       ${false} | ${true}         | ${false}                   | ${false}
       ${true}  | ${false}        | ${false}                   | ${false}
       ${true}  | ${true}         | ${false}                   | ${false}
@@ -1054,8 +975,7 @@ describe('DashboardModel', () => {
           {},
           {
             annotationsPermissions: {
-              dashboard: { canAdd: false, canEdit: false, canDelete: false },
-              organization: { canAdd: false, canEdit: false, canDelete: canDeleteWithOrgPermission },
+              dashboard: { canAdd: false, canEdit: false, canDelete: canDeleteWithOrgPermission },
             },
           }
         );
@@ -1072,7 +992,7 @@ describe('DashboardModel', () => {
       ${false} | ${true}         | ${true}                          | ${true}
       ${true}  | ${false}        | ${true}                          | ${true}
       ${true}  | ${true}         | ${true}                          | ${true}
-      ${false} | ${false}        | ${true}                          | ${false}
+      ${false} | ${false}        | ${true}                          | ${true}
       ${false} | ${true}         | ${false}                         | ${false}
       ${true}  | ${false}        | ${false}                         | ${false}
       ${true}  | ${true}         | ${false}                         | ${false}
@@ -1085,7 +1005,6 @@ describe('DashboardModel', () => {
           {
             annotationsPermissions: {
               dashboard: { canAdd: false, canEdit: false, canDelete: canDeleteWithDashboardPermission },
-              organization: { canAdd: false, canEdit: false, canDelete: false },
             },
           }
         );
@@ -1156,43 +1075,6 @@ describe('DashboardModel', () => {
       });
       const panel = dashboard.getPanelById(2);
       expect(dashboard.canEditPanel(panel)).toBe(true);
-    });
-  });
-});
-
-describe('exitViewPanel', () => {
-  function getTestContext() {
-    const panel = new PanelModel({ setIsViewing: jest.fn() });
-    const dashboard = createDashboardModelFixture();
-    dashboard.startRefresh = jest.fn();
-    dashboard.panelInView = panel;
-
-    return { dashboard, panel };
-  }
-
-  describe('when called', () => {
-    it('then panelInView is set to undefined', () => {
-      const { dashboard, panel } = getTestContext();
-
-      dashboard.exitViewPanel(panel);
-
-      expect(dashboard.panelInView).toBeUndefined();
-    });
-
-    it('then setIsViewing is called on panel', () => {
-      const { dashboard, panel } = getTestContext();
-
-      dashboard.exitViewPanel(panel);
-
-      expect(panel.setIsViewing).toHaveBeenCalledWith(false);
-    });
-
-    it('then startRefresh is not called', () => {
-      const { dashboard, panel } = getTestContext();
-
-      dashboard.exitViewPanel(panel);
-
-      expect(dashboard.startRefresh).not.toHaveBeenCalled();
     });
   });
 });

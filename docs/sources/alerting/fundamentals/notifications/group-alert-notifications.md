@@ -13,22 +13,6 @@ labels:
 title: Group alert notifications
 menuTitle: Grouping
 weight: 114
-refs:
-  alert-labels:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/alert-rules/annotation-label/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/fundamentals/alert-rules/annotation-label/
-  notification-policies:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/notifications/notification-policies/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/fundamentals/notifications/notification-policies/
-  silences:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/create-silence/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/create-silence/
 ---
 
 # Group alert notifications
@@ -43,7 +27,7 @@ For a practical example of grouping, refer to our [Getting Started with Grouping
 
 Grouping combines similar alert instances within a specific period into a single notification, reducing alert noise.
 
-In the [notification policy](ref:notification-policies), you can configure how to group multiple alerts into a single notification:
+In the [notification policy](/docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/notifications/notification-policies/), you can configure how to group multiple alerts into a single notification:
 
 - The `Group by` option specifies the criteria for grouping incoming alerts within the policy. The default is by alert rule.
 - [Timing options](#timing-options) determine when and how often to send the notification.
@@ -159,7 +143,9 @@ Once the first notification has been sent for a new group of alerts, the group i
 
 When the group interval timer elapses, the system resets the group interval timer and sends a notification only if there were group changes. This process repeats until there are no more alerts.
 
-It's important to note that an alert instance exits the group after being resolved and notified of its state change. When no alerts remain, the group is deleted, and then the group wait timer handles the first notification for the next incoming alert once again.
+It's important to note that an alert instance exits the group after being resolved and notified of its state change.
+
+When the group interval timer elapses and no alerts remain, the group is deleted. The [group wait timer](#group-wait) will then start again the next time a new alert arrives.
 
 ### Repeat interval
 

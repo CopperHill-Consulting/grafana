@@ -8,13 +8,26 @@ import (
 // migration_utils.go contains shared utility functions used across multiple schema version migrations.
 
 // GetStringValue safely extracts a string value from a map, returning empty string if not found or not a string
-func GetStringValue(m map[string]interface{}, key string) string {
+func GetStringValue(m map[string]interface{}, key string, defaultValue ...string) string {
 	if value, ok := m[key]; ok {
 		if s, ok := value.(string); ok {
 			return s
 		}
 	}
+	if len(defaultValue) > 0 {
+		return defaultValue[0]
+	}
 	return ""
+}
+
+func GetStringValueOrNil(m map[string]interface{}, key string) *string {
+	if value, ok := m[key]; ok {
+		if s, ok := value.(string); ok {
+			return &s
+		}
+	}
+
+	return nil
 }
 
 // GetBoolValue safely extracts a boolean value from a map, returning false if not found or not a boolean
@@ -98,4 +111,104 @@ func IsArray(value interface{}) bool {
 	}
 	_, ok := value.([]interface{})
 	return ok
+}
+
+// collectPanelsIncludingRows returns every panel in the dashboard, looking both
+// at the top-level "panels" array and inside each legacy "rows" entry's "panels"
+// array. Migrations that run before V16 (which hoists row panels to the top
+// level) must use this so they also process panels still nested in rows.
+func collectPanelsIncludingRows(dashboard map[string]interface{}) []map[string]interface{} {
+	var result []map[string]interface{}
+
+	appendPanels := func(value interface{}) {
+		panels, ok := value.([]interface{})
+		if !ok {
+			return
+		}
+		for _, p := range panels {
+			if panel, ok := p.(map[string]interface{}); ok {
+				result = append(result, panel)
+			}
+		}
+	}
+
+	appendPanels(dashboard["panels"])
+
+	if rows, ok := dashboard["rows"].([]interface{}); ok {
+		for _, r := range rows {
+			if row, ok := r.(map[string]interface{}); ok {
+				appendPanels(row["panels"])
+			}
+		}
+	}
+
+	return result
+}
+
+// AngularPanelMigrations maps deprecated Angular panel types to their modern equivalents.
+// Used by both v0→v1 and v1→v2 conversions to ensure consistent migration behavior.
+var AngularPanelMigrations = map[string]string{
+	"table-old":                "table",
+	"singlestat":               "stat",
+	"grafana-singlestat-panel": "stat",
+	"grafana-piechart-panel":   "piechart",
+	"grafana-worldmap-panel":   "geomap",
+	"natel-discrete-panel":     "state-timeline",
+}
+
+// GetAngularPanelMigration checks if a panel type is an Angular panel and returns the new type to migrate to.
+// Returns the new panel type if migration is needed, empty string otherwise.
+// This handles both simple mappings and special cases like graph panel.
+func GetAngularPanelMigration(panelType string, panel map[string]interface{}) string {
+	// Handle graph panel specially - it can migrate to different panel types
+	// based on xaxis.mode
+	if panelType == "graph" || panelType == "graphite" {
+		return GetGraphMigrationTarget(panel)
+	}
+
+	// Check simple Angular panel mappings
+	if newType, isAngular := AngularPanelMigrations[panelType]; isAngular {
+		return newType
+	}
+
+	return ""
+}
+
+// GetGraphMigrationTarget determines the target panel type for graph panel migration.
+// Graph panels can migrate to timeseries, barchart, bargauge, or histogram depending on xaxis.mode.
+func GetGraphMigrationTarget(panel map[string]interface{}) string {
+	// Default to timeseries
+	newType := "timeseries"
+
+	// Check xaxis mode for special cases
+	if xaxis, ok := panel["xaxis"].(map[string]interface{}); ok {
+		if mode, ok := xaxis["mode"].(string); ok {
+			switch mode {
+			case "series":
+				// Check legend values for bargauge vs barchart
+				if legend, ok := panel["legend"].(map[string]interface{}); ok {
+					if values, ok := legend["values"].(bool); ok && values {
+						newType = "bargauge"
+					} else {
+						newType = "barchart"
+					}
+				} else {
+					newType = "barchart"
+				}
+			case "histogram":
+				newType = "histogram"
+			}
+		}
+	}
+
+	return newType
+}
+
+// IsAngularPanelType checks if a panel type is a known Angular panel type.
+func IsAngularPanelType(panelType string) bool {
+	if panelType == "graph" || panelType == "graphite" {
+		return true
+	}
+	_, isAngular := AngularPanelMigrations[panelType]
+	return isAngular
 }

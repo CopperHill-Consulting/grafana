@@ -20,7 +20,7 @@ Plugins enhance your Grafana experience with new ways to connect to and visualiz
 
 Read on for an overview on how to get started with plugins:
 
-- Plugins are available in the [plugin catalog](#plugin-catalog). They can be built by Grafana Labs, commercial partners, our community, or you can [build a plugin yourself](/developers/plugin-tools).
+- Plugins are available in the [plugin catalog](#access-the-plugin-catalog). They can be built by Grafana Labs, commercial partners, our community, or you can [build a plugin yourself](/developers/plugin-tools).
 - There are three [types of plugins](#types-of-plugins): panel, data source, and app plugins.
 - Learn [how to install](#install-a-plugin), [update](#update-a-plugin) and [verify](#verify-your-plugins) your plugins.
 
@@ -40,11 +40,11 @@ Grafana supports three types of plugins:
 
 Read more in [Types of plugins](plugin-types).
 
-## Plugin catalog
+## Access the Plugin catalog
 
-The Grafana plugin catalog allows you to browse and manage plugins from within Grafana. Only Grafana server administrators and Organization administrators can access and use the plugin catalog. For more information about Grafana roles and permissions, refer to [Roles and permissions](../roles-and-permissions/).
+You can install and manage plugins from within Grafana. You need to have a Grafana Server administrator or Organization administrator role to access and use the plugin catalog. For more information about Grafana roles and permissions, refer to [Roles and permissions](../roles-and-permissions/).
 
-The following access rules apply depending on the user role:
+For app plugins, the following access rules apply:
 
 - If you are an **Org Admin**, you can configure app plugins, but you can't install, uninstall, or update them.
 - If you are a **Server Admin**, you can't configure app plugins, but you can install, uninstall, or update them.
@@ -58,17 +58,19 @@ To browse for available plugins:
 1. Use the search box to filter based on name, keywords, organization and other metadata.
 1. Click the **Data sources**, **Panels**, or **Applications** buttons to filter by plugin type.
 
+If you're not logged in, you can also access the list of available plugins in the [Plugin catalog](https://grafana.com/grafana/plugins/).
+
 ## Manage your plugins
 
 We strongly recommend running the latest plugin version. Use [Grafana Advisor](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/administration/grafana-advisor) to check the status of your data sources and plugins.
 
 ### Install a plugin
 
-The most common way to install a plugin is through the Grafana UI.
+The default way to install a plugin is through the Grafana UI.
 
-1. In Grafana, click **Administration > Plugins and data > Plugins** in the side navigation menu to view all plugins.
-1. Browse and find a plugin.
-1. Click the plugin's logo.
+1. In Grafana, go to **Administration > Plugins and data > Plugins** in the side navigation menu to view all plugins.
+1. Browse and find the plugin you want to install.
+1. Click on the plugin's logo.
 1. Click **Install**.
 
 {{< admonition type="note" >}}
@@ -84,7 +86,15 @@ To update a plugin:
 1. Click the plugin's logo.
 1. Click **Update**.
 
-When the update is complete, a confirmation message will indicate the installation was successful.
+When the update is complete, a confirmation message indicates the installation was successful.
+
+#### Update Grafana-managed plugins
+
+{{< admonition type="note" >}}
+Available in [Grafana Cloud](/docs/grafana-cloud).
+{{< /admonition >}}
+
+In Grafana Cloud, most plugins are automatically kept up to date. When a new version is available it’s updated on your behalf, and you don’t need to take any action. For more information and exceptions, refer to [Updates to Grafana-managed plugins](https://grafana.com/docs/grafana-cloud/introduction/find-and-use-plugins/#updates-to-grafana-managed-plugins) in the Grafana Cloud documentation.
 
 ### Uninstall a plugin
 
@@ -127,3 +137,5 @@ When enabled, plugins run in a separate JavaScript context, which provides sever
 - [Browse available plugins](/grafana/plugins)
 - [Develop your own plugins](/developers/plugin-tools)
 - [Reach out to the plugin development Community](https://community.grafana.com/c/plugin-development/30)
+
+To administer, update, or delete your plugins, or to submit a new plugin, sign in to the [Plugins Admin page](https://grafana.com/orgs/grafana/plugins). Note that you need to be an administrator for the Grafana Cloud organization being used to publish the plugin.

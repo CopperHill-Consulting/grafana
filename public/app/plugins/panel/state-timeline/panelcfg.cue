@@ -28,6 +28,7 @@ composableKinds: PanelCfg: {
 					ui.OptionsWithLegend
 					ui.OptionsWithTooltip
 					ui.OptionsWithTimezones
+					ui.OptionsWithAnnotations
 
 					//Show timeline values on chart
 					showValue: ui.VisibilityMode & (*"auto" | _)
@@ -38,7 +39,7 @@ composableKinds: PanelCfg: {
 					//Controls value alignment on the timelines
 					alignValue?: ui.TimelineValueAlignment & (*"left" | _)
 					//Enables pagination when > 0
-					perPage?: number & >=1 | *20
+					perPage?: number & >=0 | *20
 				} @cuetsy(kind="interface")
 				FieldConfig: {
 					ui.AxisConfig

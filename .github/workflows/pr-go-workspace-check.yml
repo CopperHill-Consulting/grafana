@@ -5,12 +5,16 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions: {}
 
 jobs:
   detect-changes:
     name: Detect whether code changed
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-arm64-small
     permissions:
       contents: read
     outputs:
@@ -19,7 +23,8 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: true # required to get more history in the changed-files action
-          fetch-depth: 2
+          fetch-depth: 0
+          filter: blob:none
       - name: Detect changes
         id: detect-changes
         uses: ./.github/actions/change-detection
@@ -30,40 +35,7 @@ jobs:
     needs: detect-changes
     if: needs.detect-changes.outputs.changed == 'true'
     name: Go Workspace Check
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v5
-      with:
-        persist-credentials: false
-
-    - name: Set go version
-      uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
-      with:
-        cache: false
-        go-version-file: go.mod
-
-    - name: Update workspace
-      run: make update-workspace
-
-    - name: Check for go mod & workspace changes 
-      run: |
-        if ! git diff --exit-code --quiet; then
-          echo "Changes detected:"
-          git diff
-          echo "Please run 'make update-workspace' and commit the changes."
-          echo "If there is a change in enterprise dependencies, please update pkg/extensions/main.go."
-          exit 1
-        fi
-    - name: Ensure Dockerfile contains submodule COPY commands
-      run: ./scripts/go-workspace/validate-dockerfile.sh
-
-  check-wire:
-    needs: detect-changes
-    if: needs.detect-changes.outputs.changed == 'true'
-    name: Check Wire Changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-arm64
 
     permissions:
       contents: read
@@ -75,15 +47,72 @@ jobs:
       with:
         persist-credentials: false
 
-    - name: Set go version
-      uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+    - name: Get GitHub App token
+      if: github.event.pull_request.head.repo.fork == false
+      id: get-github-app-token
+      uses: grafana/shared-workflows/actions/create-github-app-token@46f48da11e78ebdba7a8747ae456b11062fac83e # create-github-app-token/v0.3.1
       with:
-        cache: false
-        go-version-file: go.mod
-
+        github_app: grafana-ci-bot
     - name: Setup Enterprise
       if: github.event.pull_request.head.repo.fork == false
       uses: ./.github/actions/setup-enterprise
+      with:
+        token: ${{ steps.get-github-app-token.outputs.token }}
+
+    # Enterprise must be cloned before setup-go so that enterprise
+    # modules are visible when the Go cache key is computed.
+    - name: Setup Go
+      uses: ./.github/actions/setup-go
+      with:
+        cache-build: 'false'
+
+    - name: Update workspace
+      run: make update-workspace
+
+    - name: Check for go mod & workspace changes
+      run: |
+        if ! git diff --exit-code --quiet -- go.mod go.sum '**/go.mod' '**/go.sum' go.work go.work.sum pkg/extensions/enterprise_imports*.go; then
+          echo "Changes detected:"
+          git diff -- go.mod go.sum '**/go.mod' '**/go.sum' go.work go.work.sum pkg/extensions/enterprise_imports*.go
+          echo ""
+          echo "Please run 'make update-workspace' and commit the changes."
+          exit 1
+        fi
+
+  check-wire:
+    needs: detect-changes
+    if: needs.detect-changes.outputs.changed == 'true'
+    name: Check Wire Changes
+    runs-on: ubuntu-arm64
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v5
+      with:
+        persist-credentials: false
+
+    - name: Get GitHub App token
+      if: github.event.pull_request.head.repo.fork == false
+      id: get-github-app-token
+      uses: grafana/shared-workflows/actions/create-github-app-token@46f48da11e78ebdba7a8747ae456b11062fac83e # create-github-app-token/v0.3.1
+      with:
+        github_app: grafana-ci-bot
+    - name: Setup Enterprise
+      if: github.event.pull_request.head.repo.fork == false
+      uses: ./.github/actions/setup-enterprise
+      with:
+        token: ${{ steps.get-github-app-token.outputs.token }}
+
+    # Enterprise must be cloned before setup-go so that enterprise
+    # modules are visible when the Go cache key is computed.
+    - name: Setup Go
+      uses: ./.github/actions/setup-go
+      with:
+        cache-build: 'false'
 
     - name: Calculate generated wire checksums
       id: pre_gen_oss
@@ -107,6 +136,7 @@ jobs:
         CURRENT_OSS_WIRE_CHECKSUM=$(sha256sum pkg/server/wire_gen.go | cut -d' ' -f1)
         if [ "$CURRENT_OSS_WIRE_CHECKSUM" != "${{ steps.pre_gen_oss.outputs.wire_checksum }}" ]; then
           OSS_WIRE_CHANGED=true
+          OSS_DIFF=$(git diff pkg/server/wire_gen.go)
           echo "Uncomitted changes detected in pkg/server/wire_gen.go"
         fi
 
@@ -115,15 +145,24 @@ jobs:
           CURRENT_ENTERPRISE_WIRE_CHECKSUM=$(sha256sum pkg/server/enterprise_wire_gen.go | cut -d' ' -f1)
           if [ "$CURRENT_ENTERPRISE_WIRE_CHECKSUM" != "${{ steps.pre_gen_enterprise.outputs.wire_checksum }}" ]; then
             ENTERPRISE_WIRE_CHANGED=true
+            ENTERPRISE_DIFF=$(git diff pkg/server/enterprise_wire_gen.go)
             echo "Uncomitted changes detected in pkg/server/enterprise_wire_gen.go"
           fi
         fi
-        
+
         if [ "$OSS_WIRE_CHANGED" = "false" ] && [ "$ENTERPRISE_WIRE_CHANGED" = "false" ]; then
           echo "No changes in generated Go files"
         else
           if [[ "${{ github.event.pull_request.head.repo.fork }}" == "false" ]]; then
             echo "> !!! Please synchronize the grafana OSS and grafana enterprise code bases as defined in the enterprise readme, then run 'make gen-go' in the OSS folder and commit the changes to both repositories."
+            if [[ "$OSS_WIRE_CHANGED" == "true" ]]; then
+              echo "OSS changes:"
+              echo "$OSS_DIFF"
+            fi
+            if [[ "$ENTERPRISE_WIRE_CHANGED" == "true" ]]; then
+              echo "Enterprise changes:"
+              echo "$ENTERPRISE_DIFF"
+            fi
           else
             echo "> !!! Please run 'make gen-go' and commit the changes."
           fi
@@ -143,7 +182,7 @@ jobs:
     if: always()
 
     name: All Go Workspace Checks complete
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-arm64-small
     steps:
       - name: Check the checks
         env:

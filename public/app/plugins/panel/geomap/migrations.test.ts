@@ -1,4 +1,4 @@
-import { PanelModel, FieldConfigSource } from '@grafana/data';
+import { type PanelModel, type FieldConfigSource } from '@grafana/data';
 
 import { mapMigrationHandler, mapPanelChangedHandler } from './migrations';
 describe('Worldmap Migrations', () => {
@@ -76,7 +76,7 @@ describe('Worldmap Migrations', () => {
                     "min": 2,
                   },
                   "symbol": {
-                    "fixed": "build/img/icons/marker/circle.svg",
+                    "fixed": "img/icons/marker/circle.svg",
                     "mode": "fixed",
                   },
                   "symbolAlign": {

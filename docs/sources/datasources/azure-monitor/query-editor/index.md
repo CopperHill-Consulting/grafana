@@ -21,41 +21,51 @@ labels:
 menuTitle: Query editor
 title: Azure Monitor query editor
 weight: 300
-refs:
-  query-transform-data-query-options:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/#query-options
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/#query-options
-  query-transform-data:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/
+review_date: 2026-08-11
 ---
 
 # Azure Monitor query editor
 
-This topic explains querying specific to the Azure Monitor data source.
-For general documentation on querying data sources in Grafana, see [Query and transform data](ref:query-transform-data).
+Grafana provides a query editor for the Azure Monitor data source, which is located on the [Explore page](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/explore/). You can also access the Azure Monitor query editor from a dashboard panel. Click the menu in the upper right of the panel and select **Edit**.
 
-## Choose a query editing mode
+This document explains querying specific to the Azure Monitor data source.
+For general documentation on querying data sources in Grafana, refer to [Query and transform data](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/).
 
-The Azure Monitor data source's query editor has three modes depending on which Azure service you want to query:
+The Azure Monitor data source can query data from Azure Monitor Metrics and Logs, the Azure Resource Graph, and Application Insights Traces. Each source has its own specialized query editor.
+
+## Before you begin
+
+- Ensure you have [configured the Azure Monitor data source](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/configure/).
+- Verify your credentials have appropriate permissions for the resources you want to query.
+
+## Key concepts
+
+If you're new to Azure Monitor, here are some key terms used throughout this documentation:
+
+| Term                           | Description                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **KQL (Kusto Query Language)** | The query language used for Azure Monitor Logs and Azure Resource Graph. KQL uses a pipe-based syntax similar to Unix commands and is optimized for read-only data exploration. If you know SQL, the [SQL to Kusto cheat sheet](https://docs.microsoft.com/en-us/azure/data-explorer/kusto/query/sqlcheatsheet) can help you get started. |
+| **Log Analytics workspace**    | An Azure resource that collects and stores log data from your Azure resources, applications, and services. You query this data using KQL.                                                                                                                                                                                                 |
+| **Application Insights**       | Azure's application performance monitoring (APM) service. It collects telemetry data like requests, exceptions, and traces from your applications.                                                                                                                                                                                        |
+| **Metrics vs. Logs**           | **Metrics** are lightweight numeric values collected at regular intervals (for example, CPU percentage). **Logs** are detailed records of events with varying schemas (for example, request logs, error messages). Metrics use a visual query builder; Logs require KQL.                                                                  |
+
+## Choose a query editor mode
+
+The Azure Monitor data source's query editor has four modes depending on which Azure service you want to query:
 
 - **Metrics** for [Azure Monitor Metrics](#query-azure-monitor-metrics)
 - **Logs** for [Azure Monitor Logs](#query-azure-monitor-logs)
-- [**Azure Resource Graph**](#query-azure-resource-graph)
 - **Traces** for [Application Insights Traces](#query-application-insights-traces)
+- **Azure Resource Graph** for [Azure Resource Graph](#query-azure-resource-graph)
 
 ## Query Azure Monitor Metrics
 
-Azure Monitor Metrics collects numeric data from [supported resources](https://docs.microsoft.com/en-us/azure/azure-monitor/monitor-reference), and you can query them to investigate your resources' health and usage and maximise availability and performance.
+Azure Monitor Metrics collects numeric data from [supported resources](https://docs.microsoft.com/en-us/azure/azure-monitor/monitor-reference), and you can query them to investigate your resources' health and usage and maximize availability and performance.
 
 Monitor Metrics use a lightweight format that stores only numeric data in a specific structure and supports near real-time scenarios, making it useful for fast detection of issues.
 In contrast, Azure Monitor Logs can store a variety of data types, each with their own structure.
 
-{{< figure src="/static/img/docs/azure-monitor/query-editor-metrics.png" max-width="800px" class="docs-image--no-shadow" caption="Azure Logs Metrics sample query visualizing CPU percentage over time" >}}
+{{< figure src="/static/img/docs/azure-monitor/query-editor-metrics.png" max-width="800px" class="docs-image--no-shadow" caption="Azure Monitor Metrics sample query visualizing CPU percentage over time" >}}
 
 ### Create a Metrics query
 
@@ -85,7 +95,7 @@ Optionally, you can apply further aggregations or filter by dimensions.
 
 The available options change depending on what is relevant to the selected metric.
 
-You can also augment queries by using [template variables](../template-variables/).
+You can also augment queries by using [template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/template-variables/).
 
 ### Format legend aliases
 
@@ -109,7 +119,7 @@ For example:
 | `{{ dimensionname }}`          | _(Legacy for backward compatibility)_ Replaced with the name of the first dimension.                   |
 | `{{ dimensionvalue }}`         | _(Legacy for backward compatibility)_ Replaced with the value of the first dimension.                  |
 
-### Filter using dimensions
+### Filter with dimensions
 
 Some metrics also have dimensions, which associate additional metadata.
 Dimensions are represented as key-value pairs assigned to each value of a metric.
@@ -121,7 +131,7 @@ For more information on multi-dimensional metrics, refer to the [Azure Monitor d
 
 ## Query Azure Monitor Logs
 
-Azure Monitor Logs collects and organises log and performance data from [supported resources](https://docs.microsoft.com/en-us/azure/azure-monitor/monitor-reference), and makes many sources of data available to query together with the [Kusto Query Language (KQL)](https://docs.microsoft.com/en-us/azure/data-explorer/kusto/query/).
+Azure Monitor Logs collects and organizes log and performance data from [supported resources](https://docs.microsoft.com/en-us/azure/azure-monitor/monitor-reference), and makes many sources of data available to query together with the [Kusto Query Language (KQL)](https://docs.microsoft.com/en-us/azure/data-explorer/kusto/query/).
 
 While Azure Monitor Metrics stores only simplified numerical data, Logs can store different data types, each with their own structure.
 You can also perform complex analysis of Logs data by using KQL.
@@ -129,6 +139,32 @@ You can also perform complex analysis of Logs data by using KQL.
 The Azure Monitor data source also supports querying of [Basic Logs](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/basic-logs-query?tabs=portal-1) tables (if they exist in your Log Analytics workspace). This feature must be enabled in the data source configuration.
 
 {{< figure src="/static/img/docs/azure-monitor/query-editor-logs.png" max-width="800px" class="docs-image--no-shadow" caption="Azure Monitor Logs sample query comparing successful requests to failed requests" >}}
+
+### Logs query builder (public preview)
+
+{{< admonition type="note" >}}
+The Logs query builder is a [public preview feature](/docs/release-life-cycle/). It may not be enabled in all Grafana environments.
+{{< /admonition >}}
+
+The Logs query builder provides a visual interface for building Azure Monitor Logs queries without writing KQL. This is helpful if you're new to KQL or want to quickly build queries.
+
+**To enable the Logs query builder:**
+
+1. Enable the `azureMonitorLogsBuilderEditor` [feature toggle](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/feature-toggles/) in your Grafana configuration.
+1. Restart Grafana for the change to take effect.
+
+**To switch between Builder and Code modes:**
+
+When the feature is enabled, a **Builder / Code** toggle appears in the Logs query editor:
+
+- **Builder**: Use the visual interface to select tables, columns, filters, and aggregations. The builder generates the KQL query for you.
+- **Code**: Write KQL queries directly. Use this mode for complex queries that require full KQL capabilities.
+
+New queries default to Builder mode. Existing queries that were created with raw KQL remain in Code mode. When you switch to Builder mode, the time-range setting automatically changes to **Dashboard** because the builder manages time filtering for you.
+
+{{< admonition type="note" >}}
+You can switch from Builder to Code mode at any time to view or edit the generated KQL. However, switching from Code to Builder mode may not preserve complex queries that can't be represented in the builder interface.
+{{< /admonition >}}
 
 ### Create a Logs query
 
@@ -140,28 +176,45 @@ The Azure Monitor data source also supports querying of [Basic Logs](https://lea
 
    Alternatively, you can dynamically query all resources under a single resource group or subscription.
    {{< admonition type="note" >}}
-   If a timespan is specified in the query, the overlap of the timespan between the query and the dashboard will be used as the query timespan. See the [API documentation for
+   If a time span is specified in the query, the overlap between the query time span and the dashboard time range is used. Refer to the [API documentation for
    details.](https://learn.microsoft.com/en-us/rest/api/loganalytics/dataaccess/query/get?tabs=HTTP#uri-parameters)
    {{< /admonition >}}
 
 1. Enter your KQL query.
 
-You can also augment queries by using [template variables](../template-variables/).
+You can also augment queries by using [template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/template-variables/).
 
 **To create a Basic Logs query:**
 
-1. Ensure that the data source has the `Enable Basic Logs` toggle enabled.
+1. Ensure that the data source has the **Enable Basic Logs** toggle enabled in the [data source configuration](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/configure/#enable-basic-logs).
 1. In a Grafana panel, select the **Azure Monitor** data source.
 1. Select the **Logs** service.
-1. Select a resource to query. Multiple resources can be selected as long as they are of the same type.
-1. Switch the `Logs` toggle from `Analytics` to `Basic`. A modal will display to notify users of potential additional costs.
-   {{< admonition type="note" >}}
-   Basic Logs queries do not support time-ranges specified in the query. The time-range will be hardcoded to the dashboard time-range. There are also other query limitations. See the
-   [documentation for details.](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/basic-logs-query?tabs=portal-1#limitations)
-   {{< /admonition >}}
+1. Select a single resource to query. Basic Logs queries only support a single workspace resource.
+1. Switch the **Logs** toggle from **Analytics** to **Basic**. A confirmation dialog box displays to notify you of potential additional costs.
 1. Enter your KQL query.
 
+{{< admonition type="caution" >}}
+Basic Logs queries are billed on a per-query basis by Azure. Review the [Azure pricing documentation](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/basic-logs-query?tabs=portal-1) before using this feature.
+{{< /admonition >}}
+
+Basic Logs queries have the following restrictions:
+
+- **Time range:** The dashboard time range is always used. You can't specify a time range within the query itself.
+- **Single resource:** Only a single Log Analytics workspace can be queried. Multi-resource selection isn't supported.
+- **Alerting:** Basic Logs queries aren't available when creating alert rules.
+- **KQL limitations:** Some KQL operators aren't supported. Refer to the [Azure documentation](https://learn.microsoft.com/en-us/azure/azure-monitor/logs/basic-logs-query?tabs=portal-1#limitations) for a full list of limitations.
+
 You can also augment queries by using [template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/template-variables/).
+
+### Logs result row limit
+
+When a Logs query uses the **Logs** result format, Grafana truncates the results to 30,000 rows to prevent the browser tab from crashing, because the logs visualization renders every row at once. When truncation happens, Grafana returns the first 30,000 rows along with a notice that the limit was reached.
+
+To remove this limit, enable the `azureMonitorDisableLogLimit` [feature toggle](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/feature-toggles/) in your Grafana configuration.
+
+{{< admonition type="caution" >}}
+Disabling the row limit can degrade browser performance for very large result sets. Prefer aggregating with `summarize` or narrowing the time range to reduce the number of rows returned.
+{{< /admonition >}}
 
 ### Logs query examples
 
@@ -174,28 +227,32 @@ The Azure documentation includes resources to help you learn KQL:
 - [Tutorial: Use Kusto queries in Azure Monitor](https://docs.microsoft.com/en-us/azure/data-explorer/kusto/query/tutorial?pivots=azuremonitor)
 - [SQL to Kusto cheat sheet](https://docs.microsoft.com/en-us/azure/data-explorer/kusto/query/sqlcheatsheet)
 
-> **Time-range:** The time-range that will be used for the query can be modified via the time-range switch. Selecting `Query` will only make use of time-ranges specified within the query.
-> Specifying `Dashboard` will only make use of the Grafana time-range.
-> If there are no time-ranges specified within the query, the default Log Analytics time-range will apply.
-> For more details on this change, refer to the [Azure Monitor Logs API documentation](https://learn.microsoft.com/en-us/rest/api/loganalytics/dataaccess/query/get?tabs=HTTP#uri-parameters).
-> If the `Intersection` option was previously chosen it will be migrated by default to `Dashboard`.
+{{< admonition type="note" >}}
+**Time-range:** The time-range used for the query can be modified via the time-range switch:
 
-This example query returns a virtual machine's CPU performance, averaged over 5ms time grains:
+- Selecting **Query** uses only time-ranges specified within the query.
+- Selecting **Dashboard** uses only the Grafana dashboard time-range.
+- If no time-range is specified in the query, the default Log Analytics time-range applies.
+
+For more details, refer to the [Azure Monitor Logs API documentation](https://learn.microsoft.com/en-us/rest/api/loganalytics/dataaccess/query/get?tabs=HTTP#uri-parameters). If you previously used the `Intersection` option, it has been migrated to `Dashboard`.
+{{< /admonition >}}
+
+This example query returns a virtual machine's CPU performance, averaged over 5-minute time grains:
 
 ```kusto
 Perf
-# $__timeFilter is a special Grafana macro that filters the results to the time span of the dashboard
+// $__timeFilter is a special Grafana macro that filters the results to the time span of the dashboard
 | where $__timeFilter(TimeGenerated)
 | where CounterName == "% Processor Time"
 | summarize avg(CounterValue) by bin(TimeGenerated, 5m), Computer
 | order by TimeGenerated asc
 ```
 
-Use time series queries for values that change over time, usually for graph visualisations such as the Time series panel.
-Each query should return at least a datetime column and numeric value column.
-The result must also be sorted in ascending order by the datetime column.
+Use time series queries for values that change over time, usually for graph visualizations such as the Time series panel.
+Each query should return at least a `datetime` column and numeric value column.
+The result must also be sorted in ascending order by the `datetime` column.
 
-You can also create a query with at least one non-numeric, non-datetime column.
+You can also create a query with at least one non-numeric, non-`datetime` column.
 Azure Monitor considers those columns to be dimensions, and they become labels in the response.
 
 For example, this query returns the aggregated count grouped by hour, Computer, and the CounterName:
@@ -232,16 +289,16 @@ AzureActivity
 
 To help you write queries, you can use several Grafana macros in the `where` clause:
 
-| Macro                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `$__timeFilter()`               | Filters the results to the time range of the dashboard.<br/>Example: `TimeGenerated >= datetime(2018-06-05T18:09:58.907Z) and TimeGenerated <= datetime(2018-06-05T20:09:58.907Z)`.                                                                                                                                                                                                                                                                                                             |
-| `$__timeFilter(datetimeColumn)` | Like `$__timeFilter()`, but specifies a custom field to filter on.                                                                                                                                                                                                                                                                                                                                                                                                                              |
-| `$__timeFrom()`                 | Expands to the start of the dashboard time range.<br/>Example: `datetime(2018-06-05T18:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                                                            |
-| `$__timeTo()`                   | Expands to the end of the dashboard time range.<br/>Example: `datetime(2018-06-05T20:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                                                              |
-| `$__escapeMulti($myVar)`        | Escapes illegal characters in multi-value template variables.<br/>If `$myVar` has the values `'\\grafana-vm\Network(eth0)\Total','\\hello!'` as a string, use this to expand it to `@'\\grafana-vm\Network(eth0)\Total', @'\\hello!'`.<br/><br/>If using single-value variables, escape the variable inline instead: `@'\$myVar'`.                                                                                                                                                              |
-| `$__contains(colName, $myVar)`  | Expands multi-value template variables.<br/>If `$myVar` has the value `'value1','value2'`, use this to expand it to `colName in ('value1','value2')`.<br/><br/>If using the `All` option, check the `Include All Option` checkbox, and type the value `all` in the `Custom all value` field. If `$myVar` has the value `all`, the macro instead expands to `1 == 1`.<br/>For template variables with many options, this avoids building a large "where..in" clause, which improves performance. |
+| Macro                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `$__timeFilter()`               | Filters the results to the time range of the dashboard. Example: `TimeGenerated >= datetime(2018-06-05T18:09:58.907Z) and TimeGenerated <= datetime(2018-06-05T20:09:58.907Z)`.                                                                                                                                                                                                                                                                                                |
+| `$__timeFilter(datetimeColumn)` | Like `$__timeFilter()`, but specifies a custom field to filter on.                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `$__timeFrom()`                 | Returns the start of the dashboard time range. Example: `datetime(2018-06-05T18:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                                                  |
+| `$__timeTo()`                   | Returns the end of the dashboard time range. Example: `datetime(2018-06-05T20:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                                                    |
+| `$__escapeMulti($myVar)`        | Escapes illegal characters in multi-value template variables. If `$myVar` has the values `'\\grafana-vm\Network(eth0)\Total','\\hello!'` as a string, use this to expand it to `@'\\grafana-vm\Network(eth0)\Total', @'\\hello!'`. If using single-value variables, escape the variable inline instead: `@'\$myVar'`.                                                                                                                                                          |
+| `$__contains(colName, $myVar)`  | Expands multi-value template variables. If `$myVar` has the value `'value1','value2'`, use this to expand it to `colName in ('value1','value2')`. If using the `All` option, check the `Include All Option` checkbox, and type the value `all` in the `Custom all value` field. If `$myVar` has the value `all`, the macro instead expands to `1 == 1`. For template variables with many options, this avoids building a large "where..in" clause, which improves performance. |
 
-Additionally, Grafana has the built-in [`$__interval` macro](ref:query-transform-data-query-options), which calculates an interval in seconds.
+Additionally, Grafana has the built-in [`$__interval` macro](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/panels-visualizations/query-transform-data/#query-options), which calculates an interval in seconds.
 
 ## Query Azure Resource Graph
 
@@ -258,9 +315,9 @@ An Azure Resource Graph query is formatted as table data.
 
 If your Azure credentials grant you access to multiple subscriptions, you can choose multiple subscriptions before entering queries. It is also possible to run queries against the directory by changing the scope of the query.
 
-{{% admonition type="note" %}}
+{{< admonition type="note" >}}
 Some queries that function at a directory level may not work at a subscription level and vice-versa.
-{{% /admonition %}}
+{{< /admonition >}}
 
 ### Resource Graph query examples
 
@@ -324,20 +381,20 @@ securityresources
 | summarize numberOfResources=count(resourceId) by tostring(recommendationName), tostring(recommendationState)
 ```
 
-In ARG, many nested properties (`properties.displayName`) are of a `dynamic` type and should be cast to a string with `tostring()` in order to operate on them.
+In ARG, many nested properties (`properties.displayName`) are of a `dynamic` type and should be cast to a string with `tostring()` to operate on them.
 
 ### Use macros in Resource Graph queries
 
 To help you write queries, you can use several Grafana macros in the `where` clause:
 
-| Macro                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `$__timeFilter()`               | Expands to `timestamp ≥ datetime(2018-06-05T18:09:58.907Z) and timestamp ≤ datetime(2018-06-05T20:09:58.907Z)`, where the from and to datetimes are from the Grafana time picker.                                                                                                                                                                                                                                                                                                                 |
-| `$__timeFilter(datetimeColumn)` | Expands to `datetimeColumn ≥ datetime(2018-06-05T18:09:58.907Z) and datetimeColumn ≤ datetime(2018-06-05T20:09:58.907Z)`, where the from and to datetimes are from the Grafana time picker.                                                                                                                                                                                                                                                                                                       |
-| `$__timeFrom()`                 | Returns the From datetime from the Grafana picker.<br/>Example: `datetime(2018-06-05T18:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                                                             |
-| `$__timeTo()`                   | Returns the To datetime from the Grafana picker.<br/>Example: `datetime(2018-06-05T20:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                                                               |
-| `$__escapeMulti($myVar)`        | Escapes illegal characters from multi-value template variables.<br/>If `$myVar` has the values `'\\grafana-vm\Network(eth0)\Total','\\hello!'` as a string, this expands it to `@'\\grafana-vm\Network(eth0)\Total', @'\\hello!'`.<br>If you use single-value variables, escape the variable inline instead: `@'\$myVar'`.                                                                                                                                                                        |
-| `$__contains(colName, $myVar)`  | Expands multi-value template variables.<br/>If `$myVar` has the value `'value1','value2'`, this expands it to `colName in ('value1','value2')`.<br/>If using the `All` option, then check the `Include All Option` checkbox and in the `Custom all value` field type in the following value: `all`.<br/>If `$myVar` has value `all`, this instead expands to `1 == 1`.<br/>For template variables with many options, this avoids building a large "where..in" clause, which improves performance. |
+| Macro                           | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `$__timeFilter()`               | Expands to `timestamp ≥ datetime(2018-06-05T18:09:58.907Z) and timestamp ≤ datetime(2018-06-05T20:09:58.907Z)`, where the from and to date-time values are from the Grafana time picker.                                                                                                                                                                                                                                                                                          |
+| `$__timeFilter(datetimeColumn)` | Expands to `datetimeColumn ≥ datetime(2018-06-05T18:09:58.907Z) and datetimeColumn ≤ datetime(2018-06-05T20:09:58.907Z)`, where the from and to date-time values are from the Grafana time picker.                                                                                                                                                                                                                                                                                |
+| `$__timeFrom()`                 | Returns the start of the dashboard time range from the Grafana picker. Example: `datetime(2018-06-05T18:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                             |
+| `$__timeTo()`                   | Returns the end of the dashboard time range from the Grafana picker. Example: `datetime(2018-06-05T20:09:58.907Z)`.                                                                                                                                                                                                                                                                                                                                                               |
+| `$__escapeMulti($myVar)`        | Escapes illegal characters from multi-value template variables. If `$myVar` has the values `'\\grafana-vm\Network(eth0)\Total','\\hello!'` as a string, this expands it to `@'\\grafana-vm\Network(eth0)\Total', @'\\hello!'`. If you use single-value variables, escape the variable inline instead: `@'\$myVar'`.                                                                                                                                                               |
+| `$__contains(colName, $myVar)`  | Expands multi-value template variables. If `$myVar` has the value `'value1','value2'`, this expands it to `colName in ('value1','value2')`. If using the `All` option, then check the `Include All Option` checkbox and in the `Custom all value` field type in the following value: `all`. If `$myVar` has value `all`, this instead expands to `1 == 1`. For template variables with many options, this avoids building a large "where..in" clause, which improves performance. |
 
 ## Query Application Insights Traces
 
@@ -357,21 +414,33 @@ Application Insights stores trace data in an underlying Log Analytics workspace 
    This query type only supports Application Insights resources.
    {{< /admonition >}}
 
-Running a query of this kind will return all trace data within the timespan specified by the panel/dashboard.
+1. (Optional) Specify an **Operation ID** value to filter traces.
+1. (Optional) Specify **event types** to filter by.
+1. (Optional) Specify **event properties** to filter by.
+1. (Optional) Change the **Result format** to switch between tabular format and trace format.
 
-Optionally, you can apply further filtering or select a specific Operation ID to query. The result format can also be switched between a tabular format or the trace format which will return the data in a format that can be used with the Trace visualization.
+   {{< admonition type="note" >}}
+   Selecting the trace format filters events to only the `trace` type. Use this format with the Trace visualization.
+   {{< /admonition >}}
 
-{{< admonition type="note" >}}
-Selecting the trace format will filter events with the `trace` type.
-{{< /admonition >}}
+Running a query returns all trace data within the time span specified by the panel or dashboard time range.
 
-1. Specify an Operation ID value.
-1. Specify event types to filter by.
-1. Specify event properties to filter by.
+You can also augment queries by using [template variables](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/template-variables/).
 
-You can also augment queries by using [template variables](../template-variables/).
+## Use queries for alerting and recording rules
 
-## Working with large Azure resource data sets
+All Azure Monitor query types (Metrics, Logs, Azure Resource Graph, and Traces) can be used with Grafana Alerting and recording rules.
+
+For detailed information about creating alert rules, supported query types, authentication requirements, and examples, refer to [Azure Monitor alerting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/alerting/).
+
+## Work with large Azure resource datasets
 
 If a request exceeds the [maximum allowed value of records](https://docs.microsoft.com/en-us/azure/governance/resource-graph/concepts/work-with-data#paging-results), the result is paginated and only the first page of results are returned.
 You can use filters to reduce the amount of records returned under that value.
+
+## Next steps
+
+- [Use template variables](../template-variables/) to create dynamic, reusable dashboards
+- [Add annotations](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/annotations/) to overlay events on your graphs
+- [Set up alerting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/alerting/) to create alert rules based on Azure Monitor data
+- [Troubleshoot](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/datasources/azure-monitor/troubleshooting/) common query and configuration issues

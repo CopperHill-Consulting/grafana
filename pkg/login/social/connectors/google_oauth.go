@@ -12,6 +12,7 @@ import (
 
 	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
+	"github.com/grafana/grafana/pkg/infra/remotecache"
 	"github.com/grafana/grafana/pkg/login/social"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/ssosettings"
@@ -48,9 +49,9 @@ type googleUserData struct {
 	rawJSON       []byte `json:"-"`
 }
 
-func NewGoogleProvider(info *social.OAuthInfo, cfg *setting.Cfg, orgRoleMapper *OrgRoleMapper, ssoSettings ssosettings.Service, features featuremgmt.FeatureToggles) *SocialGoogle {
+func NewGoogleProvider(info *social.OAuthInfo, cfg *setting.Cfg, orgRoleMapper *OrgRoleMapper, ssoSettings ssosettings.Service, features featuremgmt.FeatureToggles, cache remotecache.CacheStorage) *SocialGoogle {
 	provider := &SocialGoogle{
-		SocialBase: newSocialBase(social.GoogleProviderName, orgRoleMapper, info, features, cfg),
+		SocialBase: newSocialBaseWithCache(social.GoogleProviderName, orgRoleMapper, info, features, cfg, cache),
 		validateHD: MustBool(info.Extra[validateHDKey], true),
 	}
 
@@ -78,10 +79,24 @@ func (s *SocialGoogle) Validate(ctx context.Context, newSettings ssoModels.SSOSe
 		return err
 	}
 
-	return validation.Validate(info, requester,
+	err = validation.Validate(info, requester,
 		validation.MustBeEmptyValidator(info.AuthUrl, "Auth URL"),
 		validation.MustBeEmptyValidator(info.TokenUrl, "Token URL"),
-		validation.MustBeEmptyValidator(info.ApiUrl, "API URL"))
+		validation.MustBeEmptyValidator(info.ApiUrl, "API URL"),
+		loginPromptValidator,
+		validation.ValidateIDTokenValidator)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func loginPromptValidator(info *social.OAuthInfo, requester identity.Requester) error {
+	if info.UseRefreshToken && !slices.Contains([]string{"", "consent"}, info.LoginPrompt) {
+		return ssosettings.ErrInvalidOAuthConfig("If provided, login_prompt must be set to consent when use_refresh_token is enabled.")
+	}
+	return nil
 }
 
 func (s *SocialGoogle) Reload(ctx context.Context, settings ssoModels.SSOSettings) error {
@@ -104,6 +119,7 @@ func (s *SocialGoogle) Reload(ctx context.Context, settings ssoModels.SSOSetting
 }
 
 func (s *SocialGoogle) UserInfo(ctx context.Context, client *http.Client, token *oauth2.Token) (*social.BasicUserInfo, error) {
+	logger := s.log.FromContext(ctx)
 	s.reloadMutex.RLock()
 	defer s.reloadMutex.RUnlock()
 
@@ -134,7 +150,7 @@ func (s *SocialGoogle) UserInfo(ctx context.Context, client *http.Client, token 
 
 	groups, errPage := s.retrieveGroups(ctx, client, data)
 	if errPage != nil {
-		s.log.Warn("Error retrieving groups", "error", errPage)
+		logger.Warn("Error retrieving groups", "error", errPage)
 	}
 
 	if !s.isGroupMember(groups) {
@@ -150,26 +166,26 @@ func (s *SocialGoogle) UserInfo(ctx context.Context, client *http.Client, token 
 	}
 
 	if s.info.AllowAssignGrafanaAdmin && s.info.SkipOrgRoleSync {
-		s.log.Debug("AllowAssignGrafanaAdmin and skipOrgRoleSync are both set, Grafana Admin role will not be synced, consider setting one or the other")
+		logger.Debug("AllowAssignGrafanaAdmin and skipOrgRoleSync are both set, Grafana Admin role will not be synced, consider setting one or the other")
 	}
 
 	if !s.info.SkipOrgRoleSync {
 		directlyMappedRole, grafanaAdmin, err := s.extractRoleAndAdminOptional(data.rawJSON, userInfo.Groups)
 		if err != nil {
-			s.log.Warn("Failed to extract role", "err", err)
+			logger.Warn("Failed to extract role", "err", err)
 		}
 
 		if s.info.AllowAssignGrafanaAdmin {
 			userInfo.IsGrafanaAdmin = &grafanaAdmin
 		}
 
-		userInfo.OrgRoles = s.orgRoleMapper.MapOrgRoles(s.orgMappingCfg, userInfo.Groups, directlyMappedRole)
+		userInfo.OrgRoles = s.orgRoleMapper.MapOrgRoles(ctx, s.orgMappingCfg, userInfo.Groups, directlyMappedRole)
 		if s.info.RoleAttributeStrict && len(userInfo.OrgRoles) == 0 {
 			return nil, errRoleAttributeStrictViolation.Errorf("could not evaluate any valid roles using IdP provided data")
 		}
 	}
 
-	s.log.Debug("Resolved user info", "data", fmt.Sprintf("%+v", userInfo))
+	logger.Debug("Resolved user info", "data", fmt.Sprintf("%+v", userInfo))
 
 	return userInfo, nil
 }
@@ -228,23 +244,43 @@ func (s *SocialGoogle) AuthCodeURL(state string, opts ...oauth2.AuthCodeOption) 
 	return s.getAuthCodeURL(state, opts...)
 }
 
-func (s *SocialGoogle) extractFromToken(_ context.Context, _ *http.Client, token *oauth2.Token) (*googleUserData, error) {
-	s.log.Debug("Extracting user info from OAuth token")
+func (s *SocialGoogle) extractFromToken(ctx context.Context, _ *http.Client, token *oauth2.Token) (*googleUserData, error) {
+	logger := s.log.FromContext(ctx)
+	logger.Debug("Extracting user info from OAuth token")
 
 	idToken := token.Extra("id_token")
 	if idToken == nil {
-		s.log.Debug("No id_token found, defaulting to API access", "token", token)
+		logger.Debug("No id_token found, defaulting to API access")
 		return nil, nil
 	}
 
-	rawJSON, err := s.retrieveRawJWTPayload(idToken)
-	if err != nil {
-		s.log.Warn("Error retrieving id_token", "error", err, "token", fmt.Sprintf("%+v", idToken))
+	idTokenString, ok := idToken.(string)
+	if !ok {
+		logger.Warn("ID token is not a string")
 		return nil, nil
+	}
+
+	var rawJSON []byte
+	var err error
+
+	// If JWT validation is enabled, validate the signature
+	if s.info.ValidateIDToken && s.info.JwkSetURL != "" {
+		rawJSON, err = s.validateIDTokenSignature(ctx, http.DefaultClient, idTokenString, s.info.JwkSetURL)
+		if err != nil {
+			logger.Warn("Error validating ID token signature", "error", err)
+			return nil, err
+		}
+	} else {
+		// Otherwise, just extract the payload without signature validation
+		rawJSON, err = s.retrieveRawJWTPayload(idTokenString)
+		if err != nil {
+			logger.Warn("Error retrieving id_token", "error", err)
+			return nil, nil
+		}
 	}
 
 	if s.cfg.Env == setting.Dev {
-		s.log.Debug("Received id_token", "raw_json", string(rawJSON))
+		logger.Debug("Received id_token", "raw_json", string(rawJSON))
 	}
 
 	var data googleUserData
@@ -269,7 +305,7 @@ type googleGroupResp struct {
 }
 
 func (s *SocialGoogle) retrieveGroups(ctx context.Context, client *http.Client, userData *googleUserData) ([]string, error) {
-	s.log.Debug("Retrieving groups", "scopes", s.Scopes)
+	s.log.FromContext(ctx).Debug("Retrieving groups", "scopes", s.Scopes)
 	if !slices.Contains(s.Scopes, googleIAMScope) {
 		return nil, nil
 	}
@@ -301,7 +337,7 @@ func (s *SocialGoogle) getGroupsPage(ctx context.Context, client *http.Client, u
 		url = fmt.Sprintf("%s&pageToken=%s", url, nextPageToken)
 	}
 
-	s.log.Debug("Retrieving groups", "url", url)
+	s.log.FromContext(ctx).Debug("Retrieving groups", "url", url)
 	resp, err := s.httpGet(ctx, client, url)
 	if err != nil {
 		return nil, fmt.Errorf("error getting groups: %s", err)

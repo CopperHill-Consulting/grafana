@@ -735,21 +735,41 @@ func TestHandleFunctions(t *testing.T) {
 			responseBody:  `{"error": "internal error"}`,
 			statusCode:    500,
 			expectError:   true,
-			errorContains: "version request failed",
+			errorContains: "functions request failed",
 		},
 		{
 			name:          "functions request not found",
 			responseBody:  `{"error": "not found"}`,
 			statusCode:    404,
 			expectError:   true,
-			errorContains: "version request failed",
+			errorContains: "functions request failed",
 		},
 		{
 			name:          "network error",
 			responseBody:  "",
 			statusCode:    0,
 			expectError:   true,
-			errorContains: "version request failed",
+			errorContains: "functions request failed",
+		},
+		{
+			name: "html response",
+			responseBody: `<html>
+			<head>
+				<title>Graphite Browser</title>
+			</head>
+					
+
+			<frameset rows="60,*" frameborder="1" border="1">
+			<frame src="/browser/header/" name="Header" id='header' scrolling="no" noresize="true" />
+			
+				<frame src="/composer/?" name="content" id="composerFrame"/>
+			
+			</frameset>
+			</html>
+			`,
+			statusCode:    200,
+			expectError:   true,
+			errorContains: "invalid functions response received from Graphite",
 		},
 	}
 
@@ -1001,7 +1021,7 @@ func TestDoGraphiteRequest(t *testing.T) {
 				assert.NoError(t, err)
 			}
 
-			result, _, status, err := doGraphiteRequest[[]GraphiteEventsResponse](ctx, tt.dsInfo, svc.logger, req, false)
+			result, _, status, err := doGraphiteRequest[[]GraphiteEventsResponse](ctx, tt.dsInfo, svc.logger, req, false, defaultResourceResponseMaxBytes)
 
 			if tt.expectError {
 				assert.Error(t, err)
@@ -1060,7 +1080,7 @@ func TestDoGraphiteRequestGenericTypes(t *testing.T) {
 				})
 				assert.NoError(t, err)
 
-				result, _, status, err := doGraphiteRequest[[]GraphiteMetricsFindResponse](ctx, dsInfo, svc.logger, req, false)
+				result, _, status, err := doGraphiteRequest[[]GraphiteMetricsFindResponse](ctx, dsInfo, svc.logger, req, false, defaultResourceResponseMaxBytes)
 
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
@@ -1088,7 +1108,7 @@ func TestDoGraphiteRequestGenericTypes(t *testing.T) {
 				})
 				assert.NoError(t, err)
 
-				result, _, status, err := doGraphiteRequest[GraphiteMetricsExpandResponse](ctx, dsInfo, svc.logger, req, false)
+				result, _, status, err := doGraphiteRequest[GraphiteMetricsExpandResponse](ctx, dsInfo, svc.logger, req, false, defaultResourceResponseMaxBytes)
 
 				assert.NoError(t, err)
 				assert.NotNil(t, result)
@@ -1232,7 +1252,7 @@ func TestParseResponse(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, _, err := parseResponse[[]GraphiteEventsResponse](tt.response, false, log.NewNullLogger())
+			result, _, err := parseResponse[[]GraphiteEventsResponse](tt.response, false, log.NewNullLogger(), defaultResourceResponseMaxBytes)
 
 			if tt.expectError {
 				assert.Error(t, err)

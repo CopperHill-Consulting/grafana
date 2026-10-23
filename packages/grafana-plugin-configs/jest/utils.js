@@ -2,12 +2,12 @@ export const nodeModulesToTransform = (moduleNames) => `.*\/node_modules\/(?!.*(
 
 // Array of known nested grafana package dependencies that only bundle an ESM version
 export const grafanaESModules = [
-  '@glideapps/glide-data-grid',
   '@wojtekmaj/date-utils',
   'ol',
   'd3',
   'd3-color',
   'd3-interpolate',
+  'd3-scale-chromatic',
   'delaunator',
   'get-user-locale',
   'internmap',
@@ -25,7 +25,11 @@ export const grafanaESModules = [
   'lodash-es',
   'vscode-languageserver-types',
   '@bsull/augurs',
-  'react-data-grid',
+  '@grafana/react-data-grid',
   '@grafana/llm',
   'pkce-challenge',
+  'uuid',
+  '@react-hookz/web',
+  '@ver0/deep-equal',
+  '@marcbachmann/cel-js',
 ];

@@ -1,7 +1,6 @@
 package sources
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/plugins/config"
+	"github.com/grafana/grafana/pkg/plugins/log"
 )
 
 var compareOpts = []cmp.Option{cmpopts.IgnoreFields(LocalSource{}, "log"), cmp.AllowUnexported(LocalSource{})}
@@ -20,22 +20,20 @@ func TestDirAsLocalSources(t *testing.T) {
 	testdataDir := "../testdata"
 
 	tests := []struct {
-		name        string
-		pluginsPath string
-		cfg         *config.PluginManagementCfg
-		expected    []*LocalSource
-		err         error
+		name         string
+		pluginsPaths []string
+		cfg          *config.PluginManagementCfg
+		expected     []*LocalSource
 	}{
 		{
-			name:        "Empty path returns an error",
-			pluginsPath: "",
-			expected:    []*LocalSource{},
-			err:         errors.New("plugins path not configured"),
+			name:         "Empty path returns no sources",
+			pluginsPaths: []string{},
+			expected:     []*LocalSource{},
 		},
 		{
-			name:        "Directory with subdirectories",
-			pluginsPath: filepath.Join(testdataDir, "pluginRootWithDist"),
-			cfg:         &config.PluginManagementCfg{},
+			name:         "Directory with subdirectories",
+			pluginsPaths: []string{filepath.Join(testdataDir, "pluginRootWithDist")},
+			cfg:          &config.PluginManagementCfg{},
 			expected: []*LocalSource{
 				{
 					paths:      []string{filepath.Join(testdataDir, "pluginRootWithDist", "datasource")},
@@ -59,7 +57,7 @@ func TestDirAsLocalSources(t *testing.T) {
 			cfg: &config.PluginManagementCfg{
 				DevMode: true,
 			},
-			pluginsPath: filepath.Join(testdataDir, "pluginRootWithDist"),
+			pluginsPaths: []string{filepath.Join(testdataDir, "pluginRootWithDist")},
 			expected: []*LocalSource{
 				{
 					paths:      []string{filepath.Join(testdataDir, "pluginRootWithDist", "datasource")},
@@ -79,15 +77,15 @@ func TestDirAsLocalSources(t *testing.T) {
 			},
 		},
 		{
-			name:        "Directory with no subdirectories",
-			cfg:         &config.PluginManagementCfg{},
-			pluginsPath: filepath.Join(testdataDir, "pluginRootWithDist", "datasource"),
-			expected:    []*LocalSource{},
+			name:         "Directory with no subdirectories",
+			cfg:          &config.PluginManagementCfg{},
+			pluginsPaths: []string{filepath.Join(testdataDir, "pluginRootWithDist", "datasource")},
+			expected:     []*LocalSource{},
 		},
 		{
-			name:        "Directory with a symlink to a directory",
-			pluginsPath: filepath.Join(testdataDir, "symbolic-plugin-dirs"),
-			cfg:         &config.PluginManagementCfg{},
+			name:         "Directory with a symlink to a directory",
+			pluginsPaths: []string{filepath.Join(testdataDir, "symbolic-plugin-dirs")},
+			cfg:          &config.PluginManagementCfg{},
 			expected: []*LocalSource{
 				{
 					paths:      []string{filepath.Join(testdataDir, "symbolic-plugin-dirs", "plugin")},
@@ -96,19 +94,86 @@ func TestDirAsLocalSources(t *testing.T) {
 				},
 			},
 		},
+		{
+			name:         "Multiple paths",
+			pluginsPaths: []string{filepath.Join(testdataDir, "pluginRootWithDist"), filepath.Join(testdataDir, "symbolic-plugin-dirs")},
+			cfg:          &config.PluginManagementCfg{},
+			expected: []*LocalSource{
+				{
+					paths:      []string{filepath.Join(testdataDir, "pluginRootWithDist", "datasource")},
+					class:      plugins.ClassExternal,
+					strictMode: true,
+				},
+				{
+					paths:      []string{filepath.Join(testdataDir, "pluginRootWithDist", "dist")},
+					class:      plugins.ClassExternal,
+					strictMode: true,
+				},
+				{
+					paths:      []string{filepath.Join(testdataDir, "pluginRootWithDist", "panel")},
+					class:      plugins.ClassExternal,
+					strictMode: true,
+				},
+				{
+					paths:      []string{filepath.Join(testdataDir, "symbolic-plugin-dirs", "plugin")},
+					class:      plugins.ClassExternal,
+					strictMode: true,
+				},
+			},
+		},
+		{
+			name:         "Non existing directories are skipped",
+			cfg:          &config.PluginManagementCfg{},
+			pluginsPaths: []string{filepath.Join(testdataDir, "pluginRootWithDist", "nope")},
+			expected:     []*LocalSource{},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := DirAsLocalSources(tt.cfg, tt.pluginsPath, plugins.ClassExternal)
-			if tt.err != nil {
-				require.Errorf(t, err, tt.err.Error())
-				return
-			}
-			require.NoError(t, err)
+			got := DirAsLocalSources(tt.cfg, tt.pluginsPaths, plugins.ClassExternal, log.New("test.logger"))
 			if !cmp.Equal(got, tt.expected, compareOpts...) {
 				t.Fatalf("Result mismatch (-want +got):\n%s", cmp.Diff(got, tt.expected, compareOpts...))
 			}
 		})
+	}
+}
+
+func TestDirAsLocalSourcesSkipsUnreadableDirectory(t *testing.T) {
+	unreadableDir := filepath.Join(t.TempDir(), "unreadable")
+	require.NoError(t, os.Mkdir(unreadableDir, 0750))
+	readableDir := filepath.Join("..", "testdata", "pluginRootWithDist")
+
+	t.Cleanup(func() {
+		// Restore permissions so TempDir cleanup can remove the directory.
+		_ = os.Chmod(unreadableDir, 0750) //nolint:gosec // Directory needs execute permission to allow traversal during cleanup.
+	})
+	require.NoError(t, os.Chmod(unreadableDir, 0))
+
+	_, err := os.ReadDir(unreadableDir)
+	if err == nil {
+		t.Skip("filesystem does not enforce directory read permissions in this environment")
+	}
+
+	got := DirAsLocalSources(&config.PluginManagementCfg{}, []string{unreadableDir, readableDir}, plugins.ClassExternal, log.New("test.logger"))
+	expected := []*LocalSource{
+		{
+			paths:      []string{filepath.Join(readableDir, "datasource")},
+			strictMode: true,
+			class:      plugins.ClassExternal,
+		},
+		{
+			paths:      []string{filepath.Join(readableDir, "dist")},
+			strictMode: true,
+			class:      plugins.ClassExternal,
+		},
+		{
+			paths:      []string{filepath.Join(readableDir, "panel")},
+			strictMode: true,
+			class:      plugins.ClassExternal,
+		},
+	}
+	if !cmp.Equal(got, expected, compareOpts...) {
+		t.Fatalf("Result mismatch (-want +got):\n%s", cmp.Diff(got, expected, compareOpts...))
 	}
 }
 

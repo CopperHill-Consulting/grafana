@@ -1,12 +1,8 @@
-import { Page } from 'playwright-core';
-
-import { test, expect, E2ESelectorGroups, DashboardPage } from '@grafana/plugin-e2e';
-
-import testV2Dashboard from '../dashboards/TestV2Dashboard.json';
+import { test, expect } from './fixtures';
+import { expectRowToBeVisible, expectTabToBeVisible, flows } from './helpers';
 
 test.use({
   featureToggles: {
-    kubernetesDashboards: true,
     dashboardNewLayouts: true,
     dashboardUndoRedo: true,
     groupByVariable: true,
@@ -24,806 +20,632 @@ test.describe(
     tag: ['@dashboards'],
   },
   () => {
-    // Helper functions
-    async function importTestDashboard(page: Page, selectors: E2ESelectorGroups, title: string) {
-      await page.goto(selectors.pages.ImportDashboard.url);
-      await page.getByTestId(selectors.components.DashboardImportPage.textarea).fill(JSON.stringify(testV2Dashboard));
-      await page.getByTestId(selectors.components.DashboardImportPage.submit).click();
-      await page.getByTestId(selectors.components.ImportDashboardForm.name).fill(title);
-      await page.getByTestId(selectors.components.DataSourcePicker.inputV2).click();
-      await page.locator('div[data-testid="data-source-card"]').first().click();
-      await page.getByTestId(selectors.components.ImportDashboardForm.submit).click();
-    }
+    test.describe('Rows', () => {
+      test('can group and ungroup new panels into row', async ({ selectors, page, controls, panels, rows, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Group new panels into row');
+        await controls.enterEditMode();
 
-    async function saveDashboard(dashboardPage: DashboardPage, selectors: E2ESelectorGroups) {
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.saveButton).click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.Drawer.DashboardSaveDrawer.saveButton).click();
-    }
+        // Group into row
+        await canvas.groupPanels('row');
 
-    async function groupIntoRow(page: Page, dashboardPage: DashboardPage, selectors: E2ESelectorGroups) {
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.groupPanels).click();
-      await page.getByText('Group into row').click();
-    }
+        // Verify row and panel titles
+        await expect(rows.getTitle('New row')).toBeVisible();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
 
-    async function groupIntoTab(page: Page, dashboardPage: DashboardPage, selectors: E2ESelectorGroups) {
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.groupPanels).click();
-      await page.getByText('Group into tab').click();
-    }
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
 
-    async function ungroupPanels(dashboardPage: DashboardPage, selectors: E2ESelectorGroups) {
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.ungroup).click();
-    }
+        // Verify row and panel titles after reload
+        await expect(rows.getTitle('New row')).toBeVisible();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
 
-    async function addPanel(dashboardPage: DashboardPage, selectors: E2ESelectorGroups) {
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.addPanel).last().click();
-    }
+        await controls.enterEditMode();
 
-    /*
-     * Rows
-     */
+        // Ungroup using the new ungroup rows button
+        await canvas.ungroupRows();
 
-    test('can group and ungroup new panels into row', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Group new panels into row');
+        // Verify Row title is gone
+        await expect(rows.getTitle('New row')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
 
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
 
-      // Group into row
-      await groupIntoRow(page, dashboardPage, selectors);
+        // Verify Row title is gone
+        await expect(rows.getTitle('New row')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+      });
 
-      // Verify row and panel titles
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
+      test('can add multiple rows and ungroup them all at once', async ({
+        selectors,
+        page,
+        controls,
+        sidebar,
+        panels,
+        rows,
+        canvas,
+      }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Add and remove rows');
+        await controls.enterEditMode();
 
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
+        await canvas.groupPanels('row'); // New row
 
-      // Verify row and panel titles after reload
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
+        await canvas.addRow(); // New row 1
+        await canvas.addPanel(rows.getContent('New row 1'));
 
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+        await canvas.addRow(); // New row 2
+        await canvas.addPanel(rows.getContent('New row 2'));
 
-      // Ungroup
-      await ungroupPanels(dashboardPage, selectors);
+        let firstRow = await expectRowToBeVisible('New row', rows);
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
 
-      // Verify Row title is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
+        let secondRow = await expectRowToBeVisible('New row 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(1);
 
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
+        let thirdRow = await expectRowToBeVisible('New row 2', rows);
+        await thirdRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', thirdRow)).toHaveCount(1);
 
-      // Verify Row title is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
+
+        firstRow = await expectRowToBeVisible('New row', rows);
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        secondRow = await expectRowToBeVisible('New row 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(1);
+
+        thirdRow = await expectRowToBeVisible('New row 2', rows);
+        await thirdRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', thirdRow)).toHaveCount(1);
+
+        await controls.enterEditMode();
+
+        // First test individual row deletion
+        await rows.select('New row 1');
+        await sidebar.deleteSelection({ confirm: true });
+
+        // Verify 2nd row is deleted
+
+        firstRow = await expectRowToBeVisible('New row', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        await expect(secondRow).toBeHidden();
+
+        thirdRow = await expectRowToBeVisible('New row 2', rows);
+        await thirdRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', thirdRow)).toHaveCount(1);
+
+        // Now test ungrouping all remaining rows at once
+        await canvas.ungroupRows();
+
+        // The grouped row kept the imported custom grid, while rows added from the
+        // canvas default to an auto grid. Ungrouping mixed grid types asks which
+        // type to convert to, we'll choose a custom grid
+        await page
+          .getByRole('dialog', { name: 'Convert mixed grids?' })
+          .getByRole('button', { name: 'Convert to Custom' })
+          .click();
+
+        // Verify all rows are gone and all panels are now in a single grid
+        await expect(firstRow).toBeHidden();
+        await expect(secondRow).toBeHidden();
+        await expect(thirdRow).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(4); // All 4 panels should be visible in the single grid
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        // Verify all rows are still gone after reload
+        await expect(firstRow).toBeHidden();
+        await expect(secondRow).toBeHidden();
+        await expect(thirdRow).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(4);
+      });
+
+      test('can paste a copied row', async ({ selectors, page, controls, sidebar, panels, rows, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Paste row');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('row'); // New row
+        await expectRowToBeVisible('New row', rows);
+
+        // Copy-paste the new row
+        await sidebar.copySelection();
+        await canvas.pasteRow();
+
+        let firstRow = await expectRowToBeVisible('New row', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        let secondRow = await expectRowToBeVisible('New row 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(3);
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        firstRow = await expectRowToBeVisible('New row', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        secondRow = await expectRowToBeVisible('New row 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(3);
+      });
+
+      test('can duplicate a row', async ({ selectors, page, controls, sidebar, panels, rows, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Duplicate row');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('row'); // New row
+        await expectRowToBeVisible('New row', rows);
+
+        // Duplicate the new row
+        await sidebar.duplicateSelection();
+
+        let firstRow = await expectRowToBeVisible('New row', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        let secondRow = await expectRowToBeVisible('New row 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(3);
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        firstRow = await expectRowToBeVisible('New row', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        secondRow = await expectRowToBeVisible('New row 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(3);
+      });
+
+      test('can collapse rows', async ({ selectors, page, controls, sidebar, panels, rows, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Collapse rows');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('row'); // New row
+        await expectRowToBeVisible('New row', rows);
+
+        // Duplicate the new row
+        await sidebar.duplicateSelection();
+
+        const firstRow = await expectRowToBeVisible('New row', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        const secondRow = await expectRowToBeVisible('New row 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(3);
+
+        // Collapse rows by clicking on the row toggles
+        await rows.toggle('New row');
+        await rows.toggle('New row 1');
+
+        // Collapsed rows keep their titles visible but unmount their content
+        await expect(rows.getTitle('New row')).toBeVisible();
+        await expect(rows.getContent('New row')).toBeHidden();
+
+        await expect(rows.getTitle('New row 1')).toBeVisible();
+        await expect(rows.getContent('New row 1')).toBeHidden();
+
+        await expect(panels.getPanels('New panel')).toHaveCount(0);
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        await expect(rows.getTitle('New row')).toBeVisible();
+        await expect(rows.getContent('New row')).toBeHidden();
+
+        await expect(rows.getTitle('New row 1')).toBeVisible();
+        await expect(rows.getContent('New row 1')).toBeHidden();
+
+        await expect(panels.getPanels('New panel')).toHaveCount(0);
+      });
+
+      test('can convert rows into tabs when changing layout', async ({
+        selectors,
+        page,
+        controls,
+        sidebar,
+        panels,
+        rows,
+        tabs,
+        canvas,
+      }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Rows to tabs');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('row'); // New row
+        await expectRowToBeVisible('New row', rows);
+
+        // Duplicate the new row
+        await sidebar.duplicateSelection();
+        await panels.selectByIndex(0);
+        await sidebar.deleteSelection({ confirm: true }); // remove a panel from the 1st row
+
+        await expectRowToBeVisible('New row', rows);
+        await expectRowToBeVisible('New row 1', rows);
+
+        // Go back to dashboard options
+        await sidebar.toolbar.clickButton('Options');
+
+        // Select tabs layout
+        await sidebar.dashboardOptions.gridLayoutOptions.switchLayout('Tabs');
+
+        await expectTabToBeVisible('New row', tabs);
+        await expect(panels.getPanels('New panel')).toHaveCount(2);
+
+        await expect(tabs.getTitle('New row 1')).toBeVisible();
+        await tabs.select('New row 1');
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        await expectTabToBeVisible('New row 1', tabs); // last active tab is selected
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        await expect(tabs.getTitle('New row')).toBeVisible();
+        await tabs.select('New row');
+        await expect(panels.getPanels('New panel')).toHaveCount(2);
+      });
+
+      test('can group and ungroup new panels into row with tab', async ({
+        selectors,
+        page,
+        controls,
+        panels,
+        rows,
+        tabs,
+        canvas,
+      }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Group new panels into tab with row');
+        await controls.enterEditMode();
+
+        // Group into row with tab
+        await canvas.groupPanels('row'); // New row
+        await canvas.groupPanels('tab'); // New tab
+
+        // Verify tab and panel titles
+        await expectRowToBeVisible('New row', rows);
+        await expectTabToBeVisible('New tab', tabs);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
+
+        // Verify tab, row and panel titles after reload
+        await expectRowToBeVisible('New row', rows);
+        await expectTabToBeVisible('New tab', tabs);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        await controls.enterEditMode();
+
+        // Ungroup
+        await canvas.ungroupTabs();
+        await canvas.ungroupRows();
+
+        // Verify tab and row titles is gone
+        await expect(rows.getTitle('New row')).toBeHidden();
+        await expect(tabs.getTitle('New tab')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
+
+        // Verify Row title is gone
+        await expect(rows.getTitle('New row')).toBeHidden();
+        await expect(tabs.getTitle('New tab')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+      });
+
+      test('cannot add a row without a title', async ({ selectors, page, controls, sidebar, rows, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Cannot add row without title');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('row'); // New row
+        await expectRowToBeVisible('New row', rows);
+
+        // edit row title to a non-default
+        await sidebar.rowOptions.setTitle('Test row 1');
+        await expectRowToBeVisible('Test row 1', rows);
+
+        // clear the title input to simulate no title and trigger onBlur
+        await sidebar.rowOptions.setTitle('');
+        // title should be set to a default name
+        await expectRowToBeVisible('New row', rows);
+
+        // add another row
+        await canvas.addRow();
+        await expectRowToBeVisible('New row 1', rows);
+
+        // edit row title to a non-default
+        await sidebar.rowOptions.setTitle('Test row 2');
+        await expectRowToBeVisible('Test row 2', rows);
+
+        // clear the title input to simulate no title and trigger onBlur
+        await sidebar.rowOptions.setTitle('');
+        // title should be set to a default name + 1 to avoid duplicates
+        await expectRowToBeVisible('New row 1', rows);
+      });
     });
 
-    test('can add and remove several rows', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Add and remove rows');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoRow(page, dashboardPage, selectors);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.addRow).click();
-      await addPanel(dashboardPage, selectors);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.addRow).click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.addPanel).last().click();
-
-      const firstRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row'));
-      await expect(firstRow).toBeVisible();
-
-      await firstRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
-
-      const secondRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row 1'));
-      await expect(secondRow).toBeVisible();
-
-      await secondRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(1);
-
-      const thirdRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row 2'));
-      await expect(thirdRow).toBeVisible();
-
-      await thirdRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: thirdRow })
-      ).toHaveCount(1);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(firstRow).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
-
-      await expect(secondRow).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(1);
-
-      thirdRow.scrollIntoViewIfNeeded();
-      await expect(thirdRow).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: thirdRow })
-      ).toHaveCount(1);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.DashboardRow.title('New row 1'))
-        .locator('..')
-        .click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.deleteButton).click();
-      await dashboardPage.getByGrafanaSelector(selectors.pages.ConfirmModal.delete).click();
-
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.DashboardRow.title('New row 2'))
-        .locator('..')
-        .click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.deleteButton).click();
-      await dashboardPage.getByGrafanaSelector(selectors.pages.ConfirmModal.delete).click();
+    test.describe('Tabs', () => {
+      test('can group and ungroup new panels into tab', async ({ selectors, page, controls, panels, tabs, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Group new panels into tab');
+        await controls.enterEditMode();
 
-      await expect(firstRow).toBeVisible();
-      await expect(secondRow).toBeHidden();
-      await expect(thirdRow).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(firstRow).toBeVisible();
-      await expect(secondRow).toBeHidden();
-      await expect(thirdRow).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-    });
-
-    test('can paste a copied row', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Paste row');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoRow(page, dashboardPage, selectors);
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
+        // Group into tab
+        await canvas.groupPanels('tab'); // New tab
 
-      // Copy by selecting row and using copy button
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Copy' }).click();
+        // Verify tab and panel titles
+        await expectTabToBeVisible('New tab', tabs);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
 
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.pasteRow).click();
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
 
-      // scroll `New row` into view - this is at the bottom of the dashboard body
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.CanvasGridAddActions.addRow)
-        .scrollIntoViewIfNeeded();
+        // Verify tab and panel titles after reload
+        await expectTabToBeVisible('New tab', tabs);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
 
-      const firstRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row'));
-      await expect(firstRow).toBeVisible();
+        await controls.enterEditMode();
 
-      firstRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
+        // Ungroup
+        await canvas.ungroupTabs();
 
-      const secondRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row 1'));
-      await expect(secondRow).toBeVisible();
+        // Verify tab title is gone
+        await expect(tabs.getTitle('New tab')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
 
-      secondRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(3);
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
 
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
+        // Verify tab title is gone
+        await expect(tabs.getTitle('New tab')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+      });
 
-      // scroll last `New panel` into view - this is at the bottom of the dashboard body
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-        .last()
-        .scrollIntoViewIfNeeded();
+      test('can add and remove several tabs', async ({ selectors, page, controls, sidebar, panels, tabs, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Add and remove tabs');
+        await controls.enterEditMode();
 
-      await expect(firstRow).toBeVisible();
-      await expect(secondRow).toBeVisible();
+        await canvas.groupPanels('tab'); // New tab
 
-      firstRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
+        await canvas.addTab(); // New tab 1
+        await canvas.addPanel(tabs.getContent('New tab 1'));
 
-      secondRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(3);
-    });
+        await canvas.addTab(); // New tab 2
+        await canvas.addPanel(tabs.getContent('New tab 2'));
 
-    test('can duplicate a row', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Duplicate row');
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
 
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
+        await expectTabToBeVisible('New tab 2', tabs);
+        await expect(tabs.getTitle('New tab 2')).toHaveAttribute('aria-selected', 'true');
+        await expect(panels.getPanels('New panel')).toHaveCount(1);
 
-      await groupIntoRow(page, dashboardPage, selectors);
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
 
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
 
-      // Duplicate by selecting row and using duplicate button
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Duplicate' }).click();
+        await expectTabToBeVisible('New tab 2', tabs);
+        await expect(tabs.getTitle('New tab 2')).toHaveAttribute('aria-selected', 'true'); // last selected stays selected after reload
+        await expect(panels.getPanels('New panel')).toHaveCount(1);
 
-      // scroll `New row` into view - this is at the bottom of the dashboard body
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.CanvasGridAddActions.addRow)
-        .scrollIntoViewIfNeeded();
+        await controls.enterEditMode();
 
-      const firstRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row'));
-      await expect(firstRow).toBeVisible();
+        await tabs.select('New tab 2');
+        await sidebar.deleteSelection({ confirm: true });
 
-      firstRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
+        await tabs.select('New tab 1');
+        await sidebar.deleteSelection({ confirm: true });
 
-      const secondRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row 1'));
-      await expect(secondRow).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeHidden();
+        await expect(tabs.getTitle('New tab 2')).toBeHidden();
 
-      secondRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(3);
+        await expectTabToBeVisible('New tab', tabs);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
 
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
+        await flows.dashboards.saveDashboard(page, controls);
 
-      // scroll last `New panel` into view - this is at the bottom of the dashboard body
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-        .last()
-        .scrollIntoViewIfNeeded();
+        await expect(tabs.getTitle('New tab 1')).toBeHidden();
+        await expect(tabs.getTitle('New tab 2')).toBeHidden();
 
-      await expect(firstRow).toBeVisible();
-      await expect(secondRow).toBeVisible();
+        await expectTabToBeVisible('New tab', tabs);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+      });
 
-      firstRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
+      test('can paste a copied tab', async ({ selectors, page, controls, sidebar, panels, tabs, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Paste tab');
+        await controls.enterEditMode();
 
-      secondRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(3);
-    });
+        await canvas.groupPanels('tab');
+        await expect(tabs.getTitle('New tab')).toBeVisible();
 
-    test('can collapse rows', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Collapse rows');
+        // Copy-paste the new tab
+        await sidebar.copySelection();
+        await canvas.pasteTab();
 
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoRow(page, dashboardPage, selectors);
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-
-      // Duplicate row
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Duplicate' }).click();
-
-      // scroll `New row` into view - this is at the bottom of the dashboard body
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.CanvasGridAddActions.addRow)
-        .scrollIntoViewIfNeeded();
-
-      const firstRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row'));
-      await expect(firstRow).toBeVisible();
-
-      firstRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
-
-      const secondRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New row 1'));
-      await expect(secondRow).toBeVisible();
-
-      secondRow.scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(3);
-
-      // Collapse rows by clicking on their titles
-      await dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row')).click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row 1')).click();
-
-      await expect(firstRow).toBeVisible();
-      await expect(secondRow).toBeVisible();
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(0);
-
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(firstRow).toBeVisible();
-      await expect(secondRow).toBeVisible();
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(0);
-    });
-
-    test('can convert rows into tabs when changing layout', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Rows to tabs');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoRow(page, dashboardPage, selectors);
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-
-      // Duplicate row
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Duplicate' }).click();
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row 1'))
-      ).toBeVisible();
-
-      // Go back to dashboard options
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.backButton).click({ force: true });
-
-      // Expand layouts section
-      await page.getByLabel('Expand Group layout category').click();
-
-      // Select tabs layout
-      await page.getByLabel('Tabs').click();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New row'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New row 1'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New row 1')).click();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New row'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New row 1'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New row')).click();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-    });
-
-    test('can group and ungroup new panels into row with tab', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Group new panels into tab with row');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      // Group into row with tab
-      await groupIntoRow(page, dashboardPage, selectors);
-      await groupIntoTab(page, dashboardPage, selectors);
-
-      // Verify tab and panel titles
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      // Verify tab, row and panel titles after reload
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      // Ungroup
-      await ungroupPanels(dashboardPage, selectors); // ungroup tabs
-      await ungroupPanels(dashboardPage, selectors); // ungroup rows
-
-      // Verify tab and row titles is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))).toBeHidden();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      // Verify Row title is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))).toBeHidden();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-    });
-
-    /*
-     * Tabs
-     */
-
-    test('can group and ungroup new panels into tab', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Group new panels into tab');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      // Group into tab
-      await groupIntoTab(page, dashboardPage, selectors);
-
-      // Verify tab and panel titles
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      // Verify row and panel titles after reload
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      // Ungroup
-      await ungroupPanels(dashboardPage, selectors);
-
-      // Verify Row title is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      // Verify Row title is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-    });
-
-    test('can add and remove several tabs', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Add and remove tabs');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoTab(page, dashboardPage, selectors);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.addTab).click();
-      await addPanel(dashboardPage, selectors);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.addTab).click();
-      await addPanel(dashboardPage, selectors);
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2'))).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(1);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2'))).toHaveAttribute(
-        'aria-selected',
-        'true'
-      );
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(1);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2')).click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.deleteButton).click();
-      await dashboardPage.getByGrafanaSelector(selectors.pages.ConfirmModal.delete).click();
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1')).click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.deleteButton).click();
-      await dashboardPage.getByGrafanaSelector(selectors.pages.ConfirmModal.delete).click();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeHidden();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeHidden();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-    });
-
-    test('can paste a copied tab', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Paste tab');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoTab(page, dashboardPage, selectors);
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-
-      // Copy by selecting tab and using copy button
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Copy' }).click();
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.pasteTab).click();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-    });
-
-    test('can duplicate a tab', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Duplicate tab');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoTab(page, dashboardPage, selectors);
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-
-      // Duplicate by selecting tab and using duplicate button
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Duplicate' }).click();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-    });
-
-    test('can convert tabs into rows when changing layout', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Tabs to rows');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      await groupIntoTab(page, dashboardPage, selectors);
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-
-      // Duplicate tab twice
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Duplicate' }).click();
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.copyDropdown).click();
-      await page.getByRole('menuitem', { name: 'Duplicate' }).click();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 1'))).toBeVisible();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab 2'))).toBeVisible();
-
-      // Go back to dashboard options
-      await dashboardPage.getByGrafanaSelector(selectors.components.EditPaneHeader.backButton).click({ force: true });
-
-      // Expand layouts section
-      await page.getByLabel('Expand Group layout category').click();
-
-      // Select rows layout
-      await page.getByLabel('Rows').click();
-
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New tab 1'))
-        .scrollIntoViewIfNeeded();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New tab 1'))
-      ).toBeVisible();
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New tab 2'))
-        .scrollIntoViewIfNeeded();
-
-      const firstRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New tab'));
-      const secondRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New tab 1'));
-      const thirdRow = dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.wrapper('New tab 2'));
-
-      firstRow.scrollIntoViewIfNeeded();
-      await expect(firstRow).toBeVisible();
-      // Wait for panels to load
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel')).first()
-      ).toBeVisible();
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
-
-      secondRow.scrollIntoViewIfNeeded();
-      await expect(secondRow).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(3);
-
-      thirdRow.scrollIntoViewIfNeeded();
-      await expect(thirdRow).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: thirdRow })
-      ).toHaveCount(3);
-
-      // scroll `New row` into view - this is at the bottom of the dashboard body
-      await dashboardPage
-        .getByGrafanaSelector(selectors.components.CanvasGridAddActions.addRow)
-        .scrollIntoViewIfNeeded();
-
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.CanvasGridAddActions.addRow)).toBeVisible();
-
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      await expect(firstRow).toBeVisible();
-
-      // Wait for panels to load
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel')).first()
-      ).toBeVisible();
-
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: firstRow })
-      ).toHaveCount(3);
-
-      secondRow.scrollIntoViewIfNeeded();
-      await expect(secondRow).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: secondRow })
-      ).toHaveCount(3);
-
-      thirdRow.scrollIntoViewIfNeeded();
-      await expect(thirdRow).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'), { root: thirdRow })
-      ).toHaveCount(3);
-    });
-
-    test('can group and ungroup new panels into tab with row', async ({ dashboardPage, selectors, page }) => {
-      await importTestDashboard(page, selectors, 'Group new panels into tab with row');
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      // Group into tab
-      await groupIntoTab(page, dashboardPage, selectors);
-      await groupIntoRow(page, dashboardPage, selectors);
-
-      // Verify tab and panel titles
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      // Verify tab, row and panel titles after reload
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))
-      ).toBeVisible();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      await dashboardPage.getByGrafanaSelector(selectors.components.NavToolbar.editDashboard.editButton).click();
-
-      // Ungroup
-      await ungroupPanels(dashboardPage, selectors); // ungroup rows
-      await ungroupPanels(dashboardPage, selectors); // ungroup tabs
-
-      // Verify tab and row titles is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeHidden();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
-
-      // Save dashboard and reload
-      await saveDashboard(dashboardPage, selectors);
-      await page.reload();
-
-      // Verify Row title is gone
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.Tab.title('New tab'))).toBeHidden();
-      await expect(dashboardPage.getByGrafanaSelector(selectors.components.DashboardRow.title('New row'))).toBeHidden();
-      await expect(
-        dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('New panel'))
-      ).toHaveCount(3);
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+      });
+
+      test('can duplicate a tab', async ({ selectors, page, controls, sidebar, panels, tabs, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Duplicate tab');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('tab');
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+
+        // Duplicate by selecting tab and using duplicate button
+        await sidebar.duplicateSelection();
+
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+      });
+
+      test('can convert tabs into rows when changing layout', async ({
+        selectors,
+        page,
+        controls,
+        sidebar,
+        panels,
+        rows,
+        tabs,
+        canvas,
+      }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Tabs to rows');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('tab');
+
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+
+        // Duplicate tab twice
+        await sidebar.duplicateSelection();
+        await sidebar.duplicateSelection();
+
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
+        await expect(tabs.getTitle('New tab 2')).toBeVisible();
+
+        // Go back to dashboard options
+        await sidebar.toolbar.clickButton('Options');
+
+        // Select rows layout
+        await sidebar.dashboardOptions.gridLayoutOptions.switchLayout('Rows');
+
+        let firstRow = await expectRowToBeVisible('New tab', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        let secondRow = await expectRowToBeVisible('New tab 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(3);
+
+        let thirdRow = await expectRowToBeVisible('New tab 2', rows);
+        await thirdRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', thirdRow)).toHaveCount(3);
+
+        await flows.dashboards.saveDashboard(page, controls);
+
+        firstRow = await expectRowToBeVisible('New tab', rows);
+        await firstRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', firstRow)).toHaveCount(3);
+
+        secondRow = await expectRowToBeVisible('New tab 1', rows);
+        await secondRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', secondRow)).toHaveCount(3);
+
+        thirdRow = await expectRowToBeVisible('New tab 2', rows);
+        await thirdRow.scrollIntoViewIfNeeded();
+        await expect(panels.getPanels('New panel', thirdRow)).toHaveCount(3);
+      });
+
+      test('can group and ungroup new panels into tab with row', async ({
+        selectors,
+        page,
+        controls,
+        panels,
+        rows,
+        tabs,
+        canvas,
+      }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Group new panels into tab with row');
+        await controls.enterEditMode();
+
+        // Group into tab
+        await canvas.groupPanels('tab');
+        await canvas.groupPanels('row');
+
+        // Verify tab and panel titles
+        // Tab check is title-only: the tab holds a nested rows layout, not a grid,
+        // so no "Layout container tab ..." testid is rendered for expectTabToBeVisible
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expectRowToBeVisible('New row', rows);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
+
+        // Verify tab, row and panel titles after reload
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+        await expectRowToBeVisible('New row', rows);
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        await controls.enterEditMode();
+
+        // Ungroup
+        await canvas.ungroupRows();
+        await canvas.ungroupTabs();
+
+        // Verify tab and row titles is gone
+        await expect(tabs.getTitle('New tab')).toBeHidden();
+        await expect(rows.getTitle('New row')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+
+        // Save dashboard and reload
+        await flows.dashboards.saveDashboard(page, controls);
+
+        // Verify Row title is gone
+        await expect(tabs.getTitle('New tab')).toBeHidden();
+        await expect(rows.getTitle('New row')).toBeHidden();
+        await expect(panels.getPanels('New panel')).toHaveCount(3);
+      });
+
+      test('cannot add a tab without a title', async ({ selectors, page, controls, sidebar, tabs, canvas }) => {
+        await flows.dashboards.importTestDashboard(page, selectors, 'Cannot add tab without title');
+        await controls.enterEditMode();
+
+        await canvas.groupPanels('tab');
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+
+        // edit tab title to a non-default and close the pane to trigger the title update
+        await sidebar.tabOptions.setTitle('Test tab 1');
+        await sidebar.closePane();
+
+        // clear the title input to simulate no title and close the pane to trigger the title update
+        await tabs.select('Test tab 1');
+        await sidebar.tabOptions.setTitle('');
+        await sidebar.closePane();
+        // title should be set to a default name
+        await expect(tabs.getTitle('New tab')).toBeVisible();
+
+        // add another tab
+        await canvas.addTab();
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
+
+        // edit tab title to a non-default and close the pane to trigger the title update
+        await sidebar.tabOptions.setTitle('Test tab 2');
+        await sidebar.closePane();
+
+        // clear the title input to simulate no title and close the pane to trigger the title update
+        await tabs.select('Test tab 2');
+        await sidebar.tabOptions.setTitle('');
+        await sidebar.closePane();
+        // title should be set to a default name + 1 to avoid duplicates
+        await expect(tabs.getTitle('New tab 1')).toBeVisible();
+      });
     });
   }
 );

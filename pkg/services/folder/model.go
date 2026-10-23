@@ -14,7 +14,7 @@ import (
 	"github.com/grafana/grafana/pkg/setting"
 )
 
-var ErrMaximumDepthReached = errutil.BadRequest("folder.maximum-depth-reached", errutil.WithPublicMessage("Maximum nested folder depth reached"))
+var ErrMaximumDepthReached = errutil.BadRequest("folder.maximum-depth-reached", errutil.WithPublicMessage("Maximum nested folder depth reached")) // Important: keep error msgID stable for other services to consume (provisioning)
 var ErrBadRequest = errutil.BadRequest("folder.bad-request")
 var ErrDatabaseError = errutil.Internal("folder.database-error")
 var ErrConflict = errutil.Conflict("folder.conflict")
@@ -22,12 +22,49 @@ var ErrInternal = errutil.Internal("folder.internal")
 var ErrCircularReference = errutil.BadRequest("folder.circular-reference", errutil.WithPublicMessage("Circular reference detected"))
 var ErrTargetRegistrySrvConflict = errutil.Internal("folder.target-registry-srv-conflict")
 var ErrFolderNotEmpty = errutil.BadRequest("folder.not-empty", errutil.WithPublicMessage("Folder cannot be deleted: folder is not empty"))
+var ErrFolderCannotBeMovedToK6 = errutil.BadRequest("folder.cannot-be-moved-to-k6", errutil.WithPublicMessage("Folders cannot be moved into the k6 project"))
+var ErrFolderCannotBeCreatedInK6 = errutil.BadRequest("folder.cannot-be-created-in-k6", errutil.WithPublicMessage("Folders cannot be created inside the k6 project"))
+
+// ErrCyclicReference indicates corrupt storage state, not user input.
+var ErrCyclicReference = errutil.Internal("folder.cyclic-reference", errutil.WithPublicMessage("Cyclic folder references found"))
+
+// TODO: evaluate if we can remove legacy errors and only have k8s ones
+var ErrTitleEmpty = errors.New("folder title cannot be empty")
+var ErrInvalidUID = errors.New("invalid uid for folder provided")
 var ErrFolderCannotBeParentOfItself = errors.New("folder cannot be parent of itself")
+var ErrVersionMismatch = errors.New("the folder has been changed by someone else")
+var ErrSameUIDExists = errors.New("a folder/dashboard with the same uid already exists")
+var ErrAccessDenied = errors.New("access denied to folder")
+
+// Wraps legacy errors (/api) into an apiserver (/apis) error for them to be handled as 400.
+var ErrAPITitleEmpty = errutil.BadRequest("folder.title-empty", errutil.WithPublicMessage("Folder title cannot be empty")).
+	Errorf("%w", ErrTitleEmpty)
+var ErrAPIInvalidUID = errutil.BadRequest("folder.invalid-uid", errutil.WithPublicMessage("Invalid uid for folder provided")).
+	Errorf("%w", ErrInvalidUID)
+var ErrAPIFolderCannotBeParentOfItself = errutil.BadRequest("folder.cannot-be-parent-of-itself", errutil.WithPublicMessage("Folder cannot be parent of itself")).
+	Errorf("%w", ErrFolderCannotBeParentOfItself)
+
+var ErrMoveAccessDenied = errutil.Forbidden("folders.forbiddenMove", errutil.WithPublicMessage("Access denied to the destination folder"))
+var ErrAccessEscalation = errutil.Forbidden("folders.accessEscalation", errutil.WithPublicMessage("Cannot move a folder to a folder where you have higher permissions"))
+var ErrCreationAccessDenied = errutil.Forbidden("folders.forbiddenCreation", errutil.WithPublicMessage("not enough permissions to create a folder in the selected location"))
+var ErrNameExists = errutil.BadRequest("folder.name-exists", errutil.WithPublicMessage("A folder with that name already exists"))
 
 const (
-	GeneralFolderUID      = "general"
-	RootFolderUID         = ""
-	MaxNestedFolderDepth  = 4
+	// GeneralFolderUID is the Grafana UID that identifies the root folder.
+	GeneralFolderUID = "general"
+
+	// LegacyRootFolderUID is the legacy root sentinel — an empty string — still
+	// surfaced by older /api/ responses and stored on resources written before
+	// folder annotations were populated.
+	//
+	// Deprecated: use GeneralFolderUID for the canonical root folder UID. This
+	// constant is retained only for compatibility with legacy API responses and
+	// stored data that still uses the empty-string sentinel.
+	LegacyRootFolderUID = ""
+
+	// SharedWithMeFolderUID is the UID for the special "Shared with me" folder,
+	// It is not a real folder but used to identify the location of resources that you
+	// can see, but do not have access to the containing folder
 	SharedWithMeFolderUID = "sharedwithme"
 )
 
@@ -89,6 +126,26 @@ func (f *Folder) IsGeneral() bool {
 	metrics.MFolderIDsServiceCount.WithLabelValues(metrics.Folder).Inc()
 	// nolint:staticcheck
 	return f.ID == GeneralFolder.ID && f.Title == GeneralFolder.Title
+}
+
+// ToLegacyFolderUID maps the GeneralFolderUID ("general") sentinel back to the
+// empty-for-root convention expected by legacy API responses
+// (/api/dashboards, /api/folders, /api/search). All other UIDs are returned
+// unchanged.
+func ToLegacyFolderUID(uid string) string {
+	if uid == GeneralFolderUID {
+		return LegacyRootFolderUID //nolint:staticcheck
+	}
+	return uid
+}
+
+// IsRootFolderUID reports whether the given folder UID identifies the root
+// folder. Use this for "does this resource have a parent folder?" checks
+// where both root sentinels must be treated equivalently:
+//   - "" (legacy empty annotation)
+//   - "general" (canonical root UID)
+func IsRootFolderUID(uid string) bool {
+	return uid == LegacyRootFolderUID || uid == GeneralFolderUID //nolint:staticcheck
 }
 
 func (f *Folder) WithURL() *Folder {
@@ -212,6 +269,12 @@ type GetFoldersQuery struct {
 	WithFullpathUIDs bool
 	BatchSize        uint64
 
+	// MetadataOnly serves folders from the search index instead of reading each
+	// full stored object. Only UID, ID, OrgID, ParentUID, Title, ManagedBy and
+	// the full paths are populated. For callers that only need the folder
+	// tree/titles and want to avoid the linear full-object fetch on large orgs.
+	MetadataOnly bool
+
 	// Pagination options
 	Limit int64
 	Page  int64
@@ -224,12 +287,13 @@ type GetFoldersQuery struct {
 }
 
 type SearchFoldersQuery struct {
-	OrgID        int64
-	UIDs         []string
-	IDs          []int64
-	Title        string
-	Limit        int64
-	SignedInUser identity.Requester `json:"-"`
+	OrgID           int64
+	UIDs            []string
+	IDs             []int64
+	Title           string
+	TitleExactMatch bool
+	Limit           int64
+	SignedInUser    identity.Requester `json:"-"`
 }
 
 // GetParentsQuery captures the information required by the folder service to
@@ -260,14 +324,6 @@ type GetChildrenQuery struct {
 	FolderUIDs []string `json:"-"`
 }
 
-type HasEditPermissionInFoldersQuery struct {
-	SignedInUser identity.Requester
-}
-
-type HasAdminPermissionInDashboardsOrFoldersQuery struct {
-	SignedInUser identity.Requester
-}
-
 // GetDescendantCountsQuery captures the information required by the folder service
 // to return the count of descendants (direct and indirect) in a folder.
 type GetDescendantCountsQuery struct {
@@ -278,3 +334,50 @@ type GetDescendantCountsQuery struct {
 }
 
 type DescendantCounts map[string]int64
+
+// SortByPostorder returns the folders in postorder traversal order.
+// That is, children folders appear before their parents in the returned slice.
+func SortByPostorder(folders []*Folder) []*Folder {
+	if len(folders) == 0 {
+		return folders
+	}
+
+	// Build parent-to-children map
+	tree := make(map[string][]*Folder)
+	folderMap := make(map[string]*Folder)
+	for _, f := range folders {
+		folderMap[f.UID] = f
+		tree[f.ParentUID] = append(tree[f.ParentUID], f)
+	}
+
+	// Find all roots (folders whose parents are not in the result set)
+	var roots []*Folder
+	for _, f := range folders {
+		if folderMap[f.ParentUID] == nil {
+			roots = append(roots, f)
+		}
+	}
+
+	// Traverse in postorder
+	result := make([]*Folder, 0, len(folders))
+	visited := make(map[string]bool)
+	var traverse func(f *Folder)
+	traverse = func(f *Folder) {
+		if visited[f.UID] {
+			return
+		}
+		visited[f.UID] = true
+		// First visit all children
+		for _, child := range tree[f.UID] {
+			traverse(child)
+		}
+		// Then add current folder
+		result = append(result, f)
+	}
+
+	for _, root := range roots {
+		traverse(root)
+	}
+
+	return result
+}

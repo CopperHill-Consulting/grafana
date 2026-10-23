@@ -4,8 +4,8 @@ import { map } from 'rxjs/operators';
 import { getTimeField } from '../../dataframe/processDataFrame';
 import { getFieldDisplayName } from '../../field/fieldState';
 import { NullValueMode } from '../../types/data';
-import { DataFrame, FieldType, Field } from '../../types/dataFrame';
-import { DataTransformContext, DataTransformerInfo } from '../../types/transformations';
+import { type DataFrame, FieldType, type Field } from '../../types/dataFrame';
+import { type DataTransformContext, type DataTransformerInfo } from '../../types/transformations';
 import { BinaryOperationID, binaryOperators } from '../../utils/binaryOperators';
 import { UnaryOperationID, unaryOperators } from '../../utils/unaryOperators';
 import { doStandardCalcs, fieldReducers, ReducerID } from '../fieldReducer';
@@ -72,7 +72,7 @@ interface IndexOptions {
   asPercentile: boolean;
 }
 
-const defaultReduceOptions: ReduceOptions = {
+const defaultNumericVizOptions: ReduceOptions = {
   reducer: ReducerID.sum,
 };
 
@@ -149,10 +149,10 @@ export const calculateFieldTransformer: DataTransformerInfo<CalculateFieldTransf
 
         switch (mode) {
           case CalculateFieldMode.ReduceRow:
-            creator = getReduceRowCreator(defaults(options.reduce, defaultReduceOptions), data);
+            creator = getReduceRowCreator(defaults(options.reduce, defaultNumericVizOptions), data);
             break;
           case CalculateFieldMode.CumulativeFunctions:
-            creator = getCumulativeCreator(defaults(options.cumulative, defaultReduceOptions), data);
+            creator = getCumulativeCreator(defaults(options.cumulative, defaultNumericVizOptions), data);
             break;
           case CalculateFieldMode.WindowFunctions:
             creator = getWindowCreator(defaults(options.window, defaultWindowOptions), data);

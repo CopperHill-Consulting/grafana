@@ -9,11 +9,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/grafana/authlib/types"
 	"github.com/grafana/grafana-app-sdk/logging"
 	"github.com/grafana/grafana-app-sdk/resource"
 	advisorv0alpha1 "github.com/grafana/grafana/apps/advisor/pkg/apis/advisor/v0alpha1"
 	"github.com/grafana/grafana/apps/advisor/pkg/app/checks"
+	"github.com/grafana/grafana/apps/advisor/pkg/app/metrics"
 	"github.com/grafana/grafana/pkg/services/contexthandler"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 var retryAnnotationPollingInterval = 1 * time.Second
@@ -45,6 +48,14 @@ func processCheck(ctx context.Context, log logging.Logger, client resource.Clien
 	c, ok := obj.(*advisorv0alpha1.Check)
 	if !ok {
 		return fmt.Errorf("invalid object type")
+	}
+	// processCheck is invoked from the validating admission webhook in a
+	// goroutine, so it can race with the apiserver finishing the write of
+	// the Check resource. Wait for the object to be persisted before any
+	// PATCH below (including the SetStatusAnnotation calls in the error
+	// paths) can hit a "not found" against the in-flight create.
+	if err := waitForItem(ctx, log, client, obj); err != nil {
+		return err
 	}
 	// Get the items to check
 	err := check.Init(ctx)
@@ -81,7 +92,6 @@ func processCheck(ctx context.Context, log logging.Logger, client resource.Clien
 		}
 		return fmt.Errorf("error running steps: %w", err)
 	}
-
 	report := &advisorv0alpha1.CheckReport{
 		Failures: failures,
 		Count:    int64(len(items)),
@@ -114,6 +124,10 @@ func processCheckRetry(ctx context.Context, log logging.Logger, client resource.
 		return nil
 	} else {
 		log.Debug("Item to retry found", "check", obj.GetName(), "item", itemToRetry)
+	}
+	// Wait for the retry annotation to be persisted before processing the object
+	if err := waitForRetryAnnotation(ctx, log, client, obj, itemToRetry); err != nil {
+		return err
 	}
 	c, ok := obj.(*advisorv0alpha1.Check)
 	if !ok {
@@ -157,26 +171,11 @@ func processCheckRetry(ctx context.Context, log logging.Logger, client resource.
 			return fmt.Errorf("error running steps: %w", err)
 		}
 	}
-	// Pull failures from the report for the items to retry
-	c.Status.Report.Failures = slices.DeleteFunc(c.Status.Report.Failures, func(f advisorv0alpha1.CheckReportFailure) bool {
-		if f.ItemID == itemToRetry {
-			for _, newFailure := range failures {
-				if newFailure.StepID == f.StepID {
-					// Same failure found, keep it
-					return false
-				}
-			}
-			// Failure no longer found, remove it
-			return true
-		}
-		// Failure not in the list of items to retry, keep it
-		return false
+	// Pull this item's failures and replace them with the retry result
+	currentFailures := slices.DeleteFunc(slices.Clone(c.Status.Report.Failures), func(f advisorv0alpha1.CheckReportFailure) bool {
+		return f.ItemID == itemToRetry
 	})
-	// Wait for the retry annotation to be persisted before patching the object
-	err = waitForRetryAnnotation(ctx, log, client, obj, itemToRetry)
-	if err != nil {
-		return err
-	}
+	c.Status.Report.Failures = append(currentFailures, failures...)
 	// Set the status
 	err = checks.SetStatus(ctx, client, obj, c.Status)
 	log.Debug("Status set", "check", obj.GetName(), "status.count", c.Status.Report.Count)
@@ -212,6 +211,7 @@ func runStepsInParallel(ctx context.Context, log logging.Logger, spec *advisorv0
 					defer func() {
 						if r := recover(); r != nil {
 							log.Error("panic recovered in step", "step", step.ID(), "error", r, "item", item)
+							metrics.StepPanicsTotal.WithLabelValues(step.ID()).Inc()
 						}
 					}()
 					logger := log.With("step", step.ID())
@@ -264,6 +264,24 @@ func retryAnnotationChanged(oldObj, newObj resource.Object) bool {
 		oldAnnotations[checks.RetryAnnotation] != newAnnotations[checks.RetryAnnotation]
 }
 
+func waitForItem(ctx context.Context, log logging.Logger, client resource.Client, obj resource.Object) error {
+	_, err := client.Get(ctx, resource.Identifier{
+		Namespace: obj.GetNamespace(),
+		Name:      obj.GetName(),
+	})
+	retries := 0
+	for err != nil && k8serrors.IsNotFound(err) && retries < 5 {
+		log.Debug("Waiting for item to be persisted", "check", obj.GetName(), "retries", retries)
+		time.Sleep(retryAnnotationPollingInterval)
+		retries++
+		_, err = client.Get(ctx, resource.Identifier{
+			Namespace: obj.GetNamespace(),
+			Name:      obj.GetName(),
+		})
+	}
+	return err
+}
+
 // waitForRetryAnnotation waits for the retry annotation to match the item to retry
 func waitForRetryAnnotation(ctx context.Context, log logging.Logger, client resource.Client, obj resource.Object, itemToRetry string) error {
 	currentObj, err := client.Get(ctx, resource.Identifier{
@@ -293,4 +311,13 @@ func waitForRetryAnnotation(ctx context.Context, log logging.Logger, client reso
 	}
 	log.Debug("Retry annotation persisted", "check", obj.GetName(), "item", itemToRetry)
 	return nil
+}
+
+// getOrgIDFromNamespace extracts the org ID from a namespace using the standard authlib parser.
+func getOrgIDFromNamespace(namespace string) (int64, error) {
+	info, err := types.ParseNamespace(namespace)
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse namespace %s: %w", namespace, err)
+	}
+	return info.OrgID, nil
 }

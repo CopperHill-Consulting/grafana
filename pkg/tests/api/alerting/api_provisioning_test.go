@@ -20,7 +20,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/expr"
@@ -29,7 +29,6 @@ import (
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/tests/testinfra"
-	"github.com/grafana/grafana/pkg/util"
 	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
@@ -660,7 +659,7 @@ func TestIntegrationProvisioningRules(t *testing.T) {
 							Model:         json.RawMessage([]byte(`{"type":"math","expression":"2 + 3 \u003e 1"}`)),
 						},
 					},
-					MissingSeriesEvalsToResolve: util.Pointer[int64](3),
+					MissingSeriesEvalsToResolve: new(int64(3)),
 				},
 			},
 		}
@@ -1192,10 +1191,11 @@ func TestIntegrationExportFileProvisionContactPoints(t *testing.T) {
 
 func TestIntegrationFullpath(t *testing.T) {
 	dir, p := testinfra.CreateGrafDir(t, testinfra.GrafanaOpts{
-		DisableLegacyAlerting: true,
-		EnableUnifiedAlerting: true,
-		DisableAnonymous:      true,
-		AppModeProduction:     true,
+		DisableAuthZClientCache: true,
+		DisableLegacyAlerting:   true,
+		EnableUnifiedAlerting:   true,
+		DisableAnonymous:        true,
+		AppModeProduction:       true,
 	})
 
 	grafanaListedAddr, env := testinfra.StartGrafanaEnv(t, dir, p)
@@ -1311,6 +1311,6 @@ func TestIntegrationFullpath(t *testing.T) {
 		var export definitions.AlertingFileExport
 		require.NoError(t, json.Unmarshal([]byte(response), &export))
 		require.Len(t, export.Groups, 1)
-		assert.Equal(t, "my-namespace/my-other-namespace containing multiple //", export.Groups[0].Folder)
+		assert.Equal(t, "my-namespace/my-other-namespace containing multiple \\/\\/", export.Groups[0].Folder)
 	})
 }

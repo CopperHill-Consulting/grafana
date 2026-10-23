@@ -22,22 +22,6 @@ labels:
 menuTitle: Webhook
 title: Configure the webhook notifier for Alerting
 weight: 165
-refs:
-  notification-templates:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/template-notifications/
-  configure-contact-points:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/manage-contact-points/
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/manage-contact-points/
-  notification-templates-namespaced-functions:
-    - pattern: /docs/grafana/
-      destination: /docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/reference/#namespaced-functions
-    - pattern: /docs/grafana-cloud/
-      destination: /docs/grafana-cloud/alerting-and-irm/alerting/configure-notifications/template-notifications/reference/#namespaced-functions
 ---
 
 # Configure webhook notifications
@@ -50,7 +34,7 @@ The webhook integration is a flexible way to integrate alerts into your system. 
 
 To create a contact point with webhook integration, complete the following steps.
 
-1. Navigate to **Alerts & IRM** -> **Alerting** -> **Contact points**.
+1. Navigate to **Alerts & IRM** -> **Alerting** -> **Notification configuration**, then select the **Contact points** tab.
 1. Click **+ Add contact point**.
 1. Enter a name for the contact point.
 1. From the **Integration** list, select **Webhook**.
@@ -58,13 +42,21 @@ To create a contact point with webhook integration, complete the following steps
 1. (Optional) Configure [additional settings](#webhook-settings).
 1. Click **Save contact point**.
 
-For more details on contact points, including how to test them and enable notifications, refer to [Configure contact points](ref:configure-contact-points).
+For more details on contact points, including how to test them and enable notifications, refer to [Configure contact points](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/manage-contact-points/).
 
 ## Webhook settings
 
-| Option | Description      |
-| ------ | ---------------- |
-| URL    | The Webhook URL. |
+| Option | Description                                                                                                                                                             |
+| ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| URL    | The Webhook URL. This field is [protected](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/manage-contact-points/) from modification in Grafana Cloud. |
+
+{{< admonition type="caution" >}}
+
+The URL is not a secured field. It's stored in plain text and isn't masked when the contact point is read back. Include secrets such as tokens or passwords in the URL at your own risk.
+
+To authenticate to your webhook endpoint, use the authorization fields in the [optional settings](#optional-settings) instead, such as Basic Authentication or the Authorization request header. These fields are stored securely and are masked on read.
+
+{{< /admonition >}}
 
 #### Optional settings
 
@@ -119,13 +111,13 @@ To validate incoming webhook requests from Grafana, follow these steps:
 
 #### Optional settings using templates
 
-Use the following settings to include custom data within the [JSON payload](#body). Both options support using [notification templates](ref:notification-templates).
+Use the following settings to include custom data within the [JSON payload](#body). Both options support using [notification templates](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/).
 
-| Option                            | Description                                                                                                                                     |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Title                             | Sends the value as a string in the `title` field of the [JSON payload](#body). Supports [notification templates](ref:notification-templates).   |
-| Message                           | Sends the value as a string in the `message` field of the [JSON payload](#body). Supports [notification templates](ref:notification-templates). |
-| [Custom Payload](#custom-payload) | Optionally override the default payload format with a custom template.                                                                          |
+| Option                            | Description                                                                                                                                                                                                   |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Title                             | Sends the value as a string in the `title` field of the [JSON payload](#body). Supports [notification templates](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/).   |
+| Message                           | Sends the value as a string in the `message` field of the [JSON payload](#body). Supports [notification templates](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/). |
+| [Custom Payload](#custom-payload) | Optionally override the default payload format with a custom template.                                                                                                                                        |
 
 #### Optional notification settings
 
@@ -241,18 +233,21 @@ The Alert object represents an alert included in the notification group, as prov
 
 ## Custom Payload
 
+The `Custom Payload` option allows you to completely customize the webhook payload using [templates](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/). This gives you full control over the structure and content of the webhook request.
+
+For detailed information about how to create and manage notification templates, refer to [notification templates](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/).
+
 {{< admonition type="note" >}}
 
-Custom Payload is not yet [generally available](https://grafana.com/docs/release-life-cycle/#general-availability) in Grafana Cloud.
+- When using Custom Payload, the [`Title` and `Message` fields](#optional-notification-settings) are ignored as the entire payload structure is determined by your template.
+- Custom Payload is not yet [generally available](https://grafana.com/docs/release-life-cycle/#general-availability) in Grafana Cloud.
 
 {{< /admonition >}}
 
-The `Custom Payload` option allows you to completely customize the webhook payload using templates. This gives you full control over the structure and content of the webhook request.
-
-| Option            | Description                                                                                               |
-| ----------------- | --------------------------------------------------------------------------------------------------------- |
-| Payload Template  | Template string that defines the structure of the webhook payload.                                        |
-| Payload Variables | Key-value pairs that define additional variables available in the template under `.Vars.<variable_name>`. |
+| Option            | Description                                                                                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Payload Template  | [Notification template](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/) that defines the structure of the webhook payload. |
+| Payload Variables | Key-value pairs that define additional variables available in the template under `.Vars.<variable_name>`.                                                            |
 
 Example of a custom payload template that includes variables:
 
@@ -265,15 +260,11 @@ Example of a custom payload template that includes variables:
 }
 ```
 
-{{< admonition type="note" >}}
-When using Custom Payload, the Title and Message fields are ignored as the entire payload structure is determined by your template.
-{{< /admonition >}}
-
 ### JSON Template Functions
 
 When creating custom payloads, several template functions are available to help generate valid JSON structures. These include functions for creating dictionaries (`coll.Dict`), arrays (`coll.Slice`, `coll.Append`), and converting between JSON strings and objects (`data.ToJSON`, `data.JSON`).
 
-For detailed information about these and other template functions, refer to [notification template functions](ref:notification-templates-namespaced-functions).
+For detailed information about these and other template functions, refer to [notification template functions](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/template-notifications/reference/#namespaced-functions).
 
 Example using JSON helper functions:
 

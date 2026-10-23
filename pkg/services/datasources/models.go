@@ -1,6 +1,7 @@
 package datasources
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"time"
@@ -76,12 +77,26 @@ type DataSource struct {
 	isSecureSocksDSProxyEnabled *bool `xorm:"-"`
 }
 
+func IsSecureSocksDSProxyEnabled(jsonData map[string]any) bool {
+	v, _ := jsonData["enableSecureSocksProxy"].(bool)
+	return v
+}
+
 func (ds *DataSource) IsSecureSocksDSProxyEnabled() bool {
 	if ds.isSecureSocksDSProxyEnabled == nil {
-		enabled := ds.JsonData != nil && ds.JsonData.Get("enableSecureSocksProxy").MustBool(false)
+		enabled := IsSecureSocksDSProxyEnabled(ds.JsonDataMap())
 		ds.isSecureSocksDSProxyEnabled = &enabled
 	}
 	return *ds.isSecureSocksDSProxyEnabled
+}
+
+// JsonDataMap returns JsonData as a map[string]any, or empty map if unset
+func (ds *DataSource) JsonDataMap() map[string]any {
+	def := map[string]any{}
+	if ds.JsonData == nil {
+		return def
+	}
+	return ds.JsonData.MustMap(def)
 }
 
 type TeamHTTPHeadersJSONData struct {
@@ -89,15 +104,21 @@ type TeamHTTPHeadersJSONData struct {
 }
 
 type TeamHTTPHeaders struct {
-	Headers        TeamHeaders `json:"headers"`
-	RestrictAccess bool        `json:"restrictAccess"`
+	Headers TeamHeaders `json:"headers"`
 }
 
-type TeamHeaders map[string][]TeamHTTPHeader
+type TeamHeaders map[string][]AccessRule
 
-type TeamHTTPHeader struct {
+// a header is composed of a key:value. the key is the headername X-Prom-Label-Policy
+// a header value is composed of a tenantID:rule. the tenantID is the tenantID of the tenant that the rule is for.
+// the value is taken from https://grafana.com/docs/mimir/latest/manage/tools/mimirtool/#acl
+// and each rule is
+type AccessRule struct {
 	Header string `json:"header"`
-	Value  string `json:"value"`
+	// the LBACRule is the rule that is used to restrict access to the data source
+	// currently <tenantid>:<promqlrule>
+	// LBAC rule (e.g., "tenant:{ label=value }")
+	LBACRule string `json:"value"`
 }
 
 func GetTeamHTTPHeaders(jsonData *simplejson.Json) (*TeamHTTPHeaders, error) {
@@ -126,25 +147,13 @@ func GetTeamHTTPHeaders(jsonData *simplejson.Json) (*TeamHTTPHeaders, error) {
 			if header.Header == "" {
 				return nil, errors.New("header name is missing or empty")
 			}
-			if header.Value == "" {
+			if header.LBACRule == "" {
 				return nil, errors.New("header value is missing or empty")
 			}
 		}
 	}
 
 	return teamHTTPHeaders, nil
-}
-
-// AllowedCookies parses the jsondata.keepCookies and returns a list of
-// allowed cookies, otherwise an empty list.
-func (ds DataSource) AllowedCookies() []string {
-	if ds.JsonData != nil {
-		if keepCookies := ds.JsonData.Get("keepCookies"); keepCookies != nil {
-			return keepCookies.MustStringArray()
-		}
-	}
-
-	return []string{}
 }
 
 // ----------------------
@@ -175,6 +184,10 @@ type AddDataSourceCommand struct {
 	ReadOnly                bool              `json:"-"`
 	EncryptedSecureJsonData map[string][]byte `json:"-"`
 	UpdateSecretFn          UpdateSecretFn    `json:"-"`
+	// BeforeSave runs after a UID is assigned (client-provided or generated)
+	// and before insert, in the same DB transaction. Used for fields that must
+	// bind to the final UID (e.g. grafanaExternalId).
+	BeforeSave func(ctx context.Context, uid string, jsonData *simplejson.Json) `json:"-"`
 }
 
 // Also acts as api DTO
@@ -207,6 +220,8 @@ type UpdateDataSourceCommand struct {
 	EncryptedSecureJsonData map[string][]byte `json:"-"`
 	UpdateSecretFn          UpdateSecretFn    `json:"-"`
 	IgnoreOldSecureJsonData bool              `json:"-"`
+	// BeforeSave runs before the update is persisted, in the same DB transaction.
+	BeforeSave func(ctx context.Context, uid string, jsonData *simplejson.Json) `json:"-"`
 
 	AllowLBACRuleUpdates bool `json:"-"`
 }
@@ -240,7 +255,6 @@ type UpdateSecretFn func() error
 type GetDataSourcesQuery struct {
 	OrgID           int64
 	DataSourceLimit int
-	User            *user.SignedInUser
 }
 
 type GetAllDataSourcesQuery struct{}
@@ -265,6 +279,10 @@ type GetDataSourceQuery struct {
 
 	// Required
 	OrgID int64
+
+	// Type is the datasource plugin type (e.g. "prometheus", "loki").
+	// When set alongside UID, it scopes the lookup to that specific type.
+	Type string
 }
 
 type DatasourcesPermissionFilterQuery struct {

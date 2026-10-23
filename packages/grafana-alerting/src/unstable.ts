@@ -3,28 +3,21 @@
  */
 
 // Contact Points
-export * from './grafana/api/v0alpha1/types';
-export { useListContactPoints } from './grafana/contactPoints/hooks/v0alpha1/useContactPoints';
+export * from './grafana/api/notifications/v1beta1/types';
+export { useListContactPoints } from './grafana/contactPoints/hooks/v1beta1/useContactPoints';
 export { ContactPointSelector } from './grafana/contactPoints/components/ContactPointSelector/ContactPointSelector';
-export { getContactPointDescription } from './grafana/contactPoints/utils';
+export {
+  getContactPointDescription,
+  getContactPointInUse,
+  getContactPointInUseRoutes,
+  getContactPointInUseRules,
+} from './grafana/contactPoints/utils';
 
-// Notification Policies
-export {
-  useMatchInstancesToRouteTrees,
-  matchInstancesToRouteTrees,
-  type RouteMatch,
-  type InstanceMatchResult,
-} from './grafana/notificationPolicies/hooks/useMatchPolicies';
-export {
-  type TreeMatch,
-  type RouteMatchResult,
-  matchInstancesToRoute,
-  findMatchingRoutes,
-  getInheritedProperties,
-  computeInheritedTree,
-} from './grafana/notificationPolicies/utils';
-export { USER_DEFINED_TREE_NAME } from './grafana/notificationPolicies/consts';
-export * from './grafana/notificationPolicies/types';
+// Notification Policies / Routing Trees
+export { useListRoutingTrees } from './grafana/notificationPolicies/hooks/useRoutingTrees';
+export { useMatchInstancesToSpecificRouteTree } from './grafana/notificationPolicies/hooks/useMatchPolicies';
+export { RoutingTreeSelector } from './grafana/notificationPolicies/components/RoutingTreeSelector/RoutingTreeSelector';
+export { isDefaultRoutingTreeName, isDefaultRoutingTree } from './grafana/notificationPolicies/routingTrees';
 
 // Rules
 export { StateText } from './grafana/rules/components/state/StateText';
@@ -36,5 +29,7 @@ export { AlertLabels, type AlertLabelsProps } from './grafana/rules/components/l
 export { type LabelMatcher, type Label } from './grafana/matchers/types';
 export { matchLabelsSet, matchLabels, isLabelMatch, type LabelMatchDetails } from './grafana/matchers/utils';
 
-// Low-level API hooks
-export { alertingAPI } from './grafana/api/v0alpha1/api.gen';
+// API endpoints
+export { generatedAPI as notificationsAPIv1beta1 } from '@grafana/api-clients/rtkq/notifications.alerting/v1beta1';
+export { generatedAPI as rulesAPIv0alpha1 } from '@grafana/api-clients/rtkq/rules.alerting/v0alpha1';
+export { generatedAPI as historianAPIv0alpha1 } from '@grafana/api-clients/rtkq/historian.alerting/v0alpha1';

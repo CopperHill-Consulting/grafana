@@ -1,6 +1,6 @@
-import { CSSProperties, ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 
-import { SelectableValue } from './select';
+import { type SelectableValue } from './select';
 
 export enum ActionType {
   Fetch = 'fetch',
@@ -25,6 +25,7 @@ export interface Action {
  */
 export interface ActionModel<T = any> {
   title: string;
+  type?: ActionType;
   onClick: (event: any, origin?: any, actionVars?: ActionVariableInput) => void;
   confirmation: (actionVars?: ActionVariableInput) => ReactNode;
   oneClick?: boolean;

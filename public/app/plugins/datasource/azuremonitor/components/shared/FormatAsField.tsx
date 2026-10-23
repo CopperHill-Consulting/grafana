@@ -1,13 +1,13 @@
 import { useCallback, useMemo } from 'react';
 import { useEffectOnce } from 'react-use';
 
-import { SelectableValue } from '@grafana/data';
+import { type SelectableValue } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { Select } from '@grafana/ui';
 
+import { type ResultFormat } from '../../dataquery.gen';
 import { selectors } from '../../e2e/selectors';
-import { ResultFormat } from '../../types/query';
-import { FormatAsFieldProps } from '../../types/types';
+import { type FormatAsFieldProps } from '../../types/types';
 
 import { Field } from './Field';
 

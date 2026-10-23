@@ -2,6 +2,7 @@ package git
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -24,30 +26,102 @@ import (
 	"github.com/grafana/nanogit/log"
 	"github.com/grafana/nanogit/options"
 	"github.com/grafana/nanogit/protocol"
+	"github.com/grafana/nanogit/protocol/client"
 	"github.com/grafana/nanogit/protocol/hash"
+	"github.com/grafana/nanogit/retry"
 )
 
+// ErrNoBranches is returned when a repository has no branches (e.g., a completely empty repository).
+var ErrNoBranches = errors.New("no branches found in repository")
+
 type RepositoryConfig struct {
-	URL       string
-	Branch    string
-	TokenUser string
-	Token     common.RawSecureValue
-	Path      string
+	URL              string
+	Branch           string
+	TokenUser        string
+	Token            common.RawSecureValue
+	CommitSigningKey common.RawSecureValue
+	SigningMethod    provisioning.SigningMethod
+	SMIMECertificate string
+	Path             string
+	SkipGitSuffix    bool
+}
+
+// Hardcoded git response byte limits. These cap how many bytes nanogit will
+// read from a git server per operation class so a malicious or misbehaving
+// server cannot exhaust client memory: an oversized response is aborted
+// mid-read rather than buffered in full. They are intentionally hardcoded and
+// self-contained here (rather than exposed as configurable settings) to keep
+// this a minimal security patch. The defaults are deliberately generous so
+// valid traffic is never rejected while memory stays bounded against abuse.
+const (
+	// maxFileContentBytes caps decoded single-file content (blob/tree/commit,
+	// used by GetBlobByPath). It also seeds the post-read content-size check
+	// (r.maxBytes). Provisioning reads whole dashboard JSON files through this
+	// path and large dashboards can legitimately reach ~20 MiB, so the cap is
+	// set well above that to avoid rejecting valid content while still bounding
+	// per-fetch memory.
+	maxFileContentBytes = 32 * 1024 * 1024 // 32 MiB
+
+	// maxSingleObjectWireBytes caps the git-upload-pack wire response for a
+	// single-object fetch. It is larger than maxFileContentBytes to leave room
+	// for packfile framing (headers/trailer, zlib wrapping) and pkt-line
+	// sideband framing, so an incompressible file at the content limit is not
+	// aborted on the wire. The overhead is well under 1% of the payload plus a
+	// small fixed component; this stays far above that while keeping per-fetch
+	// memory to roughly the file size.
+	maxSingleObjectWireBytes = maxFileContentBytes + maxFileContentBytes/16 + 4096
+
+	// maxBulkFetchBytes caps multi-object fetches (recursive tree listings,
+	// commit comparisons, staged-writer fetch). It is much larger than the
+	// per-file cap because those operations legitimately return many objects
+	// for large repositories.
+	maxBulkFetchBytes = 1024 * 1024 * 1024 // 1 GiB
+
+	// maxRefsBytes caps ref-listing and protocol-detection responses
+	// (ListRefs, GetRef).
+	maxRefsBytes = 10 * 1024 * 1024 // 10 MiB
+
+	// maxPushResponseBytes caps the git-receive-pack reply to a push
+	// (CreateRef, staged Push).
+	maxPushResponseBytes = 10 * 1024 * 1024 // 10 MiB
+)
+
+// nanogitLimits is the nanogit representation of the hardcoded caps above.
+// MaxObjectDecodedBytes is set to the per-file content cap rather than left at
+// nanogit's built-in 10 MiB default, which would otherwise reject a legitimate
+// large (~20 MiB) dashboard object during packfile decode. Keeping it aligned
+// with maxFileContentBytes preserves the decompression-bomb defense (it stays
+// finite) while allowing the same content the wire and post-read caps allow.
+var nanogitLimits = options.Limits{
+	SingleObjectFetchMaxBytes:   maxSingleObjectWireBytes,
+	MultiObjectFetchMaxBytes:    maxBulkFetchBytes,
+	RefsMetadataMaxBytes:        maxRefsBytes,
+	ReceivePackResponseMaxBytes: maxPushResponseBytes,
+	MaxObjectDecodedBytes:       maxFileContentBytes,
 }
 
 // Make sure all public functions of this struct call the (*gitRepository).logger function, to ensure the Git repo details are included.
 type gitRepository struct {
-	config    *provisioning.Repository
-	gitConfig RepositoryConfig
-	client    nanogit.Client
+	config        *provisioning.Repository
+	gitConfig     RepositoryConfig
+	client        nanogit.Client
+	writerOptions []nanogit.WriterOption
+	maxBytes      atomic.Int64
 }
 
 func NewRepository(
-	ctx context.Context,
+	_ context.Context,
 	config *provisioning.Repository,
 	gitConfig RepositoryConfig,
 ) (GitRepository, error) {
-	var opts []options.Option
+	opts := []options.Option{options.WithCapabilityNegotiation()}
+	if gitConfig.SkipGitSuffix {
+		opts = append(opts, options.WithoutGitSuffix())
+	}
+	// Push the byte limits into nanogit so a malicious or misbehaving server
+	// cannot exhaust client memory: oversized responses are aborted mid-read
+	// rather than buffered in full.
+	opts = append(opts, options.WithLimits(nanogitLimits))
 	if !gitConfig.Token.IsZero() {
 		tokenUser := gitConfig.TokenUser
 		if tokenUser == "" {
@@ -62,11 +136,28 @@ func NewRepository(
 		return nil, fmt.Errorf("create nanogit client: %w", err)
 	}
 
-	return &gitRepository{
-		config:    config,
-		gitConfig: gitConfig,
-		client:    client,
-	}, nil
+	var writerOptions []nanogit.WriterOption
+	if gitConfig.SigningMethod != "" {
+		if gitConfig.CommitSigningKey.IsZero() {
+			return nil, fmt.Errorf("signing method %q requires secure.commitSigningKey", gitConfig.SigningMethod)
+		}
+		signer, err := signingOption(gitConfig)
+		if err != nil {
+			return nil, fmt.Errorf("configure commit signing: %w", err)
+		}
+		writerOptions = append(writerOptions, signer)
+	}
+
+	repo := &gitRepository{
+		config:        config,
+		gitConfig:     gitConfig,
+		client:        client,
+		writerOptions: writerOptions,
+	}
+	// Mirror the nanogit wire-level cap with the post-read content check
+	// (nanogit caps wire bytes; this still catches decompressed content size).
+	repo.maxBytes.Store(maxFileContentBytes)
+	return repo, nil
 }
 
 func (r *gitRepository) URL() string {
@@ -77,44 +168,71 @@ func (r *gitRepository) Branch() string {
 	return r.gitConfig.Branch
 }
 
-func (r *gitRepository) Config() *provisioning.Repository {
-	return r.config
+func (r *gitRepository) SetBranch(branch string) {
+	r.gitConfig.Branch = branch
 }
 
-// Validate implements provisioning.Repository.
-func (r *gitRepository) Validate() (list field.ErrorList) {
-	cfg := r.gitConfig
+func (r *gitRepository) GetCurrentBranch() string {
+	return r.gitConfig.Branch
+}
 
-	t := string(r.config.Spec.Type)
-	if cfg.URL == "" {
-		list = append(list, field.Required(field.NewPath("spec", t, "url"), "a git url is required"))
-	} else {
-		if !isValidGitURL(cfg.URL) {
-			list = append(list, field.Invalid(field.NewPath("spec", t, "url"), cfg.URL, "invalid git URL format"))
+func (r *gitRepository) GetDefaultBranch(ctx context.Context) (string, error) {
+	ctx, logger := r.withGitContext(ctx, "")
+	logger.Info("get default branch")
+
+	// Get all refs to find the default branch
+	refs, err := r.client.ListRefs(ctx)
+	if err != nil {
+		return "", wrapNanogitError("list refs", err)
+	}
+
+	var hasMain, hasMaster bool
+	var firstBranch string
+
+	// Single pass through refs to find main, master, or first branch alphabetically
+	for _, ref := range refs {
+		if !strings.HasPrefix(ref.Name, "refs/heads/") {
+			continue
+		}
+
+		branchName := strings.TrimPrefix(ref.Name, "refs/heads/")
+
+		// Check for main or master
+		switch branchName {
+		case "main":
+			hasMain = true
+		case "master":
+			hasMaster = true
+		}
+
+		// Track first branch alphabetically as fallback
+		if firstBranch == "" || branchName < firstBranch {
+			firstBranch = branchName
 		}
 	}
-	if cfg.Branch == "" {
-		list = append(list, field.Required(field.NewPath("spec", t, "branch"), "a git branch is required"))
-	} else if !IsValidGitBranchName(cfg.Branch) {
-		list = append(list, field.Invalid(field.NewPath("spec", t, "branch"), cfg.Branch, "invalid branch name"))
+
+	// No branches found
+	if firstBranch == "" {
+		return "", ErrNoBranches
 	}
 
-	// Readonly repositories may not need a token (if public)
-	if len(r.config.Spec.Workflows) > 0 {
-		if cfg.Token == "" && r.config.Secure.Token.IsZero() {
-			list = append(list, field.Required(field.NewPath("secure", "token"), "a git access token is required"))
-		}
+	// Prefer main, then master, then first branch alphabetically
+	if hasMain {
+		return "main", nil
+	}
+	if hasMaster {
+		return "master", nil
 	}
 
-	if err := safepath.IsSafe(cfg.Path); err != nil {
-		list = append(list, field.Invalid(field.NewPath("spec", t, "path"), cfg.Path, err.Error()))
-	}
+	// If neither main nor master exists, return the first branch alphabetically.
+	// This provides deterministic behavior when working with repositories that use
+	// non-standard default branch names (e.g., "develop", "trunk", custom names).
+	// Users can always change the branch afterward or specify it directly in the repository configuration.
+	return firstBranch, nil
+}
 
-	if safepath.IsAbs(cfg.Path) {
-		list = append(list, field.Invalid(field.NewPath("spec", t, "path"), cfg.Path, "path must be relative"))
-	}
-
-	return list
+func (r *gitRepository) Config() *provisioning.Repository {
+	return r.config
 }
 
 func isValidGitURL(gitURL string) bool {
@@ -124,8 +242,8 @@ func isValidGitURL(gitURL string) bool {
 		return false
 	}
 
-	// Must be HTTPS
-	if parsed.Scheme != "https" {
+	// Must be HTTPS or HTTP (HTTP allowed for local development)
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return false
 	}
 
@@ -144,11 +262,42 @@ func isValidGitURL(gitURL string) bool {
 
 // Test implements provisioning.Repository.
 func (r *gitRepository) Test(ctx context.Context) (*provisioning.TestResults, error) {
-	ctx, _ = r.logger(ctx, "")
+	ctx, logger := r.withGitContext(ctx, "")
+	logger.Info("test repository connection")
 
 	t := string(r.config.Spec.Type)
 
-	if ok, err := r.client.IsAuthorized(ctx); err != nil || !ok {
+	// In case the branch is empty
+	if r.GetCurrentBranch() == "" {
+		branch, err := r.GetDefaultBranch(ctx)
+		if err != nil {
+			if errors.Is(err, ErrNoBranches) {
+				return &provisioning.TestResults{
+					Code:    http.StatusBadRequest,
+					Success: false,
+					Errors: []provisioning.ErrorDetails{{
+						Type:   metav1.CauseTypeFieldValueInvalid,
+						Field:  field.NewPath("spec", t, "branch").String(),
+						Detail: "repository has no branches; push at least one commit before configuring sync",
+					}},
+				}, nil
+			}
+			return nil, err
+		}
+
+		r.SetBranch(branch)
+	}
+
+	// Check authorization
+	if ok, err := r.client.CanRead(ctx); err != nil || !ok {
+		// Map nanogit errors to repository errors for proper HTTP status codes
+		if err != nil {
+			err = mapNanogitError(err)
+			if result := checkHTTPError(err, field.NewPath("secure", "token")); result != nil {
+				return result, nil
+			}
+		}
+
 		detail := "not authorized"
 		if err != nil {
 			detail = fmt.Sprintf("failed check if authorized: %v", err)
@@ -165,7 +314,16 @@ func (r *gitRepository) Test(ctx context.Context) (*provisioning.TestResults, er
 		}, nil
 	}
 
+	// Check if repository exists
 	if ok, err := r.client.RepoExists(ctx); err != nil || !ok {
+		// Map nanogit errors to repository errors for proper HTTP status codes
+		if err != nil {
+			err = mapNanogitError(err)
+			if result := checkHTTPError(err, field.NewPath("spec", t, "url")); result != nil {
+				return result, nil
+			}
+		}
+
 		detail := "repository not found"
 		if err != nil {
 			detail = fmt.Sprintf("failed check if repository exists: %v", err)
@@ -185,8 +343,12 @@ func (r *gitRepository) Test(ctx context.Context) (*provisioning.TestResults, er
 	// Test basic connectivity by getting the branch reference
 	_, err := r.client.GetRef(ctx, fmt.Sprintf("refs/heads/%s", r.gitConfig.Branch))
 	if err != nil {
-		detail := "branch not found"
+		// Check for branch not found first (before mapping)
 		if errors.Is(err, nanogit.ErrObjectNotFound) {
+			detail := fmt.Sprintf("branch %q not found", r.gitConfig.Branch)
+			if _, dbErr := r.GetDefaultBranch(ctx); errors.Is(dbErr, ErrNoBranches) {
+				detail = "repository has no branches; push at least one commit before configuring sync"
+			}
 			return &provisioning.TestResults{
 				Code:    http.StatusBadRequest,
 				Success: false,
@@ -198,7 +360,13 @@ func (r *gitRepository) Test(ctx context.Context) (*provisioning.TestResults, er
 			}, nil
 		}
 
-		detail = fmt.Sprintf("failed to check if branch exists: %v", err)
+		// Map nanogit errors to repository errors for proper HTTP status codes
+		err = mapNanogitError(err)
+		if result := checkHTTPError(err, field.NewPath("spec", t, "branch")); result != nil {
+			return result, nil
+		}
+
+		detail := fmt.Sprintf("failed to check if branch exists: %v", err)
 
 		return &provisioning.TestResults{
 			Code:    http.StatusBadRequest,
@@ -211,6 +379,42 @@ func (r *gitRepository) Test(ctx context.Context) (*provisioning.TestResults, er
 		}, nil
 	}
 
+	// Check write permissions if workflows are configured (repository is not read-only)
+	if len(r.config.Spec.Workflows) > 0 {
+		ok, err := r.client.CanWrite(ctx)
+
+		// Handle CanWrite errors
+		if err != nil {
+			err = mapNanogitError(err)
+			if result := checkHTTPError(err, field.NewPath("secure", "token")); result != nil {
+				return result, nil
+			}
+
+			return &provisioning.TestResults{
+				Code:    http.StatusForbidden,
+				Success: false,
+				Errors: []provisioning.ErrorDetails{{
+					Type:   metav1.CauseTypeFieldValueInvalid,
+					Field:  field.NewPath("secure", "token").String(),
+					Detail: fmt.Sprintf("failed to check write permission: %v", err),
+				}},
+			}, nil
+		}
+
+		// Check if write permission was denied
+		if !ok {
+			return &provisioning.TestResults{
+				Code:    http.StatusForbidden,
+				Success: false,
+				Errors: []provisioning.ErrorDetails{{
+					Type:   metav1.CauseTypeFieldValueInvalid,
+					Field:  field.NewPath("secure", "token").String(),
+					Detail: "write permission denied",
+				}},
+			}, nil
+		}
+	}
+
 	return &provisioning.TestResults{
 		Code:    http.StatusOK,
 		Success: true,
@@ -219,7 +423,8 @@ func (r *gitRepository) Test(ctx context.Context) (*provisioning.TestResults, er
 
 // Read implements provisioning.Repository.
 func (r *gitRepository) Read(ctx context.Context, filePath, ref string) (*repository.FileInfo, error) {
-	ctx, _ = r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("read repository path", "path", filePath)
 	finalPath := safepath.Join(r.gitConfig.Path, filePath)
 
 	// Resolve ref to commit hash
@@ -232,18 +437,20 @@ func (r *gitRepository) Read(ctx context.Context, filePath, ref string) (*reposi
 	// TODO: Fix GetTree in nanogit as it does not work commit hash
 	commit, err := r.client.GetCommit(ctx, refHash)
 	if err != nil {
-		return nil, fmt.Errorf("get commit: %w", err)
+		return nil, wrapNanogitError("get commit", err)
 	}
 
 	// Check if the path represents a directory
 	if safepath.IsDir(filePath) {
+		// Strip trailing slash for git tree lookup to avoid empty path components
+		finalPath = strings.TrimSuffix(finalPath, "/")
 		tree, err := r.client.GetTreeByPath(ctx, commit.Tree, finalPath)
 		if err != nil {
 			if errors.Is(err, nanogit.ErrObjectNotFound) {
 				return nil, repository.ErrFileNotFound
 			}
 
-			return nil, fmt.Errorf("get tree by path: %w", err)
+			return nil, wrapNanogitError("get tree by path", err)
 		}
 
 		return &repository.FileInfo{
@@ -259,7 +466,13 @@ func (r *gitRepository) Read(ctx context.Context, filePath, ref string) (*reposi
 			return nil, repository.ErrFileNotFound
 		}
 
-		return nil, fmt.Errorf("read blob: %w", err)
+		return nil, wrapNanogitError("read blob", err)
+	}
+
+	if max := r.maxBytes.Load(); max > 0 && int64(len(blob.Content)) > max {
+		return nil, apierrors.NewRequestEntityTooLargeError(
+			fmt.Sprintf("file %q is %d bytes; max allowed is %d bytes", filePath, len(blob.Content), max),
+		)
 	}
 
 	return &repository.FileInfo{
@@ -270,8 +483,13 @@ func (r *gitRepository) Read(ctx context.Context, filePath, ref string) (*reposi
 	}, nil
 }
 
+func (r *gitRepository) WithMaxFileSize(maxBytes int64) {
+	r.maxBytes.Store(maxBytes)
+}
+
 func (r *gitRepository) ReadTree(ctx context.Context, ref string) ([]repository.FileTreeEntry, error) {
-	ctx, _ = r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("read repository tree")
 
 	// Resolve ref to commit hash
 	refHash, err := r.resolveRefToHash(ctx, ref)
@@ -285,7 +503,7 @@ func (r *gitRepository) ReadTree(ctx context.Context, ref string) ([]repository.
 		if errors.Is(err, nanogit.ErrObjectNotFound) {
 			return nil, repository.ErrRefNotFound
 		}
-		return nil, fmt.Errorf("get flat tree: %w", err)
+		return nil, wrapNanogitError("get flat tree", err)
 	}
 
 	entries := make([]repository.FileTreeEntry, 0, len(tree.Entries))
@@ -319,15 +537,16 @@ func (r *gitRepository) Create(ctx context.Context, path, ref string, data []byt
 	if ref == "" {
 		ref = r.gitConfig.Branch
 	}
-	ctx, _ = r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("create repository path", "path", path)
 	branchRef, err := r.ensureBranchExists(ctx, ref)
 	if err != nil {
 		return err
 	}
 
-	writer, err := r.client.NewStagedWriter(ctx, branchRef)
+	writer, err := r.client.NewStagedWriter(ctx, branchRef, r.writerOptions...)
 	if err != nil {
-		return fmt.Errorf("create staged writer: %w", err)
+		return wrapNanogitError("create staged writer", err)
 	}
 
 	if err := r.create(ctx, path, data, writer); err != nil {
@@ -354,7 +573,7 @@ func (r *gitRepository) create(ctx context.Context, path string, data []byte, wr
 			return repository.ErrFileAlreadyExists
 		}
 
-		return fmt.Errorf("create blob: %w", err)
+		return wrapNanogitError("create blob", err)
 	}
 
 	return nil
@@ -364,7 +583,8 @@ func (r *gitRepository) Update(ctx context.Context, path, ref string, data []byt
 	if ref == "" {
 		ref = r.gitConfig.Branch
 	}
-	ctx, _ = r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("update repository path", "path", path)
 
 	// Check if trying to update a directory
 	if safepath.IsDir(path) {
@@ -376,9 +596,9 @@ func (r *gitRepository) Update(ctx context.Context, path, ref string, data []byt
 		return err
 	}
 	// Create a staged writer
-	writer, err := r.client.NewStagedWriter(ctx, branchRef)
+	writer, err := r.client.NewStagedWriter(ctx, branchRef, r.writerOptions...)
 	if err != nil {
-		return fmt.Errorf("create staged writer: %w", err)
+		return wrapNanogitError("create staged writer", err)
 	}
 
 	if err := r.update(ctx, path, data, writer); err != nil {
@@ -400,7 +620,7 @@ func (r *gitRepository) update(ctx context.Context, path string, data []byte, wr
 			return repository.ErrFileNotFound
 		}
 
-		return fmt.Errorf("update blob: %w", err)
+		return wrapNanogitError("update blob", err)
 	}
 
 	return nil
@@ -411,9 +631,10 @@ func (r *gitRepository) Write(ctx context.Context, path string, ref string, data
 		ref = r.gitConfig.Branch
 	}
 
-	ctx, _ = r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("write repository path", "path", path)
 	info, err := r.Read(ctx, path, ref)
-	if err != nil && !(errors.Is(err, repository.ErrFileNotFound)) {
+	if err != nil && !errors.Is(err, repository.ErrFileNotFound) {
 		return fmt.Errorf("check if file exists before writing: %w", err)
 	}
 	if err == nil {
@@ -431,16 +652,17 @@ func (r *gitRepository) Delete(ctx context.Context, path, ref, comment string) e
 	if ref == "" {
 		ref = r.gitConfig.Branch
 	}
-	ctx, _ = r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("delete repository path", "path", path)
 
 	branchRef, err := r.ensureBranchExists(ctx, ref)
 	if err != nil {
 		return err
 	}
 	// Create a staged writer
-	writer, err := r.client.NewStagedWriter(ctx, branchRef)
+	writer, err := r.client.NewStagedWriter(ctx, branchRef, r.writerOptions...)
 	if err != nil {
-		return fmt.Errorf("create staged writer: %w", err)
+		return wrapNanogitError("create staged writer", err)
 	}
 
 	if err := r.delete(ctx, path, writer); err != nil {
@@ -454,7 +676,8 @@ func (r *gitRepository) Move(ctx context.Context, oldPath, newPath, ref, comment
 	if ref == "" {
 		ref = r.gitConfig.Branch
 	}
-	ctx, _ = r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("move repository path", "old_path", oldPath, "new_path", newPath)
 
 	branchRef, err := r.ensureBranchExists(ctx, ref)
 	if err != nil {
@@ -462,9 +685,9 @@ func (r *gitRepository) Move(ctx context.Context, oldPath, newPath, ref, comment
 	}
 
 	// Create a staged writer
-	writer, err := r.client.NewStagedWriter(ctx, branchRef)
+	writer, err := r.client.NewStagedWriter(ctx, branchRef, r.writerOptions...)
 	if err != nil {
-		return fmt.Errorf("create staged writer: %w", err)
+		return wrapNanogitError("create staged writer", err)
 	}
 
 	if err := r.move(ctx, oldPath, newPath, writer); err != nil {
@@ -483,14 +706,14 @@ func (r *gitRepository) delete(ctx context.Context, path string, writer nanogit.
 			if errors.Is(err, nanogit.ErrObjectNotFound) {
 				return repository.ErrFileNotFound
 			}
-			return fmt.Errorf("delete tree: %w", err)
+			return wrapNanogitError("delete tree", err)
 		}
 	} else {
 		if _, err := writer.DeleteBlob(ctx, finalPath); err != nil {
 			if errors.Is(err, nanogit.ErrObjectNotFound) {
 				return repository.ErrFileNotFound
 			}
-			return fmt.Errorf("delete blob: %w", err)
+			return wrapNanogitError("delete blob", err)
 		}
 	}
 
@@ -514,7 +737,7 @@ func (r *gitRepository) move(ctx context.Context, oldPath, newPath string, write
 			if errors.Is(err, nanogit.ErrObjectAlreadyExists) {
 				return repository.ErrFileAlreadyExists
 			}
-			return fmt.Errorf("move tree: %w", err)
+			return wrapNanogitError("move tree", err)
 		}
 	} else if !safepath.IsDir(oldPath) && !safepath.IsDir(newPath) {
 		// For files, use MoveBlob operation
@@ -525,7 +748,7 @@ func (r *gitRepository) move(ctx context.Context, oldPath, newPath string, write
 			if errors.Is(err, nanogit.ErrObjectAlreadyExists) {
 				return repository.ErrFileAlreadyExists
 			}
-			return fmt.Errorf("move blob: %w", err)
+			return wrapNanogitError("move blob", err)
 		}
 	} else {
 		// Mismatched types (file to directory or vice versa)
@@ -545,9 +768,11 @@ func (r *gitRepository) History(_ context.Context, _ string, _ string) ([]provis
 }
 
 func (r *gitRepository) ListRefs(ctx context.Context) ([]provisioning.RefItem, error) {
+	ctx, logger := r.withGitContext(ctx, "")
+	logger.Info("list refs")
 	refs, err := r.client.ListRefs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("list refs: %w", err)
+		return nil, wrapNanogitError("list refs", err)
 	}
 	refItems := make([]provisioning.RefItem, 0, len(refs))
 	for _, ref := range refs {
@@ -566,10 +791,11 @@ func (r *gitRepository) ListRefs(ctx context.Context) ([]provisioning.RefItem, e
 }
 
 func (r *gitRepository) LatestRef(ctx context.Context) (string, error) {
-	ctx, _ = r.logger(ctx, "")
+	ctx, logger := r.withGitContext(ctx, "")
+	logger.Info("get latest ref")
 	branchRef, err := r.client.GetRef(ctx, fmt.Sprintf("refs/heads/%s", r.gitConfig.Branch))
 	if err != nil {
-		return "", fmt.Errorf("get branch ref: %w", err)
+		return "", wrapNanogitError("get branch ref", err)
 	}
 
 	return branchRef.Hash.String(), nil
@@ -583,7 +809,8 @@ func (r *gitRepository) CompareFiles(ctx context.Context, base, ref string) ([]r
 		return nil, fmt.Errorf("ref cannot be empty")
 	}
 
-	ctx, logger := r.logger(ctx, ref)
+	ctx, logger := r.withGitContext(ctx, ref)
+	logger.Info("compare files")
 
 	// Resolve base ref to hash
 	var baseHash hash.Hash
@@ -591,6 +818,9 @@ func (r *gitRepository) CompareFiles(ctx context.Context, base, ref string) ([]r
 		var err error
 		baseHash, err = r.resolveRefToHash(ctx, base)
 		if err != nil {
+			if errors.Is(err, repository.ErrRefNotFound) {
+				return nil, &repository.CompareRefNotFoundError{Ref: base, Err: fmt.Errorf("resolve base ref: %w", err)}
+			}
 			return nil, fmt.Errorf("resolve base ref: %w", err)
 		}
 	}
@@ -598,14 +828,15 @@ func (r *gitRepository) CompareFiles(ctx context.Context, base, ref string) ([]r
 	// Resolve ref to hash
 	refHash, err := r.resolveRefToHash(ctx, ref)
 	if err != nil {
+		if errors.Is(err, repository.ErrRefNotFound) {
+			return nil, &repository.CompareRefNotFoundError{Ref: ref, Err: fmt.Errorf("resolve ref: %w", err)}
+		}
 		return nil, fmt.Errorf("resolve ref: %w", err)
 	}
 
-	// Get commit hashes for base and ref
-	// Compare commits using nanogit
-	files, err := r.client.CompareCommits(ctx, baseHash, refHash)
+	files, err := r.client.CompareCommits(ctx, baseHash, refHash, nanogit.WithRenameDetection())
 	if err != nil {
-		return nil, fmt.Errorf("compare commits: %w", err)
+		return nil, wrapNanogitError("compare commits", err)
 	}
 
 	changes := make([]repository.VersionedFileChange, 0)
@@ -631,9 +862,10 @@ func (r *gitRepository) CompareFiles(ctx context.Context, base, ref string) ([]r
 			}
 
 			changes = append(changes, repository.VersionedFileChange{
-				Path:   currentPath,
-				Ref:    ref,
-				Action: repository.FileActionUpdated,
+				Path:        currentPath,
+				Ref:         ref,
+				PreviousRef: base,
+				Action:      repository.FileActionUpdated,
 			})
 		case protocol.FileStatusDeleted:
 			currentPath, err := safepath.RelativeTo(f.Path, r.gitConfig.Path)
@@ -662,6 +894,51 @@ func (r *gitRepository) CompareFiles(ctx context.Context, base, ref string) ([]r
 				Ref:    ref,
 				Action: repository.FileActionUpdated,
 			})
+		case protocol.FileStatusRenamed:
+			newPath, newPathErr := safepath.RelativeTo(f.Path, r.gitConfig.Path)
+			oldPath, oldPathErr := safepath.RelativeTo(f.OldPath, r.gitConfig.Path)
+
+			// A rename may span the repository boundary: one side inside the
+			// configured path and the other outside. Resolve this upfront so
+			// the switch below only deals with the four semantic cases.
+			newInsidePath := newPathErr == nil
+			oldInsidePath := oldPathErr == nil
+
+			// Tree entries (directories) are emitted with trailing slashes so
+			// downstream code can identify them via safepath.IsDir.
+			if f.Type == protocol.ObjectTypeTree {
+				if newInsidePath {
+					newPath = safepath.EnsureTrailingSlash(newPath)
+				}
+				if oldInsidePath {
+					oldPath = safepath.EnsureTrailingSlash(oldPath)
+				}
+			}
+
+			switch {
+			case newInsidePath && oldInsidePath:
+				changes = append(changes, repository.VersionedFileChange{
+					Action:       repository.FileActionRenamed,
+					Path:         newPath,
+					PreviousPath: oldPath,
+					Ref:          ref,
+					PreviousRef:  base,
+				})
+			case newInsidePath:
+				changes = append(changes, repository.VersionedFileChange{
+					Action: repository.FileActionCreated,
+					Path:   newPath,
+					Ref:    ref,
+				})
+			case oldInsidePath:
+				changes = append(changes, repository.VersionedFileChange{
+					Action:       repository.FileActionDeleted,
+					Path:         oldPath,
+					PreviousPath: oldPath,
+					Ref:          ref,
+					PreviousRef:  base,
+				})
+			}
 		default:
 			logger.Error("ignore unhandled file", "file", f.Path, "status", string(f.Status))
 		}
@@ -671,11 +948,16 @@ func (r *gitRepository) CompareFiles(ctx context.Context, base, ref string) ([]r
 }
 
 func (r *gitRepository) Stage(ctx context.Context, opts repository.StageOptions) (repository.StagedRepository, error) {
+	ctx = ensureRetryContext(ctx)
+	ctx, logger := r.withGitContext(ctx, "")
+	logger.Info("stage repository")
 	return NewStagedGitRepository(ctx, r, opts)
 }
 
 // resolveRefToHash resolves a ref (branch name or commit hash) to a commit hash
 func (r *gitRepository) resolveRefToHash(ctx context.Context, ref string) (hash.Hash, error) {
+	ctx, _ = r.withGitContext(ctx, ref)
+
 	// Use default branch if ref is empty
 	if ref == "" {
 		ref = r.gitConfig.Branch
@@ -697,7 +979,7 @@ func (r *gitRepository) resolveRefToHash(ctx context.Context, ref string) (hash.
 		if errors.Is(err, nanogit.ErrObjectNotFound) {
 			return hash.Zero, fmt.Errorf("ref not found: %s: %w", ref, repository.ErrRefNotFound)
 		}
-		return hash.Zero, fmt.Errorf("get ref %s: %w", ref, err)
+		return hash.Zero, wrapNanogitError(fmt.Sprintf("get ref %s", ref), err)
 	}
 
 	return branchRef.Hash, nil
@@ -706,6 +988,8 @@ func (r *gitRepository) resolveRefToHash(ctx context.Context, ref string) (hash.
 // ensureBranchExists checks if a branch exists and creates it if it doesn't,
 // returning the branch reference to avoid duplicate GetRef calls
 func (r *gitRepository) ensureBranchExists(ctx context.Context, branchName string) (nanogit.Ref, error) {
+	ctx, _ = r.withGitContext(ctx, branchName)
+
 	if !IsValidGitBranchName(branchName) {
 		return nanogit.Ref{}, &apierrors.StatusError{
 			ErrStatus: metav1.Status{
@@ -725,14 +1009,14 @@ func (r *gitRepository) ensureBranchExists(ctx context.Context, branchName strin
 
 	// If error is not "ref not found", return the error
 	if !errors.Is(err, nanogit.ErrObjectNotFound) {
-		return nanogit.Ref{}, fmt.Errorf("check branch exists: %w", err)
+		return nanogit.Ref{}, wrapNanogitError("check branch exists", err)
 	}
 
 	// Branch doesn't exist, create it based on the configured branch
 	srcBranch := r.gitConfig.Branch
 	srcRef, err := r.client.GetRef(ctx, fmt.Sprintf("refs/heads/%s", srcBranch))
 	if err != nil {
-		return nanogit.Ref{}, fmt.Errorf("get source branch ref: %w", err)
+		return nanogit.Ref{}, wrapNanogitError("get source branch ref", err)
 	}
 
 	// Create the new branch reference
@@ -742,39 +1026,55 @@ func (r *gitRepository) ensureBranchExists(ctx context.Context, branchName strin
 	}
 
 	if err := r.client.CreateRef(ctx, newRef); err != nil {
-		return nanogit.Ref{}, fmt.Errorf("create branch: %w", err)
+		return nanogit.Ref{}, wrapNanogitError("create branch", err)
 	}
 
 	return newRef, nil
 }
 
 // createSignature creates author and committer signatures using the context signature if available,
-// falling back to default Grafana signature
+// falling back to default Grafana signature. The author is overridden by
+// spec.commit.authorName/Email when set. The committer is overridden by
+// spec.commit.signerName/Email when set; that identity must match the signing
+// key for providers to mark commits as Verified. The author is overridden by
+// the signer identity when spec.commit.signerIsAuthor is true.
 func (r *gitRepository) createSignature(ctx context.Context) (nanogit.Author, nanogit.Committer) {
 	author := nanogit.Author{
 		Name:  "Grafana",
 		Email: "noreply@grafana.com",
 		Time:  time.Now(),
 	}
-	committer := nanogit.Committer{
-		Name:  "Grafana",
-		Email: "noreply@grafana.com",
-		Time:  time.Now(),
-	}
 
 	// Use signature from context if available
-	if sig := repository.GetAuthorSignature(ctx); sig != nil && sig.Name != "" {
-		author.Name = sig.Name
-		author.Email = sig.Email
-		author.Time = sig.When
-		committer.Name = sig.Name
-		committer.Email = sig.Email
-		committer.Time = sig.When
+	if sig := repository.GetAuthorSignature(ctx); sig != nil {
+		if sig.Name != "" {
+			author.Name = sig.Name
+		}
+		if sig.Email != "" {
+			author.Email = sig.Email
+		}
+		if !sig.When.IsZero() {
+			author.Time = sig.When
+		}
 	}
 
 	if author.Time.IsZero() {
 		author.Time = time.Now()
-		committer.Time = time.Now()
+	}
+
+	if commit := r.config.Spec.Commit; commit != nil && (commit.AuthorName != "" || commit.AuthorEmail != "") {
+		author.Name = cmp.Or(commit.AuthorName, "Grafana")
+		author.Email = cmp.Or(commit.AuthorEmail, "noreply@grafana.com")
+	}
+
+	committer := nanogit.Committer(author)
+	if commit := r.config.Spec.Commit; commit != nil && (commit.SignerName != "" || commit.SignerEmail != "") {
+		committer.Name = cmp.Or(commit.SignerName, "Grafana")
+		committer.Email = cmp.Or(commit.SignerEmail, "noreply@grafana.com")
+		if commit.SignerIsAuthor {
+			author.Name = committer.Name
+			author.Email = committer.Email
+		}
 	}
 
 	return author, committer
@@ -798,13 +1098,63 @@ func (r *gitRepository) commitAndPush(ctx context.Context, writer nanogit.Staged
 	}
 
 	if err := writer.Push(ctx); err != nil {
-		return fmt.Errorf("push changes: %w", err)
+		return wrapNanogitError("push changes", err)
 	}
 
 	return nil
 }
 
-func (r *gitRepository) logger(ctx context.Context, ref string) (context.Context, logging.Logger) {
+// defaultGitRetrier returns a default retrier configuration for Git operations.
+//
+// Retry attempts will happen when:
+//   - Network errors occur: connection timeouts, temporary network failures, or connection errors
+//   - HTTP 5xx server errors: For GET and DELETE operations (idempotent)
+//   - HTTP 429 Too Many Requests: For all operations (rate limiting is temporary)
+//
+// The retry behavior:
+//   - Total attempts: 8 (1 initial attempt + 7 retries)
+//   - Initial delay: 100ms before the first retry
+//   - Exponential backoff: delay doubles after each failed attempt (100ms → 200ms → 400ms → 800ms → 1.6s → 3.2s → 5s)
+//   - Maximum delay: capped at 5 seconds
+//   - Jitter: enabled to prevent thundering herd problems
+//   - Total retry window: approximately 10 seconds from first attempt to last retry
+//
+// All attempts will fail when:
+//   - The Git server is completely unavailable or unreachable
+//   - Network connectivity issues persist beyond the retry window (~10 seconds)
+//   - The server returns transient errors consistently for the entire retry duration
+//   - Context cancellation occurs before retries complete
+//
+// Non-transient errors (e.g., 4xx client errors except 429, authentication failures) are not retried and returned immediately.
+func defaultGitRetrier() *retry.ExponentialBackoffRetrier {
+	return retry.NewExponentialBackoffRetrier().
+		WithMaxAttempts(8). // 1 initial + 7 retries = 8 total attempts (~10s total retry window)
+		WithInitialDelay(100 * time.Millisecond).
+		WithMaxDelay(5 * time.Second).
+		WithMultiplier(2.0).
+		WithJitter()
+}
+
+// ensureRetryContext ensures that retry logic is configured in the context.
+// This function should be called at the beginning of all methods that make client calls
+// to guarantee retry logic is always present, regardless of context state.
+func ensureRetryContext(ctx context.Context) context.Context {
+	// Only add retrier if one doesn't already exist in the context
+	if retry.FromContext(ctx).MaxAttempts() <= 1 {
+		ctx = retry.ToContext(ctx, defaultGitRetrier())
+	}
+	return ctx
+}
+
+// withGitContext sets up the context with logging, git repository metadata, and retry logic.
+// This function should be called at the beginning of all public methods to ensure:
+// - Proper logging context with git repository details
+// - Retry logic is configured for all Git operations
+// - Context is properly prepared for nanogit client calls
+func (r *gitRepository) withGitContext(ctx context.Context, ref string) (context.Context, logging.Logger) {
+	// Ensure retry logic is configured first, before any early returns
+	ctx = ensureRetryContext(ctx)
+
 	logger := logging.FromContext(ctx)
 
 	type containsGit int
@@ -816,7 +1166,13 @@ func (r *gitRepository) logger(ctx context.Context, ref string) (context.Context
 	if ref == "" {
 		ref = r.gitConfig.Branch
 	}
-	logger = logger.With(slog.Group("git_repository", "url", r.gitConfig.URL, "ref", ref, "nanogit", true))
+	logger = logger.With(slog.Group("git_repository",
+		"url", r.gitConfig.URL,
+		"ref", ref,
+		"namespace", r.config.Namespace,
+		"repository_name", r.config.Name,
+		"nanogit", true,
+	))
 	ctx = logging.Context(ctx, logger)
 	// We want to ensure we don't add multiple git_repository keys. With doesn't deduplicate the keys...
 	ctx = context.WithValue(ctx, containsGitKey, true)
@@ -824,4 +1180,129 @@ func (r *gitRepository) logger(ctx context.Context, ref string) (context.Context
 	ctx = log.ToContext(ctx, logger)
 
 	return ctx, logger
+}
+
+// mapNanogitError converts nanogit-specific errors to repository errors.
+// This maintains the abstraction boundary and allows proper HTTP status code handling.
+func mapNanogitError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// Map structured nanogit errors to repository errors using the sentinel errors
+	// from the client package (nanogit re-exports error types but not sentinel errors)
+	if errors.Is(err, client.ErrUnauthorized) {
+		return repository.ErrUnauthorized
+	}
+	if errors.Is(err, client.ErrPermissionDenied) {
+		return repository.ErrPermissionDenied
+	}
+	if errors.Is(err, client.ErrServerUnavailable) {
+		return repository.ErrServerUnavailable
+	}
+
+	// nanogit aborted the read because the response exceeded a configured byte
+	// limit (e.g. a file larger than the per-file cap). Surface it as a 413 so
+	// callers and the API layer treat it the same as the post-read size check.
+	var tooLarge *client.ErrResponseTooLarge
+	if errors.As(err, &tooLarge) {
+		return apierrors.NewRequestEntityTooLargeError(
+			fmt.Sprintf("git response for %s operation exceeded the %d byte limit", tooLarge.Op, tooLarge.Limit),
+		)
+	}
+
+	// nanogit rejected an object whose decoded (inflated) size exceeds the
+	// decoded-object cap — a decompression-bomb defense that fires before the
+	// object is allocated. Surface it as a 413 like the wire-size limits.
+	var objectTooLarge *protocol.ObjectTooLargeError
+	if errors.As(err, &objectTooLarge) {
+		return apierrors.NewRequestEntityTooLargeError(
+			fmt.Sprintf("git object decoded size %d bytes exceeded the %d byte limit", objectTooLarge.Size, objectTooLarge.Limit),
+		)
+	}
+
+	// Return original error if not a known nanogit error
+	return err
+}
+
+// wrapNanogitError maps a nanogit error to a repository error and prefixes it
+// with the given operation context. It centralizes the repeated
+// fmt.Errorf("<op>: %w", mapNanogitError(err)) pattern so every nanogit call
+// site maps errors consistently.
+//
+// The capped-response error is the one exception: mapNanogitError turns it into
+// a 413 apierror whose status must survive to responsewriters.ErrorToAPIStatus,
+// which type-switches on the concrete error and does not unwrap fmt.Errorf
+// wrappers. Wrapping it would downgrade the status to a generic 500, so it is
+// returned unwrapped.
+func wrapNanogitError(prefix string, err error) error {
+	if err == nil {
+		return nil
+	}
+	mapped := mapNanogitError(err)
+	if apierrors.IsRequestEntityTooLargeError(mapped) {
+		return mapped
+	}
+	return fmt.Errorf("%s: %w", prefix, mapped)
+}
+
+// checkHTTPError checks if the error is a known HTTP error (401, 403, 413, 503) and
+// returns the appropriate TestResults. Returns nil if the error is not a known HTTP error.
+func checkHTTPError(err error, fieldPath *field.Path) *provisioning.TestResults {
+	if err == nil {
+		return nil
+	}
+
+	// A capped git operation (refs listing, branch fetch) aborted because the
+	// response exceeded a configured byte limit; mapNanogitError has already
+	// turned it into a 413. Surface that instead of the generic 400 fallback.
+	if apierrors.IsRequestEntityTooLargeError(err) {
+		return &provisioning.TestResults{
+			Code:    http.StatusRequestEntityTooLarge,
+			Success: false,
+			Errors: []provisioning.ErrorDetails{{
+				Type:   metav1.CauseTypeFieldValueInvalid,
+				Field:  fieldPath.String(),
+				Detail: err.Error(),
+			}},
+		}
+	}
+
+	if errors.Is(err, repository.ErrUnauthorized) {
+		return &provisioning.TestResults{
+			Code:    http.StatusUnauthorized,
+			Success: false,
+			Errors: []provisioning.ErrorDetails{{
+				Type:   metav1.CauseTypeFieldValueInvalid,
+				Field:  field.NewPath("secure", "token").String(),
+				Detail: "authentication failed",
+			}},
+		}
+	}
+
+	if errors.Is(err, repository.ErrPermissionDenied) {
+		return &provisioning.TestResults{
+			Code:    http.StatusForbidden,
+			Success: false,
+			Errors: []provisioning.ErrorDetails{{
+				Type:   metav1.CauseTypeFieldValueInvalid,
+				Field:  field.NewPath("secure", "token").String(),
+				Detail: "permission denied",
+			}},
+		}
+	}
+
+	if errors.Is(err, repository.ErrServerUnavailable) {
+		return &provisioning.TestResults{
+			Code:    http.StatusServiceUnavailable,
+			Success: false,
+			Errors: []provisioning.ErrorDetails{{
+				Type:   metav1.CauseTypeFieldValueInvalid,
+				Field:  fieldPath.String(),
+				Detail: fmt.Sprintf("server unavailable: %v", err),
+			}},
+		}
+	}
+
+	return nil
 }

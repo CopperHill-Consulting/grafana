@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/grafana/alerting/definition"
-
-	"github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
+	v1 "github.com/grafana/grafana/pkg/services/ngalert/notifier/legacy_storage/v1"
 	"github.com/grafana/grafana/pkg/util"
 )
 
@@ -15,17 +13,17 @@ type provenances = map[string]models.Provenance
 
 func (rev *ConfigRevision) DeleteReceiver(uid string) {
 	// Remove the receiver from the configuration.
-	rev.Config.AlertmanagerConfig.Receivers = slices.DeleteFunc(rev.Config.AlertmanagerConfig.Receivers, func(r *definitions.PostableApiReceiver) bool {
+	rev.Config.AlertmanagerConfig.Receivers = slices.DeleteFunc(rev.Config.AlertmanagerConfig.Receivers, func(r *v1.PostableApiReceiver) bool {
 		return NameToUid(r.GetName()) == uid
 	})
 }
 
 func (rev *ConfigRevision) CreateReceiver(receiver *models.Receiver) (*models.Receiver, error) {
-	exists := slices.ContainsFunc(rev.Config.AlertmanagerConfig.Receivers, func(r *definition.PostableApiReceiver) bool {
+	exists := slices.ContainsFunc(rev.Config.AlertmanagerConfig.Receivers, func(r *v1.PostableApiReceiver) bool {
 		return NameToUid(r.Name) == receiver.GetUID()
 	})
 	if exists {
-		return nil, ErrReceiverExists.Errorf("")
+		return nil, models.ErrReceiverExists.Errorf("")
 	}
 
 	if err := validateAndSetIntegrationUIDs(receiver); err != nil {
@@ -47,11 +45,11 @@ func (rev *ConfigRevision) CreateReceiver(receiver *models.Receiver) (*models.Re
 }
 
 func (rev *ConfigRevision) UpdateReceiver(receiver *models.Receiver) (*models.Receiver, error) {
-	existingIdx := slices.IndexFunc(rev.Config.AlertmanagerConfig.Receivers, func(postable *definitions.PostableApiReceiver) bool {
+	existingIdx := slices.IndexFunc(rev.Config.AlertmanagerConfig.Receivers, func(postable *v1.PostableApiReceiver) bool {
 		return NameToUid(postable.GetName()) == receiver.GetUID()
 	})
 	if existingIdx < 0 {
-		return nil, ErrReceiverNotFound.Errorf("")
+		return nil, models.ErrReceiverNotFound.Errorf("")
 	}
 
 	if err := validateAndSetIntegrationUIDs(receiver); err != nil {
@@ -74,13 +72,24 @@ func (rev *ConfigRevision) UpdateReceiver(receiver *models.Receiver) (*models.Re
 
 // ReceiverNameUsedByRoutes checks if a receiver name is used in any routes.
 func (rev *ConfigRevision) ReceiverNameUsedByRoutes(name string) bool {
-	return isReceiverInUse(name, []*definitions.Route{rev.Config.AlertmanagerConfig.Route})
+	if isReceiverInUse(name, []*v1.Route{rev.Config.AlertmanagerConfig.Route}) {
+		return true
+	}
+	for _, r := range rev.Config.ManagedRoutes {
+		if isReceiverInUse(name, []*v1.Route{r}) {
+			return true
+		}
+	}
+	return false
 }
 
 // ReceiverUseByName returns a map of receiver names to the number of times they are used in routes.
 func (rev *ConfigRevision) ReceiverUseByName() map[string]int {
 	m := make(map[string]int)
-	receiverUseCounts([]*definitions.Route{rev.Config.AlertmanagerConfig.Route}, m)
+	receiverUseCounts([]*v1.Route{rev.Config.AlertmanagerConfig.Route}, m)
+	for _, r := range rev.Config.ManagedRoutes {
+		receiverUseCounts([]*v1.Route{r}, m)
+	}
 	return m
 }
 
@@ -95,7 +104,7 @@ func (rev *ConfigRevision) GetReceiver(uid string, prov provenances) (*models.Re
 		}
 		return recv, nil
 	}
-	return nil, ErrReceiverNotFound.Errorf("")
+	return nil, models.ErrReceiverNotFound.Errorf("")
 }
 
 func (rev *ConfigRevision) GetReceivers(uids []string, prov provenances) ([]*models.Receiver, error) {
@@ -127,18 +136,13 @@ func (rev *ConfigRevision) GetReceiversNames() map[string]struct{} {
 	return result
 }
 
-// RenameReceiverInRoutes renames all references to a receiver in routes. Returns number of routes that were updated
-func (rev *ConfigRevision) RenameReceiverInRoutes(oldName, newName string) int {
-	return renameReceiverInRoute(oldName, newName, rev.Config.AlertmanagerConfig.Route)
-}
-
 // validateReceiver checks if the given receiver conflicts in name or integration UID with existing receivers.
 // We only check the receiver being modified to prevent existing issues from other receivers being reported.
-func (rev *ConfigRevision) validateReceiver(p *definitions.PostableApiReceiver) error {
+func (rev *ConfigRevision) validateReceiver(p *v1.PostableApiReceiver) error {
 	uids := make(map[string]struct{}, len(rev.Config.AlertmanagerConfig.Receivers))
 	for _, integrations := range p.GrafanaManagedReceivers {
 		if _, exists := uids[integrations.UID]; exists {
-			return MakeErrReceiverInvalid(fmt.Errorf("integration with UID %q already exists", integrations.UID))
+			return models.ErrReceiverInvalid(fmt.Errorf("integration with UID %q already exists", integrations.UID))
 		}
 		uids[integrations.UID] = struct{}{}
 	}
@@ -149,35 +153,20 @@ func (rev *ConfigRevision) validateReceiver(p *definitions.PostableApiReceiver) 
 			continue
 		}
 		if r.GetName() == p.GetName() {
-			return MakeErrReceiverInvalid(fmt.Errorf("name %q already exists", r.GetName()))
+			return models.ErrReceiverInvalid(fmt.Errorf("name %q already exists", r.GetName()))
 		}
 
 		for _, gr := range r.GrafanaManagedReceivers {
 			if _, exists := uids[gr.UID]; exists {
-				return MakeErrReceiverInvalid(fmt.Errorf("integration with UID %q already exists", gr.UID))
+				return models.ErrReceiverInvalid(fmt.Errorf("integration with UID %q already exists", gr.UID))
 			}
 		}
 	}
 	return nil
 }
 
-func renameReceiverInRoute(oldName, newName string, routes ...*definitions.Route) int {
-	if len(routes) == 0 {
-		return 0
-	}
-	updated := 0
-	for _, route := range routes {
-		if route.Receiver == oldName {
-			route.Receiver = newName
-			updated++
-		}
-		updated += renameReceiverInRoute(oldName, newName, route.Routes...)
-	}
-	return updated
-}
-
 // isReceiverInUse checks if a receiver is used in a route or any of its sub-routes.
-func isReceiverInUse(name string, routes []*definitions.Route) bool {
+func isReceiverInUse(name string, routes []*v1.Route) bool {
 	if len(routes) == 0 {
 		return false
 	}
@@ -193,7 +182,7 @@ func isReceiverInUse(name string, routes []*definitions.Route) bool {
 }
 
 // receiverUseCounts counts how many times receivers are used in a route or any of its sub-routes.
-func receiverUseCounts(routes []*definitions.Route, m map[string]int) {
+func receiverUseCounts(routes []*v1.Route, m map[string]int) {
 	if len(routes) == 0 {
 		return
 	}
@@ -209,7 +198,7 @@ func validateAndSetIntegrationUIDs(receiver *models.Receiver) error {
 		if integration.UID == "" {
 			integration.UID = util.GenerateShortUID()
 		} else if err := util.ValidateUID(integration.UID); err != nil {
-			return MakeErrReceiverInvalid(fmt.Errorf("integration UID %q is invalid: %w", integration.UID, err))
+			return models.ErrReceiverInvalid(fmt.Errorf("integration UID %q is invalid: %w", integration.UID, err))
 		}
 	}
 	return nil

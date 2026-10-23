@@ -1,11 +1,12 @@
-import { UserEvent } from '@testing-library/user-event';
+import { type UserEvent } from '@testing-library/user-event';
 import * as React from 'react';
 import { renderRuleEditor, ui } from 'test/helpers/alertingRuleEditor';
 import { clickSelectOption } from 'test/helpers/selectOptionInTest';
-import { screen } from 'test/test-utils';
+import { screen, testWithFeatureToggles } from 'test/test-utils';
 import { byRole } from 'testing-library-selector';
 
-import { FeatureToggles } from '@grafana/data';
+import { type FeatureToggles } from '@grafana/data';
+import { mockBoundingClientRect } from '@grafana/test-utils';
 import { contextSrv } from 'app/core/services/context_srv';
 import { setupMswServer } from 'app/features/alerting/unified/mockApi';
 import { PROMETHEUS_DATASOURCE_UID } from 'app/features/alerting/unified/mocks/server/constants';
@@ -14,8 +15,7 @@ import { AccessControlAction } from 'app/types/accessControl';
 import { grantUserPermissions, mockDataSource } from './mocks';
 import { grafanaRulerGroup } from './mocks/grafanaRulerApi';
 import { captureRequests, serializeRequests } from './mocks/server/events';
-import { FOLDER_TITLE_HAPPY_PATH } from './mocks/server/handlers/search';
-import { testWithFeatureToggles } from './test/test-utils';
+import { FOLDER_TITLE_HAPPY_PATH } from './mocks/server/handlers/folders';
 import { setupDataSources } from './testSetup/datasources';
 import { setupPluginsExtensionsHook } from './testSetup/plugins';
 
@@ -50,6 +50,10 @@ const dataSources = {
 // Setup plugin extensions hook to prevent setPluginLinksHook errors
 setupPluginsExtensionsHook();
 
+beforeAll(() => {
+  mockBoundingClientRect();
+});
+
 describe('RuleEditor grafana recording rules', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -72,7 +76,7 @@ describe('RuleEditor grafana recording rules', () => {
   });
 
   const testCreateGrafanaRR = (featureToggles: Array<keyof FeatureToggles>, testName: string) => {
-    testWithFeatureToggles(featureToggles);
+    testWithFeatureToggles({ enable: featureToggles });
 
     it(testName, async () => {
       const capture = captureRequests((r) => r.method === 'POST' && r.url.includes('/api/ruler/'));
@@ -98,7 +102,7 @@ describe('RuleEditor grafana recording rules', () => {
   };
 
   const testCreateGrafanaRRWithInvalidMetricName = (featureToggles: Array<keyof FeatureToggles>, testName: string) => {
-    testWithFeatureToggles(featureToggles);
+    testWithFeatureToggles({ enable: featureToggles });
 
     it(testName, async () => {
       const capture = captureRequests((r) => r.method === 'POST' && r.url.includes('/api/ruler/'));
@@ -121,7 +125,7 @@ describe('RuleEditor grafana recording rules', () => {
 
   testCreateGrafanaRR([], 'can create new grafana recording rule with simplified steps feature toggles disabled');
   testCreateGrafanaRR(
-    ['alertingQueryAndExpressionsStepMode', 'alertingNotificationsStepMode'],
+    ['alertingNotificationsStepMode'],
     'can create new grafana recording rule with simplified steps enabled'
   );
 
@@ -130,7 +134,7 @@ describe('RuleEditor grafana recording rules', () => {
     'cannot create new grafana recording rule with invalid metric name with simplified steps feature toggles disabled'
   );
   testCreateGrafanaRRWithInvalidMetricName(
-    ['alertingQueryAndExpressionsStepMode', 'alertingNotificationsStepMode'],
+    ['alertingNotificationsStepMode'],
     'cannot create new grafana recording rule with invalid metric name with simplified steps enabled'
   );
 });

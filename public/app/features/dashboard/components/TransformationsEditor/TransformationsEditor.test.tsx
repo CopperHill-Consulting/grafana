@@ -1,9 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { DataTransformerConfig, standardTransformersRegistry } from '@grafana/data';
+import { type DataTransformerConfig, standardTransformersRegistry } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
-import config from 'app/core/config';
 import { getStandardTransformers } from 'app/features/transformers/standardTransformers';
 
 import { PanelModel } from '../../state/PanelModel';
@@ -20,43 +19,28 @@ describe('TransformationsEditor', () => {
   standardTransformersRegistry.setInit(getStandardTransformers);
 
   describe('when no transformations configured', () => {
-    it('renders transformation list by default and without transformationsRedesign on', () => {
-      setup();
-      const cards = screen.getAllByTestId(/New transform/i);
-      expect(cards.length).toEqual(standardTransformersRegistry.list().length);
-    });
-
-    it('renders transformation empty message with transformationsRedesign feature toggled on', () => {
-      config.featureToggles.transformationsRedesign = true;
+    it('renders transformation empty message', () => {
       setup();
       const message = screen.getAllByTestId('data-testid no transformations message');
       expect(message.length).toEqual(1);
-      config.featureToggles.transformationsRedesign = false;
     });
   });
 
   describe('when transformations configured', () => {
-    function renderEditors() {
+    it('renders transformation editors', async () => {
       setup([
         {
           id: 'reduce',
           options: {},
         },
       ]);
-      const editors = screen.getAllByTestId(/Transformation editor/);
+      const editors = await screen.findAllByTestId(/Transformation editor/);
       expect(editors).toHaveLength(1);
-    }
-
-    it('renders transformation editors', renderEditors);
-    it('renders transformation editors with transformationsRedesign feature toggled on', () => {
-      config.featureToggles.transformationsRedesign = true;
-      renderEditors();
-      config.featureToggles.transformationsRedesign = false;
     });
   });
 
   describe('when Add transformation clicked', () => {
-    async function renderPicker() {
+    it('renders transformations picker', async () => {
       setup([
         {
           id: 'reduce',
@@ -69,19 +53,75 @@ describe('TransformationsEditor', () => {
 
       const search = screen.getByTestId(selectors.components.Transforms.searchInput);
       expect(search).toBeDefined();
-    }
+    });
 
-    it('renders transformations picker', renderPicker);
-    it('renders transformation picker with transformationsRedesign feature toggled on', async () => {
-      config.featureToggles.transformationsRedesign = true;
-      await renderPicker();
-      config.featureToggles.transformationsRedesign = false;
+    it('announces search results to screen readers via a live region', async () => {
+      setup([
+        {
+          id: 'reduce',
+          options: {},
+        },
+      ]);
+
+      const addTransformationButton = screen.getByTestId(selectors.components.Transforms.addTransformationButton);
+      await userEvent.click(addTransformationButton);
+
+      const status = screen.getByRole('status');
+      expect(status).toHaveAttribute('aria-live', 'polite');
+
+      const search = screen.getByTestId(selectors.components.Transforms.searchInput);
+      await userEvent.type(search, 'reduce');
+
+      await waitFor(() => expect(status).toHaveTextContent(/\d+ transformations? found/));
+
+      await userEvent.clear(search);
+      await userEvent.type(search, 'this matches nothing');
+
+      await waitFor(() => expect(status).toHaveTextContent('No transformations found'));
+    });
+
+    it('exposes the picker results as a list so screen readers announce the item count', async () => {
+      setup([
+        {
+          id: 'reduce',
+          options: {},
+        },
+      ]);
+
+      const addTransformationButton = screen.getByTestId(selectors.components.Transforms.addTransformationButton);
+      await userEvent.click(addTransformationButton);
+
+      const list = screen.getByRole('list', { name: 'Transformations' });
+      expect(within(list).getAllByRole('listitem').length).toBeGreaterThan(0);
+    });
+
+    it('replaces the results list with an empty state when the search matches nothing', async () => {
+      setup([
+        {
+          id: 'reduce',
+          options: {},
+        },
+      ]);
+
+      const addTransformationButton = screen.getByTestId(selectors.components.Transforms.addTransformationButton);
+      await userEvent.click(addTransformationButton);
+
+      const search = screen.getByTestId(selectors.components.Transforms.searchInput);
+      await userEvent.type(search, 'this matches nothing');
+
+      expect(screen.queryByRole('list', { name: 'Transformations' })).not.toBeInTheDocument();
+
+      // The live region announces the same message, so look for the visible empty state specifically
+      const emptyStateMessage = screen
+        .getAllByText('No transformations found')
+        .filter((element) => !element.closest('[role="status"]'));
+      expect(emptyStateMessage).toHaveLength(1);
     });
   });
 
   describe('actions', () => {
     describe('debug', () => {
-      async function showHideDebugger() {
+      it('should show/hide debugger', async () => {
         setup([
           {
             id: 'reduce',
@@ -96,13 +136,6 @@ describe('TransformationsEditor', () => {
         await userEvent.click(debugButton);
 
         expect(screen.getByTestId(debuggerSelector)).toBeInTheDocument();
-      }
-
-      it('should show/hide debugger', showHideDebugger);
-      it('renders transformation editors with transformationsRedesign feature toggled on', async () => {
-        config.featureToggles.transformationsRedesign = true;
-        await showHideDebugger();
-        config.featureToggles.transformationsRedesign = false;
       });
     });
   });

@@ -1,11 +1,11 @@
 package featuremgmt
 
 import (
-	"sort"
+	"maps"
+	"slices"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-	"golang.org/x/exp/maps"
 
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/setting"
@@ -22,12 +22,11 @@ var (
 
 func ProvideManagerService(cfg *setting.Cfg) (*FeatureManager, error) {
 	mgmt := &FeatureManager{
-		isDevMod: cfg.Env != setting.Prod,
+		isDevMod: cfg.IsDevEnv(),
 		flags:    make(map[string]*FeatureFlag, 30),
 		enabled:  make(map[string]bool),
 		startup:  make(map[string]bool),
 		warnings: make(map[string]string),
-		Settings: cfg.FeatureManagement,
 		log:      log.New("featuremgmt"),
 	}
 
@@ -48,14 +47,15 @@ func ProvideManagerService(cfg *setting.Cfg) (*FeatureManager, error) {
 			}
 			mgmt.warnings[key] = "unknown flag in config"
 		}
-		mgmt.startup[key] = val
+
+		mgmt.startup[key] = val.Variants[val.DefaultVariant] == true
 	}
 
 	// update the values
 	mgmt.update()
 
 	// Log the enabled feature toggles at startup
-	enabled := sort.StringSlice(maps.Keys(mgmt.enabled))
+	enabled := slices.Sorted(maps.Keys(mgmt.enabled))
 	logctx := make([]any, len(enabled)*2)
 	for i, k := range enabled {
 		logctx[(i * 2)] = k

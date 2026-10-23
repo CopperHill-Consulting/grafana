@@ -29,31 +29,31 @@ Grafana Enterprise includes integrations with more ways to authenticate your use
 
 ### Team sync
 
-[Team sync](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-team-sync/) allows you to set up synchronization between teams in Grafana and teams in your auth provider so that your users automatically end up in the right team.
+[Team sync](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-team-sync/) allows you to set up synchronization between teams in Grafana and teams in your auth provider so that your users automatically end up in the right team.
 
 Supported auth providers:
 
-- [Auth Proxy](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/auth-proxy#team-sync-enterprise-only)
-- [Azure AD OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/azuread/#team-sync-enterprise-only)
-- [GitHub OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/github/#configure-team-synchronization)
-- [Generic OAuth integration](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/generic-oauth/#configure-team-synchronization)
-- [GitLab OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/gitlab/#configure-team-synchronization)
-- [Google OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/google/#configure-team-synchronization)
-- [LDAP](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/enhanced-ldap/#ldap-group-synchronization-for-teams)
-- [Okta](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/okta#configure-team-synchronization-enterprise-only)
-- [SAML](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/saml#configure-team-sync)
+- [Auth Proxy](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/auth-proxy#team-sync-enterprise-only)
+- [Entra ID OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/azuread/#team-sync-enterprise-only)
+- [GitHub OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/github/#configure-team-synchronization)
+- [Generic OAuth integration](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/generic-oauth/#configure-team-synchronization)
+- [GitLab OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/gitlab/#configure-team-synchronization)
+- [Google OAuth](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/google/#configure-team-synchronization)
+- [LDAP](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/enhanced-ldap/#ldap-group-synchronization-for-teams)
+- [Okta](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/okta#configure-team-synchronization-enterprise-only)
+- [SAML](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/saml#configure-team-sync)
 
 ### Enhanced LDAP integration
 
-With [enhanced LDAP integration](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/enhanced-ldap/), you can set up active LDAP synchronization.
+With [enhanced LDAP integration](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/enhanced-ldap/), you can set up active LDAP synchronization.
 
 ### SAML authentication
 
-[SAML authentication](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/saml/) enables users to authenticate with single sign-on services that use Security Assertion Markup Language (SAML).
+[SAML authentication](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/saml/) enables users to authenticate with single sign-on services that use Security Assertion Markup Language (SAML).
 
 ### Protected roles
 
-With [protected roles](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-security/configure-authentication/#protected-roles), you can define user roles that are exempt from being converted from one authentication type to another when changing auth providers.
+With [protected roles](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-access/configure-authentication/#protected-roles), you can define user roles that are exempt from being converted from one authentication type to another when changing auth providers.
 
 ## Enterprise features
 
@@ -78,25 +78,27 @@ With a Grafana Enterprise license, you also get access to premium data sources, 
 
 - [Adobe Analytics](/grafana/plugins/grafana-adobeanalytics-datasource)
 - [Amazon Aurora](/grafana/plugins/grafana-aurora-datasource)
+- [Amazon DynamoDB](/grafana/plugins/grafana-dynamodb-datasource/)
 - [AppDynamics](/grafana/plugins/dlopes7-appdynamics-datasource)
 - [Atlassian Statuspage](/grafana/plugins/grafana-atlassianstatuspage-datasource)
-- [Azure CosmosDB](/grafana/plugins/grafana-azurecosmosdb-datasource)
-- [Azure Devops](/grafana/plugins/grafana-azuredevops-datasource)
+- [Azure Cosmos DB](/grafana/plugins/grafana-azurecosmosdb-datasource)
+- [Azure DevOps](/grafana/plugins/grafana-azuredevops-datasource)
 - [Catchpoint](/grafana/plugins/grafana-catchpoint-datasource)
 - [Cloudflare](/grafana/plugins/grafana-cloudflare-datasource)
 - [CockroachDB](/grafana/plugins/grafana-cockroachdb-datasource)
 - [Databricks](/grafana/plugins/grafana-databricks-datasource)
-- [DataDog](/grafana/plugins/grafana-datadog-datasource)
-- [Drone](/grafana/plugins/grafana-drone-datasource)
-- [DynamoDB](/grafana/plugins/grafana-dynamodb-datasource/)
+- [Datadog](/grafana/plugins/grafana-datadog-datasource)
+- [Drone CI](/grafana/plugins/grafana-drone-datasource)
 - [Dynatrace](/grafana/plugins/grafana-dynatrace-datasource)
-- [Gitlab](/grafana/plugins/grafana-gitlab-datasource)
+- [GitLab](/grafana/plugins/grafana-gitlab-datasource)
 - [Grafana Enterprise Logs](/grafana/plugins/grafana-enterprise-logs-app/)
 - [Grafana Enterprise Metrics](/grafana/plugins/grafana-metrics-enterprise-app/)
 - [Grafana Enterprise Traces](/grafana/plugins/grafana-enterprise-traces-app/)
 - [Honeycomb](/grafana/plugins/grafana-honeycomb-datasource)
+- [IBM Db2](/grafana/plugins/grafana-ibmdb2-datasource)
+- [Jenkins](/grafana/plugins/grafana-jenkins-datasource)
 - [Jira](/grafana/plugins/grafana-jira-datasource)
-- [LogicMonitor Devices](/grafana/plugins/grafana-logicmonitor-datasource/)
+- [LogicMonitor](/grafana/plugins/grafana-logicmonitor-datasource/)
 - [Looker](/grafana/plugins/grafana-looker-datasource/)
 - [MongoDB](/grafana/plugins/grafana-mongodb-datasource)
 - [Netlify](/grafana/plugins/grafana-netlify-datasource)
@@ -107,10 +109,14 @@ With a Grafana Enterprise license, you also get access to premium data sources, 
 - [SAP HANA®](/grafana/plugins/grafana-saphana-datasource)
 - [ServiceNow](/grafana/plugins/grafana-servicenow-datasource)
 - [Snowflake](/grafana/plugins/grafana-snowflake-datasource)
+- [SolarWinds](/grafana/plugins/grafana-solarwinds-datasource)
 - [Splunk](/grafana/plugins/grafana-splunk-datasource)
-- [Splunk Infrastructure monitoring (SignalFx)](/grafana/plugins/grafana-splunk-monitoring-datasource)
-- [Sqlyze Datasource](/grafana/plugins/grafana-odbc-datasource)
-- [SumoLogic](/grafana/plugins/grafana-sumologic-datasource)
+- [Splunk Infrastructure Monitoring](/grafana/plugins/grafana-splunk-monitoring-datasource)
+<!-- vale Grafana.Spelling = NO -->
+- [Sqlyze](/grafana/plugins/grafana-odbc-datasource)
+<!-- vale Grafana.Spelling = YES -->
+- [Sumo Logic](/grafana/plugins/grafana-sumologic-datasource)
+- [Vercel](/grafana/plugins/grafana-vercel-datasource)
 - [Wavefront](/grafana/plugins/grafana-wavefront-datasource)
 - [Zendesk](/grafana/plugins/grafana-zendesk-datasource)
 

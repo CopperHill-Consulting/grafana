@@ -15,7 +15,9 @@ import (
 	"github.com/jmoiron/sqlx"
 	_ "github.com/lib/pq"
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/collectors"
 
+	"github.com/grafana/grafana/pkg/util/sqlite"
 	"github.com/grafana/grafana/pkg/util/xorm"
 	"github.com/grafana/grafana/pkg/util/xorm/core"
 
@@ -37,10 +39,19 @@ import (
 // ContextSessionKey is used as key to save values in `context.Context`
 type ContextSessionKey struct{}
 
+// ServiceName is the name used to register SQLStore in the background services
+// dependency graph. It must match the type name produced by the background-services
+// adapter (reflect.TypeOf(*SQLStore).String()).
+const ServiceName = "*sqlstore.SQLStore"
+
 type SQLStore struct {
-	cfg         *setting.Cfg
-	features    featuremgmt.FeatureToggles
-	sqlxsession *session.SessionDB
+	cfg      *setting.Cfg
+	features featuremgmt.FeatureToggles
+	// skipCloseOnShutdown disables closing the underlying xorm engine in Run.
+	// Set for the shared test SQLStore, which is reused across multiple
+	// server lifecycles within a single test binary.
+	skipCloseOnShutdown bool
+	sqlxsession         *session.SessionDB
 
 	bus                          bus.Bus
 	dbCfg                        *DatabaseConfig
@@ -79,7 +90,15 @@ func ProvideService(cfg *setting.Cfg,
 }
 
 func ProvideServiceForTests(t sqlutil.ITestDB, cfg *setting.Cfg, features featuremgmt.FeatureToggles, bus bus.Bus, migrations registry.DatabaseMigrator) (*SQLStore, error) {
-	return initTestDB(t, cfg, features, migrations, bus, InitTestDBOpt{})
+	ss, err := initTestDB(t, cfg, features, migrations, bus, InitTestDBOpt{})
+	if err != nil {
+		return nil, err
+	}
+	// The test SQLStore is a process-wide singleton that outlives any
+	// individual server lifecycle (see initTestDB/CleanupTestDB). Closing the
+	// engine on shutdown would break subsequent tests that reuse it.
+	ss.skipCloseOnShutdown = true
+	return ss, nil
 }
 
 // NewSQLStoreWithoutSideEffects creates a new *SQLStore without side-effects such as
@@ -142,6 +161,27 @@ func (ss *SQLStore) Migrate(isDatabaseLockingEnabled bool) error {
 	defer span.End()
 
 	return migrator.RunMigrations(ctx, isDatabaseLockingEnabled, ss.dbCfg.MigrationLockAttemptTimeout)
+}
+
+// Run is the background service lifecycle hook. It blocks until the provided
+// context is cancelled (i.e. Grafana shutdown), then closes the underlying
+// xorm engine so the database driver can send a clean disconnect (e.g. the
+// Postgres protocol-level Terminate message) and release pooled connections.
+//
+// SQLStore is wired into the background-services dependency graph such that
+// every other background service (and Core) transitively depends on it,
+// guaranteeing this Close runs last during shutdown.
+func (ss *SQLStore) Run(ctx context.Context) error {
+	<-ctx.Done()
+	if ss.skipCloseOnShutdown {
+		return nil
+	}
+	ss.log.Info("Closing database engine")
+	if err := ss.engine.Close(); err != nil {
+		ss.log.Error("Failed to close database engine", "error", err)
+		return err
+	}
+	return nil
 }
 
 // Reset resets database state.
@@ -211,7 +251,7 @@ func (ss *SQLStore) ensureMainOrgAndAdminUser(test bool) error {
 				Password: user.Password(ss.cfg.AdminPassword),
 				IsAdmin:  true,
 			}); err != nil {
-				return fmt.Errorf("failed to create admin user: %s", err)
+				return fmt.Errorf("failed to create admin user: %w", err)
 			}
 
 			ss.log.Info("Created default admin", "user", ss.cfg.AdminUser)
@@ -248,6 +288,9 @@ func (ss *SQLStore) initEngine(engine *xorm.Engine) error {
 	}
 
 	ss.log.Info("Connecting to DB", "dbtype", ss.dbCfg.Type)
+	if ss.dbCfg.Type == migrator.SQLite {
+		ss.log.Info("Using SQLite driver", "driver", sqlite.DriverType())
+	}
 	if ss.dbCfg.Type == migrator.SQLite && strings.HasPrefix(ss.dbCfg.ConnectionString, "file:") &&
 		!strings.HasPrefix(ss.dbCfg.ConnectionString, "file::memory:") {
 		exists, err := fs.Exists(ss.dbCfg.Path)
@@ -320,14 +363,18 @@ func (ss *SQLStore) initEngine(engine *xorm.Engine) error {
 	// initialize and register metrics wrapper around the *sql.DB
 	db := engine.DB().DB
 
-	// register the go_sql_stats_connections_* metrics
-	if err := prometheus.Register(sqlstats.NewStatsCollector("grafana", db)); err != nil {
-		ss.log.Warn("Failed to register sqlstore stats collector", "error", err)
+	if err := prometheus.Register(collectors.NewDBStatsCollector(db, "grafana")); err != nil {
+		ss.log.Warn("Failed to register 'Prometheus collector' sqlstore stats collector", "error", err)
 	}
 
-	// TODO: deprecate/remove these metrics
-	if err := prometheus.Register(newSQLStoreMetrics(db)); err != nil {
-		ss.log.Warn("Failed to register sqlstore metrics", "error", err)
+	// TODO(@macabu/2026-03-04): Remove on G14 as these metrics are the same as the ones above.
+	if ss.cfg.DatabaseRegisterDeprecatedMetrics {
+		if err := prometheus.Register(sqlstats.NewStatsCollector("grafana", db)); err != nil {
+			ss.log.Warn("Failed to register 'sqlstats' sqlstore stats collector", "error", err)
+		}
+		if err := prometheus.Register(newSQLStoreMetrics(db)); err != nil {
+			ss.log.Warn("Failed to register 'Grafana legacy' sqlstore metrics", "error", err)
+		}
 	}
 
 	ss.engine = engine
@@ -415,6 +462,10 @@ type InitTestDBOpt struct {
 }
 
 // InitTestDBWithMigration initializes the test DB given custom migrations.
+//
+// Deprecated: use NewTestStore with WithMigrator instead. It gives each test
+// an isolated, temporary database instead of sharing one database with
+// truncation between tests. New calls fail lint (staticcheck SA1019).
 func InitTestDBWithMigration(t sqlutil.ITestDB, migration registry.DatabaseMigrator, opts ...InitTestDBOpt) *SQLStore {
 	t.Helper()
 	features := getFeaturesForTesting(opts...)
@@ -427,6 +478,11 @@ func InitTestDBWithMigration(t sqlutil.ITestDB, migration registry.DatabaseMigra
 }
 
 // InitTestDB initializes the test DB.
+//
+// Deprecated: use NewTestStore instead. It gives each test an isolated,
+// temporary database instead of sharing one database with truncation between
+// tests, which also allows tests to run in parallel. New calls fail lint
+// (staticcheck SA1019).
 func InitTestDB(t sqlutil.ITestDB, opts ...InitTestDBOpt) (*SQLStore, *setting.Cfg) {
 	t.Helper()
 	features := getFeaturesForTesting(opts...)
@@ -577,10 +633,16 @@ func TestMain(m *testing.M) {
 	// nolint:staticcheck
 	testSQLStore.cfg.IsFeatureToggleEnabled = features.IsEnabledGlobally
 
-	if err := testSQLStore.dialect.TruncateDBTables(testSQLStore.GetEngine()); err != nil {
-		return nil, err
+	skipTruncate := false
+	if skip, present := os.LookupEnv("SKIP_DB_TRUNCATE"); present {
+		skipTruncate = strings.ToLower(skip) == "true"
 	}
-	testSQLStore.engine.ResetSequenceGenerator()
+	if !skipTruncate {
+		if err := testSQLStore.dialect.TruncateDBTables(testSQLStore.GetEngine()); err != nil {
+			return nil, err
+		}
+		testSQLStore.engine.ResetSequenceGenerator()
+	}
 
 	if err := testSQLStore.Reset(); err != nil {
 		return nil, err

@@ -1,18 +1,19 @@
 import { css } from '@emotion/css';
+import memoize from 'micro-memoize';
 import { useCallback, useMemo } from 'react';
 import * as React from 'react';
-import { FixedSizeList as List, ListChildComponentProps } from 'react-window';
+import { FixedSizeList as List, type ListChildComponentProps } from 'react-window';
 
-import { GrafanaTheme2, formattedValueToString, getValueFormat, SelectableValue } from '@grafana/data';
+import { type GrafanaTheme2, type SelectableValue } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
-import { Trans } from '@grafana/i18n';
+import { t, Trans } from '@grafana/i18n';
 
 import { useStyles2, useTheme2 } from '../../../../themes/ThemeContext';
 import { Checkbox } from '../../../Forms/Checkbox';
 import { Label } from '../../../Forms/Label';
 import { Stack } from '../../../Layout/Stack/Stack';
-
-import { operatorSelectableValues } from './FilterPopup';
+import { comparableValue, parseExpression } from '../../filterExpression';
+import { FilterOperator } from '../types';
 
 interface Props {
   values: SelectableValue[];
@@ -20,87 +21,36 @@ interface Props {
   onChange: (options: SelectableValue[]) => void;
   caseSensitive?: boolean;
   searchFilter: string;
-  operator: SelectableValue<string>;
+  operator: SelectableValue<FilterOperator>;
 }
 
-const ITEM_HEIGHT = 28;
-const MIN_HEIGHT = ITEM_HEIGHT * 5;
-
-export const REGEX_OPERATOR = operatorSelectableValues['Contains'];
-const XPR_OPERATOR = operatorSelectableValues['Expression'];
-
-const comparableValue = (value: string): string | number | Date | boolean => {
-  value = value.trim().replace(/\\/g, '');
-
-  // Does it look like a Date (Starting with pattern YYYY-MM-DD* or YYYY/MM/DD*)?
-  if (/^(\d{4}-\d{2}-\d{2}|\d{4}\/\d{2}\/\d{2})/.test(value)) {
-    const date = new Date(value);
-    if (!isNaN(date.getTime())) {
-      const fmt = getValueFormat('dateTimeAsIso');
-      return formattedValueToString(fmt(date.getTime()));
-    }
-  }
-  // Does it look like a Number?
-  const num = parseFloat(value);
-  if (!isNaN(num)) {
-    return num;
-  }
-  // Does it look like a Bool?
-  const lvalue = value.toLowerCase();
-  if (lvalue === 'true' || lvalue === 'false') {
-    return lvalue === 'true';
-  }
-  // Anything else
-  return value;
-};
+const ITEM_HEIGHT = 32;
+const MIN_HEIGHT = ITEM_HEIGHT * 4.5; // split an item in the middle to imply there are more items to scroll
 
 export const FilterList = ({ options, values, caseSensitive, onChange, searchFilter, operator }: Props) => {
   const regex = useMemo(() => new RegExp(searchFilter, caseSensitive ? undefined : 'i'), [searchFilter, caseSensitive]);
+  const predicate = useMemo(() => {
+    if (!searchFilter || operator.value === FilterOperator.CONTAINS) {
+      return null;
+    }
+    if (operator.value === FilterOperator.EXPRESSION) {
+      return parseExpression(searchFilter) ?? (() => false);
+    }
+    return parseExpression(`$ ${operator.value} ${searchFilter}`) ?? (() => false);
+  }, [searchFilter, operator]);
+
   const items = useMemo(
     () =>
       options.filter((option) => {
-        if (!searchFilter || operator.value === REGEX_OPERATOR.value) {
-          if (option.label === undefined) {
-            return false;
-          }
-          return regex.test(option.label);
-        } else if (operator.value === XPR_OPERATOR.value) {
-          if (option.value === undefined) {
-            return false;
-          }
-          try {
-            const xpr = searchFilter.replace(/\\/g, '');
-            const fnc = new Function('$', `'use strict'; return ${xpr};`);
-            const val = comparableValue(option.value);
-            return fnc(val);
-          } catch (_) {}
-          return false;
-        } else {
-          if (option.value === undefined) {
-            return false;
-          }
-
-          const value1 = comparableValue(option.value);
-          const value2 = comparableValue(searchFilter);
-
-          switch (operator.value) {
-            case '=':
-              return value1 === value2;
-            case '!=':
-              return value1 !== value2;
-            case '>':
-              return value1 > value2;
-            case '>=':
-              return value1 >= value2;
-            case '<':
-              return value1 < value2;
-            case '<=':
-              return value1 <= value2;
-          }
+        if (predicate === null) {
+          return option.label !== undefined && regex.test(option.label);
+        }
+        if (option.value === undefined) {
           return false;
         }
+        return predicate(comparableValue(option.value));
       }),
-    [options, regex, operator, searchFilter]
+    [options, regex, predicate]
   );
   const selectedItems = useMemo(() => items.filter((item) => values.includes(item)), [items, values]);
 
@@ -109,21 +59,31 @@ export const FilterList = ({ options, values, caseSensitive, onChange, searchFil
     () => selectedItems.length > 0 && items.length > selectedItems.length,
     [items, selectedItems]
   );
-  const selectCheckLabel = useMemo(
-    () => (selectedItems.length ? `${selectedItems.length} selected` : `Select all`),
-    [selectedItems]
-  );
+  const selectCheckLabel = useMemo(() => {
+    if (!values.length) {
+      return t('grafana-ui.table.filter.select-all', 'Select all');
+    }
+    if (values.length !== selectedItems.length) {
+      return t('grafana-ui.table.filter.selected-some-hidden', '{{ numSelected }} selected ({{ numHidden }} hidden)', {
+        numSelected: values.length,
+        numHidden: values.length - selectedItems.length,
+      });
+    }
+    return t('grafana-ui.table.filter.selected', '{{ numSelected }} selected', {
+      numSelected: values.length,
+    });
+  }, [selectedItems.length, values.length]);
   const selectCheckDescription = useMemo(
     () =>
       items.length !== selectedItems.length
-        ? 'Add all displayed values to the filter'
-        : 'Remove all displayed values from the filter',
+        ? t('grafana-ui.table.filter.add-all', 'Add all displayed values to the filter')
+        : t('grafana-ui.table.filter.remove-all', 'Remove all displayed values from the filter'),
     [items, selectedItems]
   );
 
   const styles = useStyles2(getStyles);
   const theme = useTheme2();
-  const gutter = theme.spacing.gridSize;
+  const gutter = theme.spacing.gridSize / 2;
   const height = useMemo(() => Math.min(items.length * ITEM_HEIGHT, MIN_HEIGHT) + gutter, [gutter, items.length]);
 
   const onCheckedChanged = useCallback(
@@ -204,12 +164,11 @@ function ItemRenderer({ index, style, data: { onCheckedChanged, items, values, c
   );
 }
 
-const getStyles = (theme: GrafanaTheme2) => ({
+const getStyles = memoize((theme: GrafanaTheme2) => ({
   filterList: css({
     label: 'filterList',
-    backgroundColor: theme.components.input.background,
-    border: `1px solid ${theme.colors.border.medium}`,
-    borderRadius: theme.shape.radius.default,
+    marginBottom: theme.spacing(0.5),
+    borderBottom: `1px solid ${theme.colors.border.weak}`,
   }),
   filterListRow: css({
     label: 'filterListRow',
@@ -223,13 +182,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
       backgroundColor: theme.colors.action.hover,
     },
   }),
-  selectDivider: css({
-    label: 'selectDivider',
-    width: '100%',
-    borderTop: `1px solid ${theme.colors.border.medium}`,
-    padding: theme.spacing(0.5, 2),
-  }),
   noValuesLabel: css({
     paddingTop: theme.spacing(1),
   }),
-});
+}));

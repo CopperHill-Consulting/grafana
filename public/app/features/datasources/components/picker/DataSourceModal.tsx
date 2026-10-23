@@ -1,25 +1,15 @@
 import { css } from '@emotion/css';
 import { once } from 'lodash';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { DataSourceInstanceSettings, DataSourceRef, GrafanaTheme2 } from '@grafana/data';
+import { type DataSourceInstanceSettings, type DataSourceRef, type GrafanaTheme2 } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
-import { config, reportInteraction, useFavoriteDatasources } from '@grafana/runtime';
-import { DataQuery } from '@grafana/schema';
-import {
-  Modal,
-  FileDropzone,
-  FileDropzoneDefaultChildren,
-  useStyles2,
-  Input,
-  Icon,
-  ScrollContainer,
-} from '@grafana/ui';
-import { acceptedFiles, maxFileSize } from 'app/features/dataframe-import/constants';
-import { GrafanaQuery } from 'app/plugins/datasource/grafana/types';
-import { getFileDropToQueryHandler } from 'app/plugins/datasource/grafana/utils';
+import { reportInteraction, useFavoriteDatasources } from '@grafana/runtime';
+import { type DataQuery } from '@grafana/schema';
+import { Modal, useStyles2, Input, Icon, ScrollContainer } from '@grafana/ui';
+import { type GrafanaQuery } from 'app/plugins/datasource/grafana/types';
 
-import { useDatasource, useDatasources } from '../../hooks';
+import { useDatasources } from '../../hooks';
 
 import { AddNewDataSourceButton } from './AddNewDataSourceButton';
 import { BuiltInDataSourceList } from './BuiltInDataSourceList';
@@ -29,7 +19,6 @@ import { matchDataSourceWithSearch } from './utils';
 const INTERACTION_EVENT_NAME = 'dashboards_dspickermodal_clicked';
 const INTERACTION_ITEM = {
   SELECT_DS: 'select_ds',
-  UPLOAD_FILE: 'upload_file',
   CONFIG_NEW_DS: 'config_new_ds',
   CONFIG_NEW_DS_EMPTY_STATE: 'config_new_ds_empty_state',
   SEARCH: 'search',
@@ -56,7 +45,6 @@ export interface DataSourceModalProps {
   alerting?: boolean;
   pluginId?: string;
   logs?: boolean;
-  uploadFile?: boolean;
 }
 
 export function DataSourceModal({
@@ -70,7 +58,6 @@ export function DataSourceModal({
   alerting,
   pluginId,
   logs,
-  uploadFile,
   filter,
   onChange,
   current,
@@ -81,6 +68,7 @@ export function DataSourceModal({
   const [search, setSearch] = useState('');
   const analyticsInteractionSrc = reportedInteractionFrom || 'modal';
   const favoriteDataSources = useFavoriteDatasources();
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const onDismissModal = () => {
     onDismiss();
@@ -95,8 +83,6 @@ export function DataSourceModal({
       is_favorite: favoriteDataSources.enabled ? favoriteDataSources.isFavoriteDatasource(ds.uid) : undefined,
     });
   };
-
-  const grafanaDS = useDatasource('-- Grafana --');
 
   // Get all datasources to report total_configured count
   const dataSources = useDatasources({
@@ -133,22 +119,6 @@ export function DataSourceModal({
       }),
     [analyticsInteractionSrc]
   );
-
-  const onFileDrop = getFileDropToQueryHandler((query, fileRejections) => {
-    if (!grafanaDS) {
-      return;
-    }
-    onChange(grafanaDS, [query]);
-
-    reportInteraction(INTERACTION_EVENT_NAME, {
-      item: INTERACTION_ITEM.UPLOAD_FILE,
-      src: analyticsInteractionSrc,
-    });
-
-    if (fileRejections.length < 1) {
-      onDismiss();
-    }
-  });
 
   // Built-in data sources used twice because of mobile layout adjustments
   // In movile the list is appended to the bottom of the DS list
@@ -197,7 +167,7 @@ export function DataSourceModal({
             reportSearchUsageOnce();
           }}
         />
-        <ScrollContainer>
+        <ScrollContainer ref={scrollRef}>
           <DataSourceList
             onChange={onChangeDataSource}
             current={current}
@@ -219,6 +189,8 @@ export function DataSourceModal({
             dashboard={dashboard}
             mixed={mixed}
             dataSources={dataSources}
+            favoriteDataSources={favoriteDataSources}
+            scrollRef={scrollRef}
           />
           <BuiltInList className={styles.appendBuiltInDataSourcesList} />
         </ScrollContainer>
@@ -230,20 +202,6 @@ export function DataSourceModal({
               <BuiltInList />
             </ScrollContainer>
           </div>
-          {uploadFile && config.featureToggles.editPanelCSVDragAndDrop && (
-            <FileDropzone
-              readAs="readAsArrayBuffer"
-              fileListRenderer={() => undefined}
-              options={{
-                maxSize: maxFileSize,
-                multiple: false,
-                accept: acceptedFiles,
-                onDrop: onFileDrop,
-              }}
-            >
-              <FileDropzoneDefaultChildren />
-            </FileDropzone>
-          )}
         </div>
         <div className={styles.newDSSection}>
           <span className={styles.newDSDescription}>
@@ -320,10 +278,9 @@ function getDataSourceModalStyles(theme: GrafanaTheme2) {
     }),
     builtInDataSources: css({
       flex: '1 1',
-      marginBottom: theme.spacing(4),
 
       [theme.breakpoints.down('md')]: {
-        flex: 0,
+        display: 'none',
       },
     }),
     builtInDataSourcesList: css({
@@ -345,6 +302,7 @@ function getDataSourceModalStyles(theme: GrafanaTheme2) {
       width: '100%',
       justifyContent: 'space-between',
       alignItems: 'center',
+      paddingTop: theme.spacing(1),
     }),
     newDSDescription: css({
       flex: '1 0',
@@ -352,6 +310,9 @@ function getDataSourceModalStyles(theme: GrafanaTheme2) {
       overflow: 'hidden',
       whiteSpace: 'nowrap',
       color: theme.colors.text.secondary,
+      [theme.breakpoints.down('sm')]: {
+        visibility: 'hidden',
+      },
     }),
     searchInput: css({
       width: '100%',

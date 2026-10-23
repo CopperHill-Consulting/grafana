@@ -9,5 +9,6 @@
  * and be subject to the standard policies
  */
 
-// This is a dummy export so typescript doesn't error importing an "empty module"
-export const unstable = {};
+export { useObservable } from './hooks/useObservable';
+export { DEFAULT_TAG_COLORS } from './themes/createComponents';
+export { getTimeZonesAt, findTimeZoneAt, canonicalZoneName, type EasyTzInfo } from './datetime/easytz_lookup';

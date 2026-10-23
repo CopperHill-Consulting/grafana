@@ -1,12 +1,13 @@
-import { Trans, t } from '@grafana/i18n';
+import { t } from '@grafana/i18n';
 import { config } from '@grafana/runtime';
 import { Alert } from '@grafana/ui';
 import { useGetRepositoryFilesWithPathQuery } from 'app/api/clients/provisioning/v0alpha1';
-import { DashboardPageRouteSearchParams } from 'app/features/dashboard/containers/types';
+import { type DashboardPageRouteSearchParams } from 'app/features/dashboard/containers/types';
 import { usePullRequestParam } from 'app/features/provisioning/hooks/usePullRequestParam';
 import { DashboardRoutes } from 'app/types/dashboard';
 
-import { PreviewBannerViewPR } from '../Shared/PreviewBannerViewPR';
+import { useGetResourceRepositoryView } from '../../hooks/useGetResourceRepositoryView';
+import { type PreviewBranchInfo, PreviewBannerViewPR } from '../Shared/PreviewBannerViewPR';
 
 export interface CommonBannerProps {
   queryParams: DashboardPageRouteSearchParams;
@@ -20,15 +21,12 @@ interface DashboardPreviewBannerProps extends CommonBannerProps {
 
 interface DashboardPreviewBannerContentProps extends Required<Omit<CommonBannerProps, 'route'>> {}
 
-export const commonAlertProps = {
-  severity: 'info' as const,
-  style: { flex: 0 } as const,
-};
-
 function DashboardPreviewBannerContent({ queryParams, slug, path }: DashboardPreviewBannerContentProps) {
-  const { prURL } = usePullRequestParam();
+  const { prURL: existingPRUrl } = usePullRequestParam();
   const file = useGetRepositoryFilesWithPathQuery({ name: slug, path, ref: queryParams.ref });
+  const { repository } = useGetResourceRepositoryView({ name: slug });
 
+  // early return if there is an error loading dashboard file from repository
   if (file.data?.errors) {
     return (
       <Alert
@@ -43,34 +41,24 @@ function DashboardPreviewBannerContent({ queryParams, slug, path }: DashboardPre
     );
   }
 
-  // This page was loaded with a `pull_request_url` in the URL
-  if (prURL?.length) {
-    return <PreviewBannerViewPR prParam={prURL} isNewPr />;
-  }
+  // Vars
+  const targetRef = file.data?.ref;
+  const repoBaseUrl = file.data?.urls?.repositoryURL || repository?.url;
+  const prOrCompareUrl = file.data?.urls?.newPullRequestURL || file.data?.urls?.compareURL; // Check if pull request URLs are available from the repository file data
+  const prURL = existingPRUrl || prOrCompareUrl; // if PR URL is provided, use it, otherwise use BE response url
+  const hasExistingPr = Boolean(existingPRUrl); // when existing PR URL is provided, it means the dashboard is loaded from a pull request
 
-  // Check if this is a repo link
-  const repoUrl = file.data?.urls?.newPullRequestURL ?? file.data?.urls?.compareURL;
-  if (repoUrl) {
-    return <PreviewBannerViewPR prParam={repoUrl} />;
-  }
+  const branchInfo: PreviewBranchInfo = {
+    targetBranch: targetRef,
+    configuredBranch: repository?.branch,
+    repoBaseUrl,
+  };
 
-  return (
-    <Alert
-      {...commonAlertProps}
-      title={t(
-        'dashboard-scene.dashboard-preview-banner.title-dashboard-loaded-external-repository',
-        'This dashboard is loaded from an external repository'
-      )}
-    >
-      <Trans i18nKey="dashboard-scene.dashboard-preview-banner.not-yet-saved">
-        The value is not saved in the Grafana database
-      </Trans>
-    </Alert>
-  );
+  return <PreviewBannerViewPR prURL={prURL} isNewPr={!hasExistingPr} branchInfo={branchInfo} />;
 }
 
 export function DashboardPreviewBanner({ queryParams, route, slug, path }: DashboardPreviewBannerProps) {
-  const provisioningEnabled = config.featureToggles.provisioning;
+  const provisioningEnabled = config.provisioningEnabled;
   if (!provisioningEnabled || 'kiosk' in queryParams || !path || route !== DashboardRoutes.Provisioning || !slug) {
     return null;
   }

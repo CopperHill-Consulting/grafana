@@ -1,12 +1,10 @@
 import { css, cx } from '@emotion/css';
-import { useDialog } from '@react-aria/dialog';
-import { FocusScope } from '@react-aria/focus';
-import { useOverlay } from '@react-aria/overlays';
-import RcDrawer from 'rc-drawer';
-import { ReactNode, useCallback, useEffect, useState } from 'react';
+import { FloatingFocusManager, useFloating } from '@floating-ui/react';
+import RcDrawer from '@rc-component/drawer';
+import { type ReactNode, useCallback, useEffect, useId, useState } from 'react';
 import * as React from 'react';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { t } from '@grafana/i18n';
 
@@ -14,10 +12,9 @@ import { useStyles2 } from '../../themes/ThemeContext';
 import { getDragStyles } from '../DragHandle/DragHandle';
 import { IconButton } from '../IconButton/IconButton';
 import { Stack } from '../Layout/Stack/Stack';
+import { getPortalContainer } from '../Portal/Portal';
 import { ScrollContainer } from '../ScrollContainer/ScrollContainer';
 import { Text } from '../Text/Text';
-
-import 'rc-drawer/assets/index.css';
 
 export interface Props {
   children: ReactNode;
@@ -62,6 +59,11 @@ const drawerSizes = {
   lg: { width: '75vw', minWidth: 744 },
 };
 
+/**
+ * Drawer is a slide in overlay that can be used to display additional information without hiding the main page content. It can be anchored to the left or right edge of the screen.
+ *
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/overlays-drawer--docs
+ */
 export function Drawer({
   children,
   onClose,
@@ -78,17 +80,16 @@ export function Drawer({
   const styles = useStyles2(getStyles);
   const wrapperStyles = useStyles2(getWrapperStyles, size);
   const dragStyles = useStyles2(getDragStyles);
+  const titleId = useId();
 
-  const overlayRef = React.useRef(null);
-  const { dialogProps, titleProps } = useDialog({}, overlayRef);
-  const { overlayProps } = useOverlay(
-    {
-      isDismissable: false,
-      isOpen: true,
-      onClose,
+  const { context, refs } = useFloating({
+    open: true,
+    onOpenChange: (open) => {
+      if (!open) {
+        onClose?.();
+      }
     },
-    overlayRef
-  );
+  });
 
   // Adds body class while open so the toolbar nav can hide some actions while drawer is open
   useBodyClassWhileOpen();
@@ -114,6 +115,8 @@ export function Drawer({
           minWidth,
         },
       }}
+      aria-label={typeof title === 'string' ? selectors.components.Drawer.General.title(title) : undefined}
+      aria-labelledby={title ? titleId : undefined}
       width={''}
       motion={{
         motionAppear: true,
@@ -125,19 +128,11 @@ export function Drawer({
         motionAppear: true,
         motionName: styles.maskMotion,
       }}
+      // this is handled by floating-ui
+      autoFocus={false}
     >
-      <FocusScope restoreFocus contain autoFocus>
-        <div
-          aria-label={
-            typeof title === 'string'
-              ? selectors.components.Drawer.General.title(title)
-              : selectors.components.Drawer.General.title('no title')
-          }
-          className={styles.container}
-          {...overlayProps}
-          {...dialogProps}
-          ref={overlayRef}
-        >
+      <FloatingFocusManager context={context} modal getInsideElements={() => [getPortalContainer()]}>
+        <div className={styles.container} ref={refs.setFloating}>
           {/* eslint-disable-next-line jsx-a11y/no-static-element-interactions */}
           <div
             className={cx(dragStyles.dragHandleVertical, styles.resizer)}
@@ -156,7 +151,7 @@ export function Drawer({
             </div>
             {typeof title === 'string' ? (
               <Stack direction="column">
-                <Text element="h3" truncate {...titleProps}>
+                <Text element="h3" id={titleId} truncate>
                   {title}
                 </Text>
                 {subtitle && (
@@ -166,13 +161,21 @@ export function Drawer({
                 )}
               </Stack>
             ) : (
-              title
+              <div id={titleId}>{title}</div>
             )}
             {tabs && <div className={styles.tabsWrapper}>{tabs}</div>}
           </div>
-          {!scrollableContent ? content : <ScrollContainer showScrollIndicators>{content}</ScrollContainer>}
+          {!scrollableContent ? (
+            content
+          ) : (
+            <div className={styles.scrollWrapper}>
+              <ScrollContainer borderRadius="lg" showScrollIndicators>
+                {content}
+              </ScrollContainer>
+            </div>
+          )}
         </div>
-      </FocusScope>
+      </FloatingFocusManager>
     </RcDrawer>
   );
 }
@@ -249,6 +252,8 @@ function useBodyClassWhileOpen() {
 }
 
 const getStyles = (theme: GrafanaTheme2) => {
+  const visualRefreshEnabled = theme.flags.visualDesignRefresh;
+
   return {
     container: css({
       display: 'flex',
@@ -259,26 +264,55 @@ const getStyles = (theme: GrafanaTheme2) => {
       position: 'relative',
     }),
     drawer: css({
-      top: 0,
+      inset: 0,
+      position: 'fixed',
+      zIndex: theme.zIndex.modalBackdrop,
+      pointerEvents: 'none',
 
       '.rc-drawer-content-wrapper': {
         boxShadow: theme.shadows.z3,
       },
     }),
+    scrollWrapper: css(
+      {
+        display: 'flex',
+        flexDirection: 'column',
+        flex: 1,
+        maxHeight: '100%',
+        minHeight: 0,
+        minWidth: 0,
+      },
+      visualRefreshEnabled && {
+        borderBottomLeftRadius: theme.shape.radius.lg,
+        borderBottomRightRadius: theme.shape.radius.lg,
+        overflow: 'hidden',
+      }
+    ),
     drawerContent: css({
-      backgroundColor: `${theme.colors.background.primary} !important`,
       display: 'flex',
-      overflow: 'unset !important',
       flexDirection: 'column',
+      height: '100%',
+      pointerEvents: 'auto',
+      width: '100%',
     }),
     drawerMotion: css({
       '&-appear': {
-        transform: 'translateX(100%)',
-        transition: 'none !important',
-
+        [theme.transitions.handleMotion('no-preference')]: {
+          transform: visualRefreshEnabled ? `translateX(calc(100% + ${theme.spacing(1)}))` : 'translateX(100%)',
+          transition: 'none',
+        },
+        [theme.transitions.handleMotion('reduce')]: {
+          opacity: 0,
+        },
         '&-active': {
-          transition: `${theme.transitions.create('transform')} !important`,
-          transform: 'translateX(0)',
+          [theme.transitions.handleMotion('no-preference')]: {
+            transform: 'translateX(0)',
+            transition: theme.transitions.create('transform'),
+          },
+          [theme.transitions.handleMotion('reduce')]: {
+            transition: `opacity 0.2s ease-in-out`,
+            opacity: 1,
+          },
         },
       },
     }),
@@ -287,13 +321,13 @@ const getStyles = (theme: GrafanaTheme2) => {
     // but we don't want the backdrop styling to apply over the top bar as it looks weird
     // instead have a child pseudo element to apply the backdrop styling below the top bar
     mask: css({
-      // The !important here is to override the default .rc-drawer-mask styles
-      backgroundColor: 'transparent !important',
-      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
-      position: 'fixed !important' as 'fixed',
+      inset: 0,
+      pointerEvents: 'auto',
+      position: 'fixed',
+      zIndex: theme.zIndex.modalBackdrop,
 
       '&:before': {
-        backgroundColor: `${theme.components.overlay.background} !important`,
+        backgroundColor: theme.components.overlay.background,
         bottom: 0,
         content: '""',
         left: 0,
@@ -308,7 +342,9 @@ const getStyles = (theme: GrafanaTheme2) => {
 
         '&-active': {
           opacity: 1,
-          transition: theme.transitions.create('opacity'),
+          [theme.transitions.handleMotion('no-preference', 'reduce')]: {
+            transition: theme.transitions.create('opacity'),
+          },
         },
       },
     }),
@@ -352,13 +388,27 @@ const getStyles = (theme: GrafanaTheme2) => {
 };
 
 function getWrapperStyles(theme: GrafanaTheme2, size: 'sm' | 'md' | 'lg') {
-  return css({
-    label: `drawer-content-wrapper-${size}`,
-    overflow: 'unset !important',
+  const visualRefreshEnabled = theme.flags.visualDesignRefresh;
+  return css(
+    {
+      backgroundColor: theme.colors.background.primary,
+      bottom: 0,
+      label: `drawer-content-wrapper-${size}`,
+      position: 'absolute',
+      right: 0,
+      top: 0,
+      zIndex: theme.zIndex.modalBackdrop,
 
-    [theme.breakpoints.down('md')]: {
-      width: `calc(100% - ${theme.spacing(2)}) !important`,
-      minWidth: '0 !important',
+      [theme.breakpoints.down('md')]: {
+        width: `calc(100% - ${theme.spacing(2)}) !important`,
+        minWidth: '0 !important',
+      },
     },
-  });
+    visualRefreshEnabled && {
+      borderRadius: theme.shape.radius.lg,
+      bottom: theme.spacing(1),
+      right: theme.spacing(1),
+      top: theme.spacing(1),
+    }
+  );
 }

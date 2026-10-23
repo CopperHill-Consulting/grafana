@@ -48,6 +48,16 @@ func TestAllowQuery(t *testing.T) {
 			err:  nil,
 		},
 		{
+			name: "allows NOT expression",
+			q:    `SELECT * FROM a_table WHERE NOT a_column`,
+			err:  nil,
+		},
+		{
+			name: "allows NOT with parenthesized expression",
+			q:    `SELECT * FROM a_table WHERE NOT (a_column > 5)`,
+			err:  nil,
+		},
+		{
 			name: "null literal",
 			q:    `SELECT 1 as id, NULL as null_col`,
 			err:  nil,
@@ -91,6 +101,174 @@ func TestAllowQuery(t *testing.T) {
 			name: "json table",
 			q:    "SELECT * FROM mockGitHubIssuesDSResponse, JSON_TABLE(labels, '$[*]' COLUMNS(val VARCHAR(255) PATH '$')) AS jt WHERE CAST(jt.val AS CHAR) LIKE 'type%'",
 			err:  nil,
+		},
+		{
+			name: "json aggregation",
+			q: `SELECT JSON_ARRAYAGG(JSON_OBJECT('color', color, 'value', value)) AS result
+		        FROM (
+		            SELECT 'red' AS color, 10 AS value UNION ALL
+		            SELECT 'blue', 20 UNION ALL
+		            SELECT 'green', 30
+		        ) AS t;`,
+			err: nil,
+		},
+
+		// Functions in ORDER BY on a UNION bypass the allowlist
+		// because SetOp.walkSubtree only walks Left and Right.
+		{
+			name: "blocked: SLEEP in UNION ORDER BY",
+			q:    `SELECT 1 AS v FROM a UNION SELECT 2 AS v FROM a ORDER BY SLEEP(1)`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: LOAD_FILE in UNION ORDER BY",
+			q:    `SELECT 1 AS v FROM a UNION SELECT 2 AS v FROM a ORDER BY LOAD_FILE('/etc/hostname')`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: LOAD_FILE in CASE in UNION ORDER BY",
+			q:    `SELECT 1 AS v FROM a UNION SELECT 2 AS v FROM a ORDER BY CASE WHEN LOAD_FILE('/etc/passwd') IS NOT NULL THEN 1 ELSE 2 END`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: MD5 in UNION ORDER BY",
+			q:    `SELECT 1 AS v FROM a UNION SELECT 2 AS v FROM a ORDER BY MD5('test')`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// LOAD_FILE with timing oracle for blind file read
+		{
+			name: "blocked: LOAD_FILE timing oracle in UNION ORDER BY",
+			q:    `SELECT 1 AS v FROM a UNION SELECT 2 AS v FROM a ORDER BY SLEEP(IF(ASCII(SUBSTRING(LOAD_FILE('/etc/hostname'), 1, 1)) >= 64, 1, 0))`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// Named WINDOW clauses
+		{
+			name: "allowed: named WINDOW clause",
+			q:    `SELECT val, ROW_NUMBER() OVER w FROM a WINDOW w AS (ORDER BY val)`,
+			err:  nil,
+		},
+		{
+			name: "blocked: LOAD_FILE in named WINDOW clause",
+			q:    `SELECT val, ROW_NUMBER() OVER w FROM a WINDOW w AS (ORDER BY LOAD_FILE('/etc/passwd'))`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// FOR UPDATE / LOCK clauses
+		{
+			name: "blocked: SELECT FOR UPDATE",
+			q:    `SELECT * FROM a FOR UPDATE`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: UNION FOR UPDATE",
+			q:    `SELECT 1 FROM a UNION SELECT 2 FROM a FOR UPDATE`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// INTO OUTFILE / DUMPFILE — file write vectors
+		{
+			name: "blocked: SELECT INTO OUTFILE",
+			q:    `SELECT * FROM a INTO OUTFILE '/tmp/pwned'`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: SELECT INTO DUMPFILE",
+			q:    `SELECT * FROM a INTO DUMPFILE '/tmp/pwned'`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: UNION INTO OUTFILE",
+			q:    `SELECT 1 AS v FROM a UNION SELECT 2 AS v FROM a INTO OUTFILE '/tmp/pwned'`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// BENCHMARK — timing attack alternative to SLEEP
+		{
+			name: "blocked: BENCHMARK in UNION ORDER BY",
+			q:    `SELECT 1 AS v FROM a UNION SELECT 2 AS v FROM a ORDER BY BENCHMARK(10000000, SHA1('test'))`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// Error-based extraction functions
+		{
+			name: "blocked: EXTRACTVALUE for error-based extraction",
+			q:    `SELECT EXTRACTVALUE(1, CONCAT(0x7e, LOAD_FILE('/etc/passwd')))`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: UPDATEXML for error-based extraction",
+			q:    `SELECT UPDATEXML(1, CONCAT(0x7e, LOAD_FILE('/etc/passwd')), 1)`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// Blocked function in SetOp LIMIT (walkNodes covers v.Limit)
+		{
+			name: "blocked: SLEEP in UNION LIMIT",
+			q:    `SELECT 1 FROM a UNION SELECT 2 FROM a LIMIT SLEEP(1)`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// Blocked function in CTE on a UNION (walkNodes covers v.With)
+		{
+			name: "blocked: SLEEP in CTE on UNION",
+			q:    `WITH x AS (SELECT SLEEP(1)) SELECT * FROM a UNION SELECT * FROM b`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// Named WINDOW with PARTITION BY
+		{
+			name: "blocked: LOAD_FILE in named WINDOW PARTITION BY",
+			q:    `SELECT val, SUM(val) OVER w FROM a WINDOW w AS (PARTITION BY LOAD_FILE('/etc/passwd'))`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// Nested UNION — blocked function in inner SetOp ORDER BY
+		{
+			name: "blocked: SLEEP in nested UNION ORDER BY",
+			q:    `(SELECT 1 FROM a UNION SELECT 2 FROM a ORDER BY SLEEP(1)) UNION SELECT 3 FROM a`,
+			err:  &ErrorWithCategory{},
+		},
+
+		// Legitimate UNION with ORDER BY using allowed expressions still works
+		{
+			name: "allowed: UNION with ORDER BY column ref",
+			q:    `SELECT val FROM a UNION SELECT val FROM b ORDER BY val`,
+			err:  nil,
+		},
+		{
+			name: "allowed: UNION with ORDER BY and LIMIT",
+			q:    `SELECT val FROM a UNION ALL SELECT val FROM b ORDER BY val LIMIT 10`,
+			err:  nil,
+		},
+
+		// === @@system variable access ===
+
+		{
+			name: "blocked: @@hostname",
+			q:    `SELECT @@hostname FROM a`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: @@version",
+			q:    `SELECT @@version FROM a`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: @@global.hostname",
+			q:    `SELECT @@global.hostname FROM a`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: @@secure_file_priv",
+			q:    `SELECT @@secure_file_priv FROM a`,
+			err:  &ErrorWithCategory{},
+		},
+		{
+			name: "blocked: @user_variable",
+			q:    `SELECT @myvar FROM a`,
+			err:  &ErrorWithCategory{},
 		},
 	}
 	for _, tc := range testCases {
@@ -215,9 +393,11 @@ SELECT
   STDDEV(value) AS agg_stddev,
   STD(value) AS agg_std,
   STDDEV_POP(value) AS agg_stddev_pop,
+  STDDEV_SAMPLE(value) AS agg_stddev_sample,
   VARIANCE(value) AS agg_variance,
   VAR_POP(value) AS agg_var_pop,
-  
+  VAR_SAMP(value) AS agg_var_samp,
+
   -- Mathematical functions
   ABS(value) AS math_abs,
   ROUND(value, 2) AS math_round,
@@ -229,6 +409,7 @@ SELECT
   POWER(value, 2) AS math_power,
   MOD(value, 10) AS math_mod,
   LOG(value) AS math_log,
+  LOG2(value) AS math_log2,
   LOG10(value) AS math_log10,
   EXP(value) AS math_exp,
   SIGN(value) AS math_sign,
@@ -245,13 +426,25 @@ SELECT
   -- Date functions
   STR_TO_DATE('2023-01-01', '%Y-%m-%d') AS date_str_to_date,
   DATE_FORMAT('2025-01-01 00:00:00', '%Y-%m-%d') AS date_format,
+  DATE_FORMAT('2003-10-03',GET_FORMAT(DATE,'EUR')) AS date_format_eur,
   '2025-01-01 00:00:00' AS date_now,
   DATE_ADD(created_at, INTERVAL 1 DAY) AS date_add,
   DATE_SUB(created_at, INTERVAL 1 DAY) AS date_sub,
+  ADDDATE(created_at, INTERVAL 1 DAY) AS date_adddate,
+  SUBDATE(created_at, INTERVAL 1 DAY) AS date_subdate,
   YEAR(created_at) AS date_year,
   MONTH(created_at) AS date_month,
   DAY(created_at) AS date_day,
+  MICROSECOND(created_at) AS date_microsecond,
+  FROM_DAYS(738123) AS date_from_days,
+  TO_DAYS(created_at) AS date_to_days,
+  TIME(created_at) AS date_time,
+  TIME_FORMAT(created_at, '%H:%i:%s') AS date_time_format,
+  TIMEDIFF(created_at, '2025-01-01 00:00:00') AS date_timediff,
   WEEKDAY(created_at) AS date_weekday,
+  LAST_DAY(created_at) AS date_last_day,
+  YEARWEEK(created_at) AS date_yearweek,
+  WEEKOFYEAR(created_at) AS date_weekofyear,
   DATEDIFF('2025-01-01 00:00:00', created_at) AS date_datediff,
   UNIX_TIMESTAMP(created_at) AS date_unix_timestamp,
   FROM_UNIXTIME(1634567890) AS date_from_unixtime,
@@ -266,6 +459,8 @@ LIMIT 10`
 var example_json_functions = `SELECT 
   JSON_OBJECT('key1', 'value1', 'key2', 10) AS json_obj,
   JSON_ARRAY(1, 'abc', NULL, TRUE) AS json_arr,
+  JSON_ARRAY_APPEND('{"a": 1}', '$.b', 2) AS json_array_append,
+  JSON_ARRAY_INSERT('{"a": 1}', '$.b', 2) AS json_array_insert,
   JSON_EXTRACT('{"id": 123, "name": "test"}', '$.id') AS json_ext,
   JSON_UNQUOTE(JSON_EXTRACT('{"name": "test"}', '$.name')) AS json_unq,
   JSON_CONTAINS('{"a": 1, "b": 2}', '{"a": 1}') AS json_contains,
@@ -273,6 +468,13 @@ var example_json_functions = `SELECT
   JSON_REMOVE('{"a": 1, "b": 2}', '$.b') AS json_remove,
   JSON_LENGTH('{"a": 1, "b": {"c": 3}}') AS json_len,
   JSON_SEARCH('{"a": "xyz", "b": "abc"}', 'one', 'abc') AS json_search,
+  JSON_MERGE('{"a": 1}', '{"b": 2}') AS json_merge,
+  JSON_MERGE_PRESERVE('{"a": 1}', '{"b": 2}') AS json_merge_preserve,
+  JSON_CONTAINS_PATH('{"a": 1, "b": 2}', 'one', '$.a') AS json_contains_path,
+  JSON_DEPTH('{"a": 1, "b": {"c": 2}}') AS json_depth,
+  JSON_OVERLAPS('{"a": 1, "b": 2}', '{"b": 2, "c": 3}') AS json_overlaps,
+  JSON_PRETTY('{"a": 1, "b": 2}') AS json_pretty,
+  JSON_VALUE('{"a": 1, "b": 2}', '$.a') AS json_value,
   JSON_TYPE('{"a": 1}') AS json_type`
 
 var example_many_more_allowed_functions = `
@@ -280,13 +482,17 @@ SELECT
   -- Math functions
   LN(10) as ln_val,
   TRUNCATE(12.345, 2) as truncate_val,
+  CONV('a',16,2) as conv_val,
   SIN(0.5) as sin_val,
   COS(0.5) as cos_val,
+  COT(0.5) as cot_val,
   TAN(0.5) as tan_val,
   ASIN(0.5) as asin_val,
   ACOS(0.5) as acos_val,
   ATAN(0.5) as atan_val,
   ATAN2(1, 2) as atan2_val,
+  DEGREES(0.5) as degrees_val,
+  RADIANS(0.5) as radians_val,
   RAND() as rand_val,
   PI() as pi_val,
   
@@ -307,8 +513,19 @@ SELECT
   ASCII('A') as ascii_val,
   ORD('A') as ord_val,
   CHAR(65) as char_val,
+  ELT(2, 'one', 'two', 'three') as elt_val,
+  FROM_BASE64('SGVsbG8sIFdvcmxkIQ==') as from_base64_val,
+  FORMAT(12332.123456, 4) as format_val,
+  QUOTE('hello') as quote_val,
+
+  -- Regex
+  'a' REGEXP '^[a-d]' AS regexp_val,
   REGEXP_SUBSTR('hello world', 'world') as regexp_substr_val,
-  
+  REGEXP_REPLACE('hello world', 'world', 'gopher') as regexp_replace_val,
+  REGEXP_INSTR('dog cat dog', 'dog') as regexp_instr_val,
+  REGEXP_LIKE('Michael!', '.*') as regexp_like_val,
+
+
   -- Date functions
   EXTRACT(YEAR FROM '2023-01-01') as extract_val,
   HOUR('12:34:56') as hour_val,
@@ -350,8 +567,10 @@ SELECT
   ROW_NUMBER() OVER (ORDER BY val) as row_num,
   RANK() OVER (ORDER BY val) as rank_val,
   DENSE_RANK() OVER (ORDER BY val) as dense_rank_val,
+  PERCENT_RANK() OVER (ORDER BY val) as percent_rank_val,
   LEAD(val) OVER (ORDER BY val) as lead_val,
   LAG(val) OVER (ORDER BY val) as lag_val,
   FIRST_VALUE(val) OVER (ORDER BY val) as first_val,
+  NTILE(2) OVER (ORDER BY val) as ntile_val,
   LAST_VALUE(val) OVER (ORDER BY val ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as last_val
 FROM dummy_data;`

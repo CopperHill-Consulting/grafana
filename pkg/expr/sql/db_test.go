@@ -5,6 +5,7 @@ package sql
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -80,56 +81,105 @@ func TestQueryFramesInOut(t *testing.T) {
 		Name:  "a",
 		Fields: []*data.Field{
 			data.NewField("time", nil, []time.Time{time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC), time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)}),
-			data.NewField("time_nullable", nil, []*time.Time{p(time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)), nil}),
+			data.NewField("time_nullable", nil, []*time.Time{new(time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)), nil}),
 
 			data.NewField("string", nil, []string{"cat", "dog"}),
-			data.NewField("null_nullable", nil, []*string{p("cat"), nil}),
+			data.NewField("null_nullable", nil, []*string{new("cat"), nil}),
 
 			data.NewField("bool", nil, []bool{true, false}),
-			data.NewField("bool_nullable", nil, []*bool{p(true), nil}),
+			data.NewField("bool_nullable", nil, []*bool{new(true), nil}),
 
 			// Floats
 			data.NewField("float32", nil, []float32{1, 3}),
-			data.NewField("float32_nullable", nil, []*float32{p(float32(2.0)), nil}),
+			data.NewField("float32_nullable", nil, []*float32{new(float32(2.0)), nil}),
 
 			data.NewField("float64", nil, []float64{1, 3}),
-			data.NewField("float64_nullable", nil, []*float64{p(float64(2.0)), nil}),
+			data.NewField("float64_nullable", nil, []*float64{new(float64(2.0)), nil}),
 
 			// Ints
 			data.NewField("int8", nil, []int8{1, 3}),
-			data.NewField("int8_nullable", nil, []*int8{p(int8(2)), nil}),
+			data.NewField("int8_nullable", nil, []*int8{new(int8(2)), nil}),
 
 			data.NewField("int16", nil, []int16{1, 3}),
-			data.NewField("int16_nullable", nil, []*int16{p(int16(2)), nil}),
+			data.NewField("int16_nullable", nil, []*int16{new(int16(2)), nil}),
 
 			data.NewField("int32", nil, []int32{1, 3}),
-			data.NewField("int32_nullable", nil, []*int32{p(int32(2)), nil}),
+			data.NewField("int32_nullable", nil, []*int32{new(int32(2)), nil}),
 
 			data.NewField("int64", nil, []int64{1, 3}),
-			data.NewField("int64_nullable", nil, []*int64{p(int64(2)), nil}),
+			data.NewField("int64_nullable", nil, []*int64{new(int64(2)), nil}),
 
 			// Unsigned Ints
 			data.NewField("uint8", nil, []uint8{1, 3}),
-			data.NewField("uint8_nullable", nil, []*uint8{p(uint8(2)), nil}),
+			data.NewField("uint8_nullable", nil, []*uint8{new(uint8(2)), nil}),
 
 			data.NewField("uint16", nil, []uint16{1, 3}),
-			data.NewField("uint16_nullable", nil, []*uint16{p(uint16(2)), nil}),
+			data.NewField("uint16_nullable", nil, []*uint16{new(uint16(2)), nil}),
 
 			data.NewField("uint32", nil, []uint32{1, 3}),
-			data.NewField("uint32_nullable", nil, []*uint32{p(uint32(2)), nil}),
+			data.NewField("uint32_nullable", nil, []*uint32{new(uint32(2)), nil}),
 
 			data.NewField("uint64", nil, []uint64{1, 3}),
-			data.NewField("uint64_nullable", nil, []*uint64{p(uint64(2)), nil}),
+			data.NewField("uint64_nullable", nil, []*uint64{new(uint64(2)), nil}),
+		},
+	}
+
+	// Same as input but float32/64 fields always become nullable so NaN/Inf can be mapped to null
+	expected := &data.Frame{
+		RefID: "b",
+		Name:  "b",
+		Fields: []*data.Field{
+			data.NewField("time", nil, []time.Time{time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC), time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)}),
+			data.NewField("time_nullable", nil, []*time.Time{new(time.Date(2025, 1, 2, 3, 4, 5, 0, time.UTC)), nil}),
+
+			data.NewField("string", nil, []string{"cat", "dog"}),
+			data.NewField("null_nullable", nil, []*string{new("cat"), nil}),
+
+			data.NewField("bool", nil, []bool{true, false}),
+			data.NewField("bool_nullable", nil, []*bool{new(true), nil}),
+
+			// Floats
+			data.NewField("float32", nil, []*float32{new(float32(1)), new(float32(3))}),
+			data.NewField("float32_nullable", nil, []*float32{new(float32(2.0)), nil}),
+
+			data.NewField("float64", nil, []*float64{new(float64(1)), new(float64(3))}),
+			data.NewField("float64_nullable", nil, []*float64{new(float64(2.0)), nil}),
+
+			// Ints
+			data.NewField("int8", nil, []int8{1, 3}),
+			data.NewField("int8_nullable", nil, []*int8{new(int8(2)), nil}),
+
+			data.NewField("int16", nil, []int16{1, 3}),
+			data.NewField("int16_nullable", nil, []*int16{new(int16(2)), nil}),
+
+			data.NewField("int32", nil, []int32{1, 3}),
+			data.NewField("int32_nullable", nil, []*int32{new(int32(2)), nil}),
+
+			data.NewField("int64", nil, []int64{1, 3}),
+			data.NewField("int64_nullable", nil, []*int64{new(int64(2)), nil}),
+
+			// Unsigned Ints
+			data.NewField("uint8", nil, []uint8{1, 3}),
+			data.NewField("uint8_nullable", nil, []*uint8{new(uint8(2)), nil}),
+
+			data.NewField("uint16", nil, []uint16{1, 3}),
+			data.NewField("uint16_nullable", nil, []*uint16{new(uint16(2)), nil}),
+
+			data.NewField("uint32", nil, []uint32{1, 3}),
+			data.NewField("uint32_nullable", nil, []*uint32{new(uint32(2)), nil}),
+
+			data.NewField("uint64", nil, []uint64{1, 3}),
+			data.NewField("uint64_nullable", nil, []*uint64{new(uint64(2)), nil}),
 		},
 	}
 
 	db := DB{}
 	qry := `SELECT * from a`
 
-	resultFrame, err := db.QueryFrames(context.Background(), &testTracer{}, "a", qry, []*data.Frame{frameA})
+	resultFrame, err := db.QueryFrames(context.Background(), &testTracer{}, "b", qry, []*data.Frame{frameA})
 	require.NoError(t, err)
 
-	if diff := cmp.Diff(frameA, resultFrame, data.FrameTestCompareOptions()...); diff != "" {
+	if diff := cmp.Diff(expected, resultFrame, data.FrameTestCompareOptions()...); diff != "" {
 		require.FailNowf(t, "Result mismatch (-want +got):%s\n", diff)
 	}
 }
@@ -139,7 +189,7 @@ func TestQueryFramesNumericSelect(t *testing.T) {
 		RefID: "a",
 		Name:  "a",
 		Fields: []*data.Field{
-			data.NewField("decimal", nil, []float64{2.35}),
+			data.NewField("decimal", nil, []*float64{new(2.35)}),
 			data.NewField("tinySigned", nil, []int8{-128}),
 			data.NewField("smallSigned", nil, []int16{-32768}),
 			data.NewField("mediumSigned", nil, []int32{-8388608}),
@@ -180,7 +230,7 @@ func TestQueryFramesDateTimeSelect(t *testing.T) {
 		Name:  "a",
 		Fields: []*data.Field{
 			data.NewField("ts", nil, []*time.Time{
-				p(time.Date(2025, 2, 3, 3, 0, 0, 0, time.UTC)),
+				new(time.Date(2025, 2, 3, 3, 0, 0, 0, time.UTC)),
 			}),
 		},
 	}
@@ -197,16 +247,35 @@ func TestQueryFramesDateTimeSelect(t *testing.T) {
 	}
 }
 
-func TestErrorsFromGoMySQLServerAreFlagged(t *testing.T) {
-	const GmsNotImplemented = "TRUNCATE" // not implemented in go-mysql-server as of 2025-04-11
+func TestNaNBecomesNull(t *testing.T) {
+	f := &data.Frame{
+		RefID: "a",
+		Name:  "a",
+		Fields: []*data.Field{
+			data.NewField("d", nil, []float64{2.35, math.NaN()}),
+			data.NewField("e", nil, []*float64{new(3.1), new(math.NaN())}),
+		},
+	}
+
+	expectedFrame := &data.Frame{
+		RefID: "b",
+		Name:  "b",
+		Fields: []*data.Field{
+			data.NewField("d", nil, []*float64{new(2.35), nil}),
+			data.NewField("e", nil, []*float64{new(3.1), nil}),
+		},
+	}
 
 	db := DB{}
+	qry := `SELECT * FROM a`
 
-	query := `SELECT ` + GmsNotImplemented + `(123.456, 2);`
+	ret, err := db.QueryFrames(context.Background(), &testTracer{}, "b", qry, []*data.Frame{f})
 
-	_, err := db.QueryFrames(context.Background(), &testTracer{}, "sqlExpressionRefId", query, nil)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "error from the sql expression engine")
+	if diff := cmp.Diff(expectedFrame, ret, data.FrameTestCompareOptions()...); diff != "" {
+		require.FailNowf(t, "Result mismatch (-want +got):%s\n", diff)
+	}
+
+	require.NoError(t, err)
 }
 
 func TestFrameToSQLAndBack_JSONRoundtrip(t *testing.T) {
@@ -330,9 +399,19 @@ func TestQueryFrames_Limits(t *testing.T) {
 	}
 }
 
-// p is a utility for pointers from constants
-func p[T any](v T) *T {
-	return &v
+// TestQueryFrames_FileReadsDisabled verifies the engine-level defense-in-depth:
+// even if a file-reading query bypasses the query guard, the go-mysql-server
+// context disables LOAD_FILE via WithDisableFileReads.
+func TestQueryFrames_FileReadsDisabled(t *testing.T) {
+	// Use a permissive guard so the query reaches the engine instead of being
+	// rejected by the default AllowQuery parser guard.
+	db := DB{queryGuard: func(refID, rawSQL string) (bool, error) { return true, nil }}
+
+	_, err := db.QueryFrames(context.Background(), &testTracer{}, "a",
+		`SELECT LOAD_FILE('/etc/hostname') AS v`, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "file read operations")
 }
 
 type testTracer struct {
@@ -361,4 +440,7 @@ func (ts *testSpan) IsRecording() bool {
 }
 
 func (ts *testSpan) AddEvent(name string, options ...trace.EventOption) {
+}
+
+func (ts *testSpan) RecordError(err error, options ...trace.EventOption) {
 }

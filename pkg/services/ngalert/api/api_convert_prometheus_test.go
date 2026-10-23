@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	amconfig "github.com/prometheus/alertmanager/config"
-	"github.com/prometheus/alertmanager/pkg/labels"
 	prommodel "github.com/prometheus/common/model"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 
+	"github.com/grafana/grafana/pkg/api/response"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
+	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	"github.com/grafana/grafana/pkg/infra/log"
 	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/datasources"
@@ -28,6 +28,9 @@ import (
 	acfakes "github.com/grafana/grafana/pkg/services/ngalert/accesscontrol/fakes"
 	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 	"github.com/grafana/grafana/pkg/services/ngalert/models"
+	"github.com/grafana/grafana/pkg/services/ngalert/notifier"
+	v1 "github.com/grafana/grafana/pkg/services/ngalert/notifier/legacy_storage/v1"
+	"github.com/grafana/grafana/pkg/services/ngalert/notifier/merge"
 	"github.com/grafana/grafana/pkg/services/ngalert/provisioning"
 	"github.com/grafana/grafana/pkg/services/ngalert/store"
 	"github.com/grafana/grafana/pkg/services/ngalert/tests/fakes"
@@ -41,6 +44,116 @@ const (
 	existingDSUID = "test-ds"
 )
 
+func TestRouteConvertPrometheusPostRuleGroups_ExternalRulerSyncGate(t *testing.T) {
+	group := apimodels.PrometheusRuleGroup{
+		Name:  "g",
+		Rules: []apimodels.PrometheusRule{{Alert: "A", Expr: "up == 0"}},
+	}
+
+	const managedFolderUID = "managed-folder"
+
+	// postToFolder issues an import whose working folder is folderUID (via the
+	// folder header), so the folder-scoped gate can be exercised per case.
+	postToFolder := func(srv *ConvertPrometheusSrv, folderUID string) response.Response {
+		rc := createRequestCtx()
+		rc.Req.Header.Set(folderUIDHeader, folderUID)
+		return srv.RouteConvertPrometheusPostRuleGroup(rc, "test", group)
+	}
+
+	t.Run("allows when ruler sync is not configured", func(t *testing.T) {
+		srv, _, _ := createConvertPrometheusSrv(t, withRulerSync(fakeRulerSyncChecker{
+			configured:     false,
+			managedFolders: map[string]bool{managedFolderUID: true},
+		}))
+		resp := postToFolder(srv, managedFolderUID)
+		require.Equal(t, http.StatusAccepted, resp.Status())
+	})
+
+	t.Run("allows when configured but import targets a non-managed folder", func(t *testing.T) {
+		srv, _, _ := createConvertPrometheusSrv(t, withRulerSync(fakeRulerSyncChecker{
+			configured:     true,
+			managedFolders: map[string]bool{managedFolderUID: true},
+		}))
+		resp := postToFolder(srv, "some-other-folder")
+		require.Equal(t, http.StatusAccepted, resp.Status())
+	})
+
+	t.Run("rejects with 409 when configured and import targets the managed folder", func(t *testing.T) {
+		srv, _, _ := createConvertPrometheusSrv(t, withRulerSync(fakeRulerSyncChecker{
+			configured:     true,
+			managedFolders: map[string]bool{managedFolderUID: true},
+		}))
+		resp := postToFolder(srv, managedFolderUID)
+		require.Equal(t, http.StatusConflict, resp.Status())
+		require.Contains(t, string(resp.Body()), "external ruler sync")
+	})
+}
+
+func TestRouteConvertPrometheusDelete_ExternalRulerSyncGate(t *testing.T) {
+	const managedFolderUID = "managed-folder"
+	sync := withRulerSync(fakeRulerSyncChecker{
+		configured:     true,
+		managedFolders: map[string]bool{managedFolderUID: true},
+	})
+
+	t.Run("DeleteNamespace rejects with 409 in the managed folder", func(t *testing.T) {
+		srv, _, _ := createConvertPrometheusSrv(t, sync)
+		rc := createRequestCtx()
+		rc.Req.Header.Set(folderUIDHeader, managedFolderUID)
+		resp := srv.RouteConvertPrometheusDeleteNamespace(rc, "test-ns")
+		require.Equal(t, http.StatusConflict, resp.Status())
+		require.Contains(t, string(resp.Body()), "external ruler sync")
+	})
+
+	t.Run("DeleteRuleGroup rejects with 409 in the managed folder", func(t *testing.T) {
+		srv, _, _ := createConvertPrometheusSrv(t, sync)
+		rc := createRequestCtx()
+		rc.Req.Header.Set(folderUIDHeader, managedFolderUID)
+		resp := srv.RouteConvertPrometheusDeleteRuleGroup(rc, "test-ns", "test-group")
+		require.Equal(t, http.StatusConflict, resp.Status())
+		require.Contains(t, string(resp.Body()), "external ruler sync")
+	})
+}
+
+func TestRouteConvertPrometheus_ExternalRulerSyncGate_ResolvedFolder(t *testing.T) {
+	group := apimodels.PrometheusRuleGroup{
+		Name:  "g",
+		Rules: []apimodels.PrometheusRule{{Alert: "A", Expr: "up == 0"}},
+	}
+	// A namespace set to the sync root's own title, imported/deleted with no folder
+	// header, resolves straight to the top-level managed folder — the gate must catch
+	// that even though the working (root) folder isn't itself managed.
+	const syncRootTitle = "[Alerting] External Ruler Sync (test-ds)"
+	const managedUID = "sync-root-uid"
+
+	setup := func(t *testing.T) *ConvertPrometheusSrv {
+		srv, _, ruleStore := createConvertPrometheusSrv(t, withRulerSync(fakeRulerSyncChecker{
+			configured:     true,
+			managedFolders: map[string]bool{managedUID: true},
+		}))
+		ruleStore.Folders[1] = append(ruleStore.Folders[1], &folder.Folder{
+			UID:       managedUID,
+			Title:     syncRootTitle,
+			ParentUID: folder.LegacyRootFolderUID, //nolint:staticcheck
+		})
+		return srv
+	}
+
+	t.Run("POST resolving to the managed folder by namespace title is rejected", func(t *testing.T) {
+		srv := setup(t)
+		resp := srv.RouteConvertPrometheusPostRuleGroup(createRequestCtx(), syncRootTitle, group)
+		require.Equal(t, http.StatusConflict, resp.Status())
+		require.Contains(t, string(resp.Body()), "external ruler sync")
+	})
+
+	t.Run("DELETE resolving to the managed folder by namespace title is rejected", func(t *testing.T) {
+		srv := setup(t)
+		resp := srv.RouteConvertPrometheusDeleteNamespace(createRequestCtx(), syncRootTitle)
+		require.Equal(t, http.StatusConflict, resp.Status())
+		require.Contains(t, string(resp.Body()), "external ruler sync")
+	})
+}
+
 func TestRouteConvertPrometheusPostRuleGroup(t *testing.T) {
 	simpleGroup := apimodels.PrometheusRuleGroup{
 		Name:     "Test Group",
@@ -49,7 +162,7 @@ func TestRouteConvertPrometheusPostRuleGroup(t *testing.T) {
 			{
 				Alert: "TestAlert",
 				Expr:  "up == 0",
-				For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+				For:   new(prommodel.Duration(5 * time.Minute)),
 				Labels: map[string]string{
 					"severity": "critical",
 				},
@@ -73,6 +186,46 @@ func TestRouteConvertPrometheusPostRuleGroup(t *testing.T) {
 
 		require.Equal(t, http.StatusBadRequest, response.Status())
 		require.Contains(t, string(response.Body()), "Missing datasource UID header")
+	})
+
+	t.Run("without datasource UID header but with config default should succeed", func(t *testing.T) {
+		srv, _, ruleStore := createConvertPrometheusSrv(t)
+		// Set the config default
+		srv.cfg.PrometheusConversion.DefaultDatasourceUID = existingDSUID
+
+		rc := createRequestCtx()
+		rc.Req.Header.Set(datasourceUIDHeader, "")
+
+		response := srv.RouteConvertPrometheusPostRuleGroup(rc, "test", simpleGroup)
+
+		require.Equal(t, http.StatusAccepted, response.Status())
+
+		// Verify that the config default datasource was used
+		assertRulesUseDatasource(t, ruleStore, existingDSUID, 2)
+	})
+
+	t.Run("header should take precedence over config default", func(t *testing.T) {
+		srv, dsCache, ruleStore := createConvertPrometheusSrv(t)
+		// Add another datasource
+		anotherDS := &datasources.DataSource{
+			UID:  "another-ds",
+			Type: datasources.DS_PROMETHEUS,
+		}
+		dsCache.DataSources = append(dsCache.DataSources, anotherDS)
+
+		// Set the config default to one DS
+		srv.cfg.PrometheusConversion.DefaultDatasourceUID = "another-ds"
+
+		// But use the header to specify a different one
+		rc := createRequestCtx()
+		rc.Req.Header.Set(datasourceUIDHeader, existingDSUID)
+
+		response := srv.RouteConvertPrometheusPostRuleGroup(rc, "test", simpleGroup)
+
+		require.Equal(t, http.StatusAccepted, response.Status())
+
+		// Verify that the header datasource was used, not the config default
+		assertRulesUseDatasource(t, ruleStore, existingDSUID, 2)
 	})
 
 	t.Run("with invalid datasource should return error", func(t *testing.T) {
@@ -417,7 +570,7 @@ func TestRouteConvertPrometheusPostRuleGroup(t *testing.T) {
 				{
 					Alert: "TestAlert",
 					Expr:  "up == 0",
-					For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+					For:   new(prommodel.Duration(5 * time.Minute)),
 					Labels: map[string]string{
 						"severity": "critical",
 					},
@@ -506,6 +659,68 @@ func TestRouteConvertPrometheusPostRuleGroup(t *testing.T) {
 		}
 	})
 
+	t.Run("with version message header should pass message to rule store", func(t *testing.T) {
+		provenanceStore := fakes.NewFakeProvisioningStore()
+		folderService := foldertest.NewFakeService()
+		srv, _, ruleStore := createConvertPrometheusSrv(t, withProvenanceStore(provenanceStore), withFolderService(folderService))
+
+		// Create a folder in the root
+		fldr := randFolder()
+		fldr.ParentUID = ""
+		folderService.ExpectedFolder = fldr
+		folderService.ExpectedFolders = []*folder.Folder{fldr}
+		ruleStore.Folders[1] = append(ruleStore.Folders[1], fldr)
+
+		makeGroup := func(alertname string) apimodels.PrometheusRuleGroup {
+			return apimodels.PrometheusRuleGroup{
+				Name:     "Test Group",
+				Interval: prommodel.Duration(1 * time.Minute),
+				Rules: []apimodels.PrometheusRule{
+					{
+						Alert: alertname,
+						Expr:  "up == 0",
+						For:   new(prommodel.Duration(5 * time.Minute)),
+						Labels: map[string]string{
+							"severity": "critical",
+						},
+					},
+				},
+			}
+		}
+
+		// Create a rule with the X-Grafana-Alerting-Version-Message to check it's passed to InsertRule.
+
+		rc1 := createRequestCtx()
+		rc1.Req.Header.Set("X-Grafana-Alerting-Version-Message", "version #1")
+		response1 := srv.RouteConvertPrometheusPostRuleGroup(rc1, fldr.Title, makeGroup("AlertV1"))
+		require.Equal(t, http.StatusAccepted, response1.Status())
+
+		inserts := ruleStore.GetRecordedCommands(func(cmd any) (any, bool) {
+			a, ok := cmd.([]models.InsertRule)
+			return a, ok
+		})
+		require.Len(t, inserts, 1)
+		cmd1 := inserts[0].([]models.InsertRule)
+		require.Len(t, cmd1, 1)
+		require.Equal(t, "version #1", cmd1[0].Message)
+
+		// Now update the rule to check it gets passed to UpdateRule.
+
+		rc2 := createRequestCtx()
+		rc2.Req.Header.Set("X-Grafana-Alerting-Version-Message", "version #2")
+		response2 := srv.RouteConvertPrometheusPostRuleGroup(rc2, fldr.Title, makeGroup("AlertV2"))
+		require.Equal(t, http.StatusAccepted, response2.Status())
+
+		updates := ruleStore.GetRecordedCommands(func(cmd any) (any, bool) {
+			a, ok := cmd.([]models.UpdateRule)
+			return a, ok
+		})
+		require.Len(t, updates, 1)
+		cmd2 := updates[0].([]models.UpdateRule)
+		require.Len(t, cmd2, 1)
+		require.Equal(t, "version #2", cmd2[0].Message)
+	})
+
 	t.Run("returns error when target datasource does not exist", func(t *testing.T) {
 		srv, _, _ := createConvertPrometheusSrv(t)
 		rc := createRequestCtx()
@@ -553,95 +768,128 @@ func TestRouteConvertPrometheusPostRuleGroup(t *testing.T) {
 		require.Equal(t, targetDSUID, remaining[0].Record.TargetDatasourceUID)
 	})
 
-	t.Run("sets notification settings for rules if specified", func(t *testing.T) {
-		srv, _, ruleStore := createConvertPrometheusSrv(t)
-		rc := createRequestCtx()
-
-		receiver := "test-receiver"
-		groupBy := []string{"cluster", "pod"}
-		settings := apimodels.AlertRuleNotificationSettings{
-			Receiver: receiver,
-			GroupBy:  groupBy,
+	t.Run("notification settings", func(t *testing.T) {
+		mustMarshal := func(v interface{}) string {
+			b, err := json.Marshal(v)
+			require.NoError(t, err)
+			return string(b)
 		}
-		settingsJSON, err := json.Marshal(settings)
-		require.NoError(t, err)
-		rc.Req.Header.Set(notificationSettingsHeader, string(settingsJSON))
+		testCases := []struct {
+			name                         string
+			headerValue                  string
+			expectedStatus               int
+			expectedBody                 string
+			expectedNotificationSettings *models.NotificationSettings
+		}{
+			{
+				name: "sets ContactPointRouting for rules if specified",
+				headerValue: mustMarshal(apimodels.AlertRuleNotificationSettings{
+					Receiver: "test-receiver",
+					GroupBy:  []string{"cluster", "pod"},
+				}),
+				expectedStatus: http.StatusAccepted,
+				expectedNotificationSettings: new(models.NotificationSettingsFromContact(models.ContactPointRouting{
+					Receiver: "test-receiver",
+					GroupBy:  []string{"cluster", "pod"},
+				})),
+			},
+			{
+				name:           "returns error when notification settings header contains malformed JSON",
+				headerValue:    "{invalid json",
+				expectedStatus: http.StatusBadRequest,
+				expectedBody:   "Invalid value for header X-Grafana-Alerting-Notification-Settings",
+			},
+			{
+				name: "returns error when ContactPointRouting are invalid",
+				headerValue: func() string {
+					settings := apimodels.AlertRuleNotificationSettings{
+						Receiver: "", // empty receiver is invalid
+					}
+					settingsJSON, _ := json.Marshal(settings)
+					return string(settingsJSON)
+				}(),
+				expectedStatus: http.StatusBadRequest,
+				expectedBody:   "Invalid value for header X-Grafana-Alerting-Notification-Settings",
+			},
+			{
+				name: "sets PolicyRouting for rules if specified",
+				headerValue: func() string {
+					settings := apimodels.AlertRuleNotificationSettings{
+						Policy: new("policy-a"),
+					}
+					settingsJSON, _ := json.Marshal(settings)
+					return string(settingsJSON)
+				}(),
+				expectedStatus:               http.StatusAccepted,
+				expectedNotificationSettings: new(models.NotificationSettingsFromPolicy("policy-a")),
+			},
+			{
+				name: "returns policy missing error when policy is empty",
+				headerValue: mustMarshal(apimodels.AlertRuleNotificationSettings{
+					Policy: new(""),
+				}),
+				expectedStatus: http.StatusBadRequest,
+				expectedBody:   "policy must be specified",
+			},
+			{
+				name: "returns error when receiver and policy are not specified",
+				headerValue: mustMarshal(apimodels.AlertRuleNotificationSettings{
+					Policy:   nil,
+					Receiver: "",
+				}),
+				expectedStatus: http.StatusBadRequest,
+				expectedBody:   "notification policy or receiver must be specified",
+			},
+			{
+				name: "returns error when both receiver and policy are specified",
+				headerValue: mustMarshal(apimodels.AlertRuleNotificationSettings{
+					Policy:   new("policy-a"),
+					Receiver: "test-receiver",
+				}),
+				expectedStatus: http.StatusBadRequest,
+				expectedBody:   "only one of policy routing or contact point routing can be specified",
+			},
+		}
 
-		simpleGroup := apimodels.PrometheusRuleGroup{
-			Name:     "Test Group",
-			Interval: prommodel.Duration(1 * time.Minute),
-			Rules: []apimodels.PrometheusRule{
-				{
-					Alert: "TestAlert",
-					Expr:  "up == 0",
-					For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
-					Labels: map[string]string{
-						"severity": "critical",
+		for _, tc := range testCases {
+			t.Run(tc.name, func(t *testing.T) {
+				srv, _, ruleStore := createConvertPrometheusSrv(t)
+				rc := createRequestCtx()
+				rc.Req.Header.Set(notificationSettingsHeader, tc.headerValue)
+
+				simpleGroup := apimodels.PrometheusRuleGroup{
+					Name:     "Test Group",
+					Interval: prommodel.Duration(1 * time.Minute),
+					Rules: []apimodels.PrometheusRule{
+						{
+							Alert: "TestAlert",
+							Expr:  "up == 0",
+							For:   new(prommodel.Duration(5 * time.Minute)),
+							Labels: map[string]string{
+								"severity": "critical",
+							},
+						},
 					},
-				},
-			},
+				}
+
+				response := srv.RouteConvertPrometheusPostRuleGroup(rc, "test", simpleGroup)
+				require.Equalf(t, tc.expectedStatus, response.Status(), "unexpected response: %s", response.Body())
+
+				if tc.expectedBody != "" {
+					require.Contains(t, string(response.Body()), tc.expectedBody)
+				}
+
+				if tc.expectedNotificationSettings != nil {
+					createdRules, err := ruleStore.ListAlertRules(context.Background(), &models.ListAlertRulesQuery{
+						OrgID: 1,
+					})
+					require.NoError(t, err)
+					require.Len(t, createdRules, 1)
+					require.NotNil(t, createdRules[0].NotificationSettings)
+					require.Equal(t, tc.expectedNotificationSettings, createdRules[0].NotificationSettings)
+				}
+			})
 		}
-
-		response := srv.RouteConvertPrometheusPostRuleGroup(rc, "test", simpleGroup)
-		require.Equal(t, http.StatusAccepted, response.Status())
-
-		createdRules, err := ruleStore.ListAlertRules(context.Background(), &models.ListAlertRulesQuery{
-			OrgID: 1,
-		})
-		require.NoError(t, err)
-		require.Len(t, createdRules, 1)
-		require.Len(t, createdRules[0].NotificationSettings, 1)
-		require.Equal(t, receiver, createdRules[0].NotificationSettings[0].Receiver)
-		require.Equal(t, groupBy, createdRules[0].NotificationSettings[0].GroupBy)
-	})
-
-	t.Run("returns error when notification settings header contains invalid JSON", func(t *testing.T) {
-		srv, _, _ := createConvertPrometheusSrv(t)
-		rc := createRequestCtx()
-
-		rc.Req.Header.Set(notificationSettingsHeader, "{invalid json")
-
-		simpleGroup := apimodels.PrometheusRuleGroup{
-			Name:     "Test Group",
-			Interval: prommodel.Duration(1 * time.Minute),
-			Rules: []apimodels.PrometheusRule{
-				{
-					Alert: "TestAlert",
-					Expr:  "up == 0",
-				},
-			},
-		}
-
-		response := srv.RouteConvertPrometheusPostRuleGroup(rc, "test", simpleGroup)
-		require.Equal(t, http.StatusBadRequest, response.Status())
-		require.Contains(t, string(response.Body()), "Invalid value for header X-Grafana-Alerting-Notification-Settings")
-	})
-
-	t.Run("returns error when notification settings contain invalid values", func(t *testing.T) {
-		srv, _, _ := createConvertPrometheusSrv(t)
-		rc := createRequestCtx()
-
-		settings := apimodels.AlertRuleNotificationSettings{
-			Receiver: "", // empty receiver is invalid
-		}
-		settingsJSON, err := json.Marshal(settings)
-		require.NoError(t, err)
-		rc.Req.Header.Set(notificationSettingsHeader, string(settingsJSON))
-
-		simpleGroup := apimodels.PrometheusRuleGroup{
-			Name:     "Test Group",
-			Interval: prommodel.Duration(1 * time.Minute),
-			Rules: []apimodels.PrometheusRule{
-				{
-					Alert: "TestAlert",
-					Expr:  "up == 0",
-				},
-			},
-		}
-
-		response := srv.RouteConvertPrometheusPostRuleGroup(rc, "test", simpleGroup)
-		require.Equal(t, http.StatusBadRequest, response.Status())
-		require.Contains(t, string(response.Body()), "Invalid value for header X-Grafana-Alerting-Notification-Settings")
 	})
 }
 
@@ -649,7 +897,7 @@ func TestRouteConvertPrometheusGetRuleGroup(t *testing.T) {
 	promRule := apimodels.PrometheusRule{
 		Alert: "test alert",
 		Expr:  "vector(1) > 0",
-		For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+		For:   new(prommodel.Duration(5 * time.Minute)),
 		Labels: map[string]string{
 			"severity": "critical",
 		},
@@ -747,7 +995,7 @@ func TestRouteConvertPrometheusGetNamespace(t *testing.T) {
 	promRule1 := apimodels.PrometheusRule{
 		Alert: "test alert",
 		Expr:  "vector(1) > 0",
-		For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+		For:   new(prommodel.Duration(5 * time.Minute)),
 		Labels: map[string]string{
 			"severity": "critical",
 		},
@@ -759,7 +1007,7 @@ func TestRouteConvertPrometheusGetNamespace(t *testing.T) {
 	promRule2 := apimodels.PrometheusRule{
 		Alert: "test alert 2",
 		Expr:  "vector(1) > 0",
-		For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+		For:   new(prommodel.Duration(5 * time.Minute)),
 		Labels: map[string]string{
 			"severity": "also critical",
 		},
@@ -855,7 +1103,7 @@ func TestRouteConvertPrometheusGetRules(t *testing.T) {
 	promRule1 := apimodels.PrometheusRule{
 		Alert: "test alert",
 		Expr:  "vector(1) > 0",
-		For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+		For:   new(prommodel.Duration(5 * time.Minute)),
 		Labels: map[string]string{
 			"severity": "critical",
 		},
@@ -867,7 +1115,7 @@ func TestRouteConvertPrometheusGetRules(t *testing.T) {
 	promRule2 := apimodels.PrometheusRule{
 		Alert: "test alert 2",
 		Expr:  "vector(1) > 0",
-		For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+		For:   new(prommodel.Duration(5 * time.Minute)),
 		Labels: map[string]string{
 			"severity": "also critical",
 		},
@@ -1328,7 +1576,7 @@ func TestRouteConvertPrometheusDeleteRuleGroup(t *testing.T) {
 
 		t.Run("with disable provenance header should still be able to delete rules", func(t *testing.T) {
 			provenanceStore := fakes.NewFakeProvisioningStore()
-			srv, ruleStore, fldr, rule := initGroup("", groupName, withProvenanceStore(provenanceStore))
+			srv, ruleStore, fldr, rule := initGroup("prometheus definition", groupName, withProvenanceStore(provenanceStore))
 
 			// Mark the rule as provisioned with API provenance
 			err := provenanceStore.SetProvenance(context.Background(), rule, 1, models.ProvenanceConvertedPrometheus)
@@ -1349,6 +1597,37 @@ func TestRouteConvertPrometheusDeleteRuleGroup(t *testing.T) {
 			require.Nil(t, remaining)
 		})
 	})
+
+	t.Run("should not delete non-imported rule groups", func(t *testing.T) {
+		folderService := foldertest.NewFakeService()
+		srv, _, ruleStore := createConvertPrometheusSrv(t, withFolderService(folderService))
+		rc := createRequestCtx()
+
+		fldr := randFolder()
+		fldr.ParentUID = ""
+		folderService.ExpectedFolder = fldr
+		folderService.ExpectedFolders = []*folder.Folder{fldr}
+		ruleStore.Folders[1] = append(ruleStore.Folders[1], fldr)
+
+		rule := models.RuleGen.
+			With(models.RuleGen.WithNamespaceUID(fldr.UID)).
+			With(models.RuleGen.WithOrgID(1)).
+			With(models.RuleGen.WithGroupName(groupName)).
+			GenerateRef()
+		ruleStore.PutRule(context.Background(), rule)
+
+		// Attempt to delete via convert endpoint should return 404
+		response := srv.RouteConvertPrometheusDeleteRuleGroup(rc, fldr.Title, groupName)
+		require.Equal(t, http.StatusNotFound, response.Status())
+
+		// Verify the rule is still present
+		remaining, err := ruleStore.GetAlertRuleByUID(context.Background(), &models.GetAlertRuleByUIDQuery{
+			UID:   rule.UID,
+			OrgID: rule.OrgID,
+		})
+		require.NoError(t, err)
+		require.NotNil(t, remaining)
+	})
 }
 
 func TestRouteConvertPrometheusPostRuleGroups(t *testing.T) {
@@ -1362,7 +1641,7 @@ func TestRouteConvertPrometheusPostRuleGroups(t *testing.T) {
 	promAlertRule := apimodels.PrometheusRule{
 		Alert: "TestAlert",
 		Expr:  "up == 0",
-		For:   util.Pointer(prommodel.Duration(5 * time.Minute)),
+		For:   new(prommodel.Duration(5 * time.Minute)),
 		Labels: map[string]string{
 			"severity": "critical",
 		},
@@ -1560,6 +1839,7 @@ type convertPrometheusSrvOptions struct {
 	featureToggles               featuremgmt.FeatureToggles
 	alertmanager                 Alertmanager
 	folderService                folder.Service
+	rulerSync                    ExternalRulerSyncChecker
 }
 
 type convertPrometheusSrvOptionsFunc func(*convertPrometheusSrvOptions)
@@ -1594,6 +1874,29 @@ func withAlertmanager(am Alertmanager) convertPrometheusSrvOptionsFunc {
 	}
 }
 
+func withRulerSync(checker ExternalRulerSyncChecker) convertPrometheusSrvOptionsFunc {
+	return func(opts *convertPrometheusSrvOptions) {
+		opts.rulerSync = checker
+	}
+}
+
+type fakeRulerSyncChecker struct {
+	configured     bool
+	err            error
+	managedFolders map[string]bool
+}
+
+func (f fakeRulerSyncChecker) IsConfiguredForOrg(context.Context, int64) (bool, error) {
+	return f.configured, f.err
+}
+
+func (f fakeRulerSyncChecker) IsManagedFolder(_ context.Context, _ int64, folderUID string) (bool, error) {
+	if f.err != nil {
+		return false, f.err
+	}
+	return f.managedFolders[folderUID], nil
+}
+
 func withFolderService(f folder.Service) convertPrometheusSrvOptionsFunc {
 	return func(opts *convertPrometheusSrvOptions) {
 		opts.folderService = f
@@ -1612,6 +1915,7 @@ func createConvertPrometheusSrv(t *testing.T, opts ...convertPrometheusSrvOption
 		fakeAccessControlRuleService: &acfakes.FakeRuleService{},
 		quotaChecker:                 quotas,
 		folderService:                foldertest.NewFakeService(),
+		rulerSync:                    fakeRulerSyncChecker{},
 	}
 
 	for _, opt := range opts {
@@ -1641,6 +1945,7 @@ func createConvertPrometheusSrv(t *testing.T, opts ...convertPrometheusSrvOption
 		log.New("test"),
 		&provisioning.NotificationSettingsValidatorProviderFake{},
 		options.fakeAccessControlRuleService,
+		provisioning.NoopRuleMutationValidator{},
 	)
 
 	cfg := &setting.UnifiedAlertingSettings{
@@ -1650,7 +1955,7 @@ func createConvertPrometheusSrv(t *testing.T, opts ...convertPrometheusSrvOption
 		},
 	}
 
-	srv := NewConvertPrometheusSrv(cfg, log.NewNopLogger(), ruleStore, dsCache, alertRuleService, options.featureToggles, options.alertmanager)
+	srv := NewConvertPrometheusSrv(cfg, log.NewNopLogger(), ruleStore, dsCache, alertRuleService, options.featureToggles, options.alertmanager, nil, options.rulerSync)
 
 	return srv, dsCache, ruleStore
 }
@@ -1665,6 +1970,26 @@ func createRequestCtx() *contextmodel.ReqContext {
 			Resp: web.NewResponseWriter("GET", httptest.NewRecorder()),
 		},
 		SignedInUser: &user.SignedInUser{OrgID: 1},
+	}
+}
+
+// assertRulesUseDatasource retrieves all alert rules from the store and verifies they use the expected datasource
+func assertRulesUseDatasource(t *testing.T, ruleStore *fakes.RuleStore, expectedDatasourceUID string, expectedRuleCount int) {
+	t.Helper()
+
+	rules, err := ruleStore.ListAlertRules(context.Background(), &models.ListAlertRulesQuery{
+		OrgID: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, rules, expectedRuleCount)
+
+	for _, rule := range rules {
+		if rule.Record == nil {
+			require.NotEmpty(t, rule.Data)
+			require.Equal(t, expectedDatasourceUID, rule.Data[0].DatasourceUID, rule.Title, expectedDatasourceUID)
+		} else {
+			require.Equal(t, expectedDatasourceUID, rule.Record.TargetDatasourceUID)
+		}
 	}
 }
 
@@ -1714,7 +2039,7 @@ func TestGetWorkingFolderUID(t *testing.T) {
 		rc.Req.Header.Del(folderUIDHeader)
 
 		folderUID := getWorkingFolderUID(rc)
-		require.Equal(t, folder.RootFolderUID, folderUID)
+		require.Equal(t, folder.LegacyRootFolderUID, folderUID) //nolint:staticcheck
 	})
 
 	t.Run("should return specified folder UID when header is present", func(t *testing.T) {
@@ -1731,7 +2056,7 @@ func TestGetWorkingFolderUID(t *testing.T) {
 		rc.Req.Header.Set(folderUIDHeader, "")
 
 		folderUID := getWorkingFolderUID(rc)
-		require.Equal(t, folder.RootFolderUID, folderUID)
+		require.Equal(t, folder.LegacyRootFolderUID, folderUID) //nolint:staticcheck
 	})
 
 	t.Run("should trim whitespace from header value", func(t *testing.T) {
@@ -1744,32 +2069,29 @@ func TestGetWorkingFolderUID(t *testing.T) {
 	})
 }
 
-func TestGetProvenance(t *testing.T) {
-	t.Run("should return ProvenanceConvertedPrometheus when header is not present", func(t *testing.T) {
+func TestGetManagerProperties(t *testing.T) {
+	t.Run("should return ManagerKindClassicConvertedPrometheus when header is not present", func(t *testing.T) {
 		rc := createRequestCtx()
-		// Ensure the header is not present
 		rc.Req.Header.Del(disableProvenanceHeaderName)
 
-		provenance := getProvenance(rc)
-		require.Equal(t, models.ProvenanceConvertedPrometheus, provenance)
+		mp := getManagerProperties(rc)
+		require.Equal(t, utils.ManagerKindClassicConvertedPrometheus, mp.Kind) //nolint:staticcheck
 	})
 
-	t.Run("should return ProvenanceNone when header is present", func(t *testing.T) {
+	t.Run("should return empty manager when header is present", func(t *testing.T) {
 		rc := createRequestCtx()
-		// Set the disable provenance header
 		rc.Req.Header.Set(disableProvenanceHeaderName, "true")
 
-		provenance := getProvenance(rc)
-		require.Equal(t, models.ProvenanceNone, provenance)
+		mp := getManagerProperties(rc)
+		require.Equal(t, utils.ManagerKindUnknown, mp.Kind)
 	})
 
-	t.Run("should return ProvenanceNone when header is present with any value", func(t *testing.T) {
+	t.Run("should return empty manager when header is present with any value", func(t *testing.T) {
 		rc := createRequestCtx()
-		// Set the disable provenance header with an empty value
 		rc.Req.Header.Set(disableProvenanceHeaderName, "")
 
-		provenance := getProvenance(rc)
-		require.Equal(t, models.ProvenanceNone, provenance)
+		mp := getManagerProperties(rc)
+		require.Equal(t, utils.ManagerKindUnknown, mp.Kind)
 	})
 }
 
@@ -1777,39 +2099,48 @@ type mockAlertmanager struct {
 	mock.Mock
 }
 
-func (m *mockAlertmanager) SaveAndApplyExtraConfiguration(ctx context.Context, org int64, extraConfig apimodels.ExtraConfiguration) error {
-	args := m.Called(ctx, org, extraConfig)
-	return args.Error(0)
+func (m *mockAlertmanager) SaveAndApplyExtraConfiguration(ctx context.Context, org int64, user identity.Requester, authz notifier.ExtraConfigAuthz, extraConfig v1.ExtraConfiguration, replace, dryRun, promote bool) (merge.MergeResult, error) {
+	args := m.Called(ctx, org, user, authz, extraConfig, replace, dryRun, promote)
+	return args.Get(0).(merge.MergeResult), args.Error(1)
 }
 
-func (m *mockAlertmanager) GetAlertmanagerConfiguration(ctx context.Context, org int64, withAutogen bool, withMergedExtraConfig bool) (apimodels.GettableUserConfig, error) {
-	args := m.Called(ctx, org, withAutogen, withMergedExtraConfig)
+func (m *mockAlertmanager) GetAlertmanagerConfiguration(ctx context.Context, org int64, withAutogen bool) (apimodels.GettableUserConfig, error) {
+	args := m.Called(ctx, org, withAutogen)
 	return args.Get(0).(apimodels.GettableUserConfig), args.Error(1)
 }
 
-func (m *mockAlertmanager) DeleteExtraConfiguration(ctx context.Context, org int64, identifier string) error {
-	args := m.Called(ctx, org, identifier)
+func (m *mockAlertmanager) DeleteExtraConfiguration(ctx context.Context, org int64, user identity.Requester, authz notifier.ExtraConfigAuthz, identifier string) error {
+	args := m.Called(ctx, org, user, authz, identifier)
 	return args.Error(0)
+}
+
+func (m *mockAlertmanager) PromoteExtraConfiguration(ctx context.Context, org int64, user identity.Requester, authz notifier.ExtraConfigAuthz, identifier string) (merge.MergeResult, error) {
+	args := m.Called(ctx, org, user, authz, identifier)
+	return args.Get(0).(merge.MergeResult), args.Error(1)
+}
+
+func (m *mockAlertmanager) IsExternalAMSyncConfiguredForOrg(ctx context.Context, orgID int64) (bool, error) {
+	args := m.Called(ctx, orgID)
+	return args.Bool(0), args.Error(1)
 }
 
 func TestRouteConvertPrometheusPostAlertmanagerConfig(t *testing.T) {
 	const identifier = "test-config"
 	mockAM := &mockAlertmanager{}
+	mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(false, nil).Maybe()
 
 	ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
 	srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
 
 	t.Run("should parse headers and call SaveAndApplyExtraConfiguration", func(t *testing.T) {
-		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.MatchedBy(func(extraConfig apimodels.ExtraConfiguration) bool {
+		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.Anything, mock.Anything, mock.MatchedBy(func(extraConfig v1.ExtraConfiguration) bool {
 			return extraConfig.Identifier == identifier &&
-				len(extraConfig.MergeMatchers) == 2 &&
 				len(extraConfig.TemplateFiles) == 1 &&
 				extraConfig.TemplateFiles["test.tmpl"] == "{{ define \"test\" }}Hello{{ end }}"
-		})).Return(nil).Once()
+		}), false, false, false).Return(merge.MergeResult{}, nil).Once()
 
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, identifier)
-		rc.Req.Header.Set(mergeMatchersHeader, "environment=production,team=backend")
 
 		amCfg := apimodels.AlertmanagerUserConfig{
 			AlertmanagerConfig: `{
@@ -1835,11 +2166,11 @@ func TestRouteConvertPrometheusPostAlertmanagerConfig(t *testing.T) {
 
 	t.Run("should use default identifier when header is missing", func(t *testing.T) {
 		rc := createRequestCtx()
-		rc.Req.Header.Set(mergeMatchersHeader, "test=value")
 		mockAM := &mockAlertmanager{}
-		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.MatchedBy(func(extraConfig apimodels.ExtraConfiguration) bool {
+		mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(false, nil).Maybe()
+		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.Anything, mock.Anything, mock.MatchedBy(func(extraConfig v1.ExtraConfiguration) bool {
 			return extraConfig.Identifier == defaultConfigIdentifier
-		})).Return(nil)
+		}), false, false, false).Return(merge.MergeResult{}, nil)
 
 		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
 		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
@@ -1862,22 +2193,125 @@ func TestRouteConvertPrometheusPostAlertmanagerConfig(t *testing.T) {
 		mockAM.AssertExpectations(t)
 	})
 
-	t.Run("should return error when merge matchers header has invalid format", func(t *testing.T) {
+	t.Run("should call SaveAndApplyExtraConfiguration with replace=true if header is specified", func(t *testing.T) {
 		rc := createRequestCtx()
-		rc.Req.Header.Set(configIdentifierHeader, identifier)
-		rc.Req.Header.Set(mergeMatchersHeader, "invalid-format")
+		rc.Req.Header.Set(configForceReplaceHeader, "true")
+		mockAM := &mockAlertmanager{}
+		mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(false, nil).Maybe()
+		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.Anything, mock.Anything, mock.MatchedBy(func(extraConfig v1.ExtraConfiguration) bool {
+			return extraConfig.Identifier == defaultConfigIdentifier
+		}), true, false, false).Return(merge.MergeResult{}, nil)
 
-		amCfg := apimodels.AlertmanagerUserConfig{}
+		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
+		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
+
+		amCfg := apimodels.AlertmanagerUserConfig{
+			AlertmanagerConfig: `{
+				"route": {
+					"receiver": "default"
+				},
+				"receivers": [
+					{
+						"name": "default"
+					}
+				]
+			}`,
+		}
 		response := srv.RouteConvertPrometheusPostAlertmanagerConfig(rc, amCfg)
 
-		require.Equal(t, http.StatusBadRequest, response.Status())
-		require.Contains(t, string(response.Body()), "format should be 'key=value,key2=value2'")
+		require.Equal(t, http.StatusAccepted, response.Status())
+		mockAM.AssertExpectations(t)
+	})
+
+	t.Run("should call SaveAndApplyExtraConfiguration with dryRun=true if header is specified", func(t *testing.T) {
+		rc := createRequestCtx()
+		rc.Req.Header.Set(dryRunHeader, "true")
+		mockAM := &mockAlertmanager{}
+		mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(false, nil).Maybe()
+		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.Anything, mock.Anything, mock.MatchedBy(func(extraConfig v1.ExtraConfiguration) bool {
+			return extraConfig.Identifier == defaultConfigIdentifier
+		}), false, true, false).Return(merge.MergeResult{}, nil)
+
+		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
+		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
+
+		amCfg := apimodels.AlertmanagerUserConfig{
+			AlertmanagerConfig: `{
+				"route": {
+					"receiver": "default"
+				},
+				"receivers": [
+					{
+						"name": "default"
+					}
+				]
+			}`,
+		}
+		response := srv.RouteConvertPrometheusPostAlertmanagerConfig(rc, amCfg)
+
+		require.Equal(t, http.StatusOK, response.Status(), "dry run should return 200 OK")
+		mockAM.AssertExpectations(t)
+	})
+
+	t.Run("should return rename and stats information about the merge", func(t *testing.T) {
+		rc := createRequestCtx()
+		rc.Req.Header.Set(configIdentifierHeader, identifier)
+		mockAM := &mockAlertmanager{}
+		mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(false, nil).Maybe()
+
+		expectedResult := merge.MergeResult{
+			RenameResources: merge.RenameResources{
+				Receivers: map[string]string{
+					"default": "default-test-config",
+				},
+				TimeIntervals: map[string]string{
+					"weekdays": "weekdays-test-config",
+				},
+			},
+			AddedRoute:           identifier,
+			AddedReceivers:       []string{"default-test-config"},
+			AddedTimeIntervals:   []string{"weekdays-test-config"},
+			AddedTemplates:       []string{"test.tmpl"},
+			AddedInhibitionRules: []string{"rule-1"},
+		}
+
+		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.Anything, mock.Anything, mock.MatchedBy(func(extraConfig v1.ExtraConfiguration) bool {
+			return extraConfig.Identifier == identifier
+		}), false, false, false).Return(expectedResult, nil)
+
+		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
+		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
+
+		amCfg := apimodels.AlertmanagerUserConfig{
+			AlertmanagerConfig: `{"route": {"receiver": "default"}, "receivers": [{"name": "default"}]}`,
+		}
+		response := srv.RouteConvertPrometheusPostAlertmanagerConfig(rc, amCfg)
+
+		require.Equal(t, http.StatusAccepted, response.Status())
+
+		// Parse response body
+		var resp apimodels.ConvertAlertmanagerResponse
+		err := json.Unmarshal(response.Body(), &resp)
+		require.NoError(t, err)
+		require.Equal(t, "success", resp.Status)
+
+		require.NotNil(t, resp.RenameResources)
+		require.Equal(t, "default-test-config", resp.RenameResources.Receivers["default"])
+		require.Equal(t, "weekdays-test-config", resp.RenameResources.TimeIntervals["weekdays"])
+
+		require.NotNil(t, resp.Stats)
+		require.Equal(t, identifier, resp.Stats.AddedRoute)
+		require.Equal(t, []string{"default-test-config"}, resp.Stats.AddedReceivers)
+		require.Equal(t, []string{"weekdays-test-config"}, resp.Stats.AddedTimeIntervals)
+		require.Equal(t, []string{"test.tmpl"}, resp.Stats.AddedTemplates)
+		require.Equal(t, []string{"rule-1"}, resp.Stats.AddedInhibitionRules)
+
+		mockAM.AssertExpectations(t)
 	})
 
 	t.Run("should return error when alertmanager config has empty route", func(t *testing.T) {
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, identifier)
-		rc.Req.Header.Set(mergeMatchersHeader, "env=prod")
 
 		amCfg := apimodels.AlertmanagerUserConfig{
 			AlertmanagerConfig: `{
@@ -1892,6 +2326,78 @@ func TestRouteConvertPrometheusPostAlertmanagerConfig(t *testing.T) {
 
 		require.Equal(t, http.StatusBadRequest, response.Status())
 		require.Contains(t, string(response.Body()), "failed to parse alertmanager config")
+	})
+
+	t.Run("should return 409 when external alertmanager sync is configured for the org", func(t *testing.T) {
+		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
+		mockAM := &mockAlertmanager{}
+		mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(true, nil).Once()
+
+		srv, _, _ := createConvertPrometheusSrv(t,
+			withAlertmanager(mockAM),
+			withFeatureToggles(ft),
+		)
+
+		rc := createRequestCtx()
+		rc.Req.Header.Set(configIdentifierHeader, identifier)
+
+		amCfg := apimodels.AlertmanagerUserConfig{
+			AlertmanagerConfig: `{"route":{"receiver":"default"},"receivers":[{"name":"default"}]}`,
+		}
+		response := srv.RouteConvertPrometheusPostAlertmanagerConfig(rc, amCfg)
+
+		require.Equal(t, http.StatusConflict, response.Status())
+		require.Contains(t, string(response.Body()), "external alertmanager sync is configured")
+		mockAM.AssertNotCalled(t, "SaveAndApplyExtraConfiguration", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	})
+
+	t.Run("promote=true saves then promotes", func(t *testing.T) {
+		mockAM := &mockAlertmanager{}
+		mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(false, nil)
+		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.Anything, mock.Anything,
+			mock.MatchedBy(func(ec v1.ExtraConfiguration) bool { return ec.Identifier == identifier }),
+			false, false, true).Return(merge.MergeResult{RenameResources: merge.RenameResources{Receivers: map[string]string{"old": "new"}}}, nil).Once()
+
+		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
+		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
+
+		rc := createRequestCtx()
+		rc.Req.Header.Set(configIdentifierHeader, identifier)
+		rc.Req.Header.Set("X-Grafana-Alerting-Promote", "true")
+
+		response := srv.RouteConvertPrometheusPostAlertmanagerConfig(rc, apimodels.AlertmanagerUserConfig{
+			AlertmanagerConfig: `{"route":{"receiver":"default"},"receivers":[{"name":"default"}]}`,
+		})
+
+		require.Equal(t, http.StatusAccepted, response.Status())
+		var body apimodels.ConvertAlertmanagerResponse
+		require.NoError(t, json.Unmarshal(response.Body(), &body))
+		require.NotNil(t, body.RenameResources)
+		require.Equal(t, "new", body.RenameResources.Receivers["old"])
+		mockAM.AssertExpectations(t)
+	})
+
+	t.Run("promote=true and dry-run=true validates without saving", func(t *testing.T) {
+		mockAM := &mockAlertmanager{}
+		mockAM.On("IsExternalAMSyncConfiguredForOrg", mock.Anything, int64(1)).Return(false, nil)
+		mockAM.On("SaveAndApplyExtraConfiguration", mock.Anything, int64(1), mock.Anything, mock.Anything,
+			mock.MatchedBy(func(ec v1.ExtraConfiguration) bool { return ec.Identifier == identifier }),
+			false, true, true).Return(merge.MergeResult{}, nil).Once()
+
+		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
+		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
+
+		rc := createRequestCtx()
+		rc.Req.Header.Set(configIdentifierHeader, identifier)
+		rc.Req.Header.Set(dryRunHeader, "true")
+		rc.Req.Header.Set("X-Grafana-Alerting-Promote", "true")
+
+		response := srv.RouteConvertPrometheusPostAlertmanagerConfig(rc, apimodels.AlertmanagerUserConfig{
+			AlertmanagerConfig: `{"route":{"receiver":"default"},"receivers":[{"name":"default"}]}`,
+		})
+
+		require.Equal(t, http.StatusOK, response.Status())
+		mockAM.AssertExpectations(t)
 	})
 }
 
@@ -1912,7 +2418,7 @@ func TestRouteConvertPrometheusGetAlertmanagerConfig(t *testing.T) {
 
 	t.Run("without config identifier header should use default identifier", func(t *testing.T) {
 		mockAM := &mockAlertmanager{}
-		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false, false).Return(apimodels.GettableUserConfig{
+		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false).Return(apimodels.GettableUserConfig{
 			ExtraConfigs: []apimodels.ExtraConfiguration{
 				{
 					Identifier: defaultConfigIdentifier,
@@ -1935,7 +2441,7 @@ receivers:
 
 	t.Run("with empty config identifier header should use default identifier", func(t *testing.T) {
 		mockAM := &mockAlertmanager{}
-		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false, false).Return(apimodels.GettableUserConfig{
+		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false).Return(apimodels.GettableUserConfig{
 			ExtraConfigs: []apimodels.ExtraConfiguration{
 				{
 					Identifier: defaultConfigIdentifier,
@@ -1983,7 +2489,7 @@ receivers:
 			},
 		}
 
-		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, int64(1), false, false).Return(expectedConfig, nil).Once()
+		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, int64(1), false).Return(expectedConfig, nil).Once()
 
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, identifier)
@@ -2050,7 +2556,7 @@ receivers:
 			},
 		}
 
-		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false, false).Return(expectedConfig, nil).Once()
+		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false).Return(expectedConfig, nil).Once()
 
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, identifier)
@@ -2065,7 +2571,7 @@ receivers:
 		ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
 		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
 
-		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false, false).Return(apimodels.GettableUserConfig{}, errors.New("config error")).Once()
+		mockAM.On("GetAlertmanagerConfiguration", mock.Anything, orgID, false).Return(apimodels.GettableUserConfig{}, errors.New("config error")).Once()
 
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, identifier)
@@ -2074,83 +2580,6 @@ receivers:
 		require.Equal(t, http.StatusInternalServerError, response.Status())
 		mockAM.AssertExpectations(t)
 	})
-}
-
-func TestParseMergeMatchersHeader(t *testing.T) {
-	testCases := []struct {
-		name             string
-		headerValue      string
-		expectedError    bool
-		expectedMatchers amconfig.Matchers
-	}{
-		{
-			name:          "empty header should return error",
-			headerValue:   "",
-			expectedError: true,
-		},
-		{
-			name:          "single matcher should parse correctly",
-			headerValue:   "env=prod",
-			expectedError: false,
-			expectedMatchers: amconfig.Matchers{
-				{Type: labels.MatchEqual, Name: "env", Value: "prod"},
-			},
-		},
-		{
-			name:          "multiple matchers should be parsed correctly",
-			headerValue:   "env=prod,team=alerting",
-			expectedError: false,
-			expectedMatchers: amconfig.Matchers{
-				{Type: labels.MatchEqual, Name: "env", Value: "prod"},
-				{Type: labels.MatchEqual, Name: "team", Value: "alerting"},
-			},
-		},
-		{
-			name:          "matchers with spaces should be parsed correctly",
-			headerValue:   " env = prod , team = alerting ",
-			expectedError: false,
-			expectedMatchers: amconfig.Matchers{
-				{Type: labels.MatchEqual, Name: "env", Value: "prod"},
-				{Type: labels.MatchEqual, Name: "team", Value: "alerting"},
-			},
-		},
-		{
-			name:          "invalid format without equals should return error",
-			headerValue:   "env:prod",
-			expectedError: true,
-		},
-		{
-			name:          "empty key should return error",
-			headerValue:   "=prod",
-			expectedError: true,
-		},
-		{
-			name:          "empty value should return error",
-			headerValue:   "env=",
-			expectedError: true,
-		},
-		{
-			name:          "missing value should return error",
-			headerValue:   "env",
-			expectedError: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			rc := createRequestCtx()
-			rc.Req.Header.Set(mergeMatchersHeader, tc.headerValue)
-
-			matchers, err := parseMergeMatchersHeader(rc)
-
-			if tc.expectedError {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err)
-				require.ElementsMatch(t, tc.expectedMatchers, matchers)
-			}
-		})
-	}
 }
 
 func TestParseConfigIdentifierHeader(t *testing.T) {
@@ -2182,6 +2611,11 @@ func TestParseConfigIdentifierHeader(t *testing.T) {
 			headerValue:   "   ",
 			expectedValue: defaultConfigIdentifier,
 		},
+		{
+			name:          "invalid identifier should return error",
+			headerValue:   "invalid identifier",
+			expectedError: true,
+		},
 	}
 
 	for _, tc := range testCases {
@@ -2189,46 +2623,15 @@ func TestParseConfigIdentifierHeader(t *testing.T) {
 			rc := createRequestCtx()
 			rc.Req.Header.Set(configIdentifierHeader, tc.headerValue)
 
-			identifier := parseConfigIdentifierHeader(rc)
-			require.Equal(t, tc.expectedValue, identifier)
+			identifier, err := parseConfigIdentifierHeader(rc)
+			if tc.expectedError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.expectedValue, identifier)
+			}
 		})
 	}
-}
-
-func TestFormatMergeMatchers(t *testing.T) {
-	t.Run("empty matchers should return empty string", func(t *testing.T) {
-		result := formatMergeMatchers(nil)
-		require.Equal(t, "", result)
-	})
-
-	t.Run("single matcher should format correctly", func(t *testing.T) {
-		matchers := amconfig.Matchers{
-			&labels.Matcher{
-				Type:  labels.MatchEqual,
-				Name:  "env",
-				Value: "prod",
-			},
-		}
-		result := formatMergeMatchers(matchers)
-		require.Equal(t, "env=prod", result)
-	})
-
-	t.Run("multiple matchers should format correctly", func(t *testing.T) {
-		matchers := amconfig.Matchers{
-			&labels.Matcher{
-				Type:  labels.MatchEqual,
-				Name:  "env",
-				Value: "prod",
-			},
-			&labels.Matcher{
-				Type:  labels.MatchEqual,
-				Name:  "team",
-				Value: "backend",
-			},
-		}
-		result := formatMergeMatchers(matchers)
-		require.Equal(t, "env=prod,team=backend", result)
-	})
 }
 
 func TestRouteConvertPrometheusDeleteAlertmanagerConfig(t *testing.T) {
@@ -2240,7 +2643,7 @@ func TestRouteConvertPrometheusDeleteAlertmanagerConfig(t *testing.T) {
 	srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
 
 	t.Run("should parse identifier header and call DeleteExtraConfiguration", func(t *testing.T) {
-		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, identifier).Return(nil).Once()
+		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, mock.Anything, mock.Anything, identifier).Return(nil).Once()
 
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, identifier)
@@ -2252,7 +2655,7 @@ func TestRouteConvertPrometheusDeleteAlertmanagerConfig(t *testing.T) {
 	})
 
 	t.Run("should use default identifier when header is missing", func(t *testing.T) {
-		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, defaultConfigIdentifier).Return(nil).Once()
+		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, mock.Anything, mock.Anything, defaultConfigIdentifier).Return(nil).Once()
 		rc := createRequestCtx()
 
 		response := srv.RouteConvertPrometheusDeleteAlertmanagerConfig(rc)
@@ -2262,7 +2665,7 @@ func TestRouteConvertPrometheusDeleteAlertmanagerConfig(t *testing.T) {
 	})
 
 	t.Run("should return error when DeleteExtraConfiguration fails", func(t *testing.T) {
-		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, identifier).Return(errors.New("delete error")).Once()
+		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, mock.Anything, mock.Anything, identifier).Return(errors.New("delete error")).Once()
 
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, identifier)
@@ -2286,7 +2689,7 @@ func TestRouteConvertPrometheusDeleteAlertmanagerConfig(t *testing.T) {
 	})
 
 	t.Run("should use default identifier for empty identifier header", func(t *testing.T) {
-		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, defaultConfigIdentifier).Return(nil).Once()
+		mockAM.On("DeleteExtraConfiguration", mock.Anything, orgID, mock.Anything, mock.Anything, defaultConfigIdentifier).Return(nil).Once()
 		rc := createRequestCtx()
 		rc.Req.Header.Set(configIdentifierHeader, "")
 
@@ -2295,4 +2698,118 @@ func TestRouteConvertPrometheusDeleteAlertmanagerConfig(t *testing.T) {
 		require.Equal(t, http.StatusAccepted, response.Status())
 		mockAM.AssertExpectations(t)
 	})
+}
+
+func TestRouteConvertPrometheusPromoteAlertmanagerConfig(t *testing.T) {
+	const identifier = "test-config"
+	const orgID = int64(1)
+
+	mockAM := &mockAlertmanager{}
+	ft := featuremgmt.WithFeatures(featuremgmt.FlagAlertingImportAlertmanagerAPI)
+	srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
+
+	t.Run("should call PromoteExtraConfiguration with path identifier", func(t *testing.T) {
+		mockAM.On("PromoteExtraConfiguration", mock.Anything, orgID, mock.Anything, mock.Anything, identifier).
+			Return(merge.MergeResult{}, nil).Once()
+
+		rc := createRequestCtx()
+		response := srv.RouteConvertPrometheusPromoteAlertmanagerConfig(rc, identifier)
+
+		require.Equal(t, http.StatusAccepted, response.Status())
+		mockAM.AssertExpectations(t)
+	})
+
+	t.Run("should include rename resources in response", func(t *testing.T) {
+		result := merge.MergeResult{
+			RenameResources: merge.RenameResources{
+				Receivers:     map[string]string{"old-rcv": "old-rcv_test-config"},
+				TimeIntervals: map[string]string{"old-ti": "old-ti_test-config"},
+			},
+		}
+		mockAM.On("PromoteExtraConfiguration", mock.Anything, orgID, mock.Anything, mock.Anything, identifier).
+			Return(result, nil).Once()
+
+		rc := createRequestCtx()
+		response := srv.RouteConvertPrometheusPromoteAlertmanagerConfig(rc, identifier)
+
+		require.Equal(t, http.StatusAccepted, response.Status())
+
+		var body apimodels.ConvertAlertmanagerResponse
+		require.NoError(t, json.Unmarshal(response.Body(), &body))
+		require.NotNil(t, body.RenameResources)
+		require.Equal(t, "old-rcv_test-config", body.RenameResources.Receivers["old-rcv"])
+		mockAM.AssertExpectations(t)
+	})
+
+	t.Run("should return internal server error when promotion fails", func(t *testing.T) {
+		mockAM.On("PromoteExtraConfiguration", mock.Anything, orgID, mock.Anything, mock.Anything, identifier).
+			Return(merge.MergeResult{}, errors.New("promote error")).Once()
+
+		rc := createRequestCtx()
+		response := srv.RouteConvertPrometheusPromoteAlertmanagerConfig(rc, identifier)
+
+		require.Equal(t, http.StatusInternalServerError, response.Status())
+		mockAM.AssertExpectations(t)
+	})
+
+	t.Run("should return not implemented when feature toggle is disabled", func(t *testing.T) {
+		ft := featuremgmt.WithFeatures()
+		srv, _, _ := createConvertPrometheusSrv(t, withAlertmanager(mockAM), withFeatureToggles(ft))
+
+		rc := createRequestCtx()
+		response := srv.RouteConvertPrometheusPromoteAlertmanagerConfig(rc, identifier)
+
+		require.Equal(t, http.StatusNotImplemented, response.Status())
+	})
+}
+
+func TestGrafanaNamespacesToPrometheus(t *testing.T) {
+	// mimirtool does not support nested folders, so the exported namespace is the
+	// leaf folder title parsed from the (escaped) folder fullpath. Escaped separators
+	// within a title must be unescaped and must not be treated as path separators
+	// (filepath.Base would mishandle these, especially on Windows where "\" splits).
+	tests := []struct {
+		name           string
+		folderFullpath string
+		wantNamespace  string
+	}{
+		{
+			name:           "single folder",
+			folderFullpath: "production",
+			wantNamespace:  "production",
+		},
+		{
+			name:           "nested folder uses the leaf title",
+			folderFullpath: "grafana/some folder/production",
+			wantNamespace:  "production",
+		},
+		{
+			// leaf folder titled "team/prod" (slash escaped as "\/" in the fullpath)
+			name:           "leaf title containing a slash is preserved",
+			folderFullpath: `grafana/team\/prod`,
+			wantNamespace:  "team/prod",
+		},
+		{
+			// leaf folder titled "team\ops" (backslash escaped as "\\" in the fullpath)
+			name:           "leaf title containing a backslash is preserved",
+			folderFullpath: `grafana/team\\ops`,
+			wantNamespace:  `team\ops`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			groups := []models.AlertRuleGroupWithFolderFullpath{
+				{
+					AlertRuleGroup: &models.AlertRuleGroup{Title: "group-1"},
+					FolderFullpath: tt.folderFullpath,
+				},
+			}
+
+			result, err := grafanaNamespacesToPrometheus(groups)
+			require.NoError(t, err)
+			require.Len(t, result, 1)
+			require.Contains(t, result, tt.wantNamespace)
+		})
+	}
 }

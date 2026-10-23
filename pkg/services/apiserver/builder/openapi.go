@@ -4,17 +4,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"maps"
+	"net/http"
 	"strings"
 	"sync"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	serverstorage "k8s.io/apiserver/pkg/server/storage"
+	"k8s.io/klog/v2"
 	openapi "k8s.io/kube-openapi/pkg/common"
 	"k8s.io/kube-openapi/pkg/spec3"
 	spec "k8s.io/kube-openapi/pkg/validation/spec"
 
 	"github.com/grafana/grafana-app-sdk/logging"
-	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1"
+	data "github.com/grafana/grafana-plugin-sdk-go/experimental/apis/datasource/v0alpha1"
 	secret "github.com/grafana/grafana/apps/secret/pkg/apis/secret/v1beta1"
 	common "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
 )
@@ -49,18 +52,6 @@ func GetOpenAPIDefinitions(builders []APIGroupBuilder, additionalGetters ...open
 				maps.Copy(defs, getter(ref))
 			}
 		}
-
-		// TODO: add timerange to upstream SDK setup
-		maps.Copy(defs, map[string]openapi.OpenAPIDefinition{
-			"github.com/grafana/grafana-plugin-sdk-go/experimental/apis/data/v0alpha1.TimeRange": {
-				Schema: spec.Schema{
-					SchemaProps: spec.SchemaProps{
-						Type:                 []string{"object"},
-						AdditionalProperties: &spec.SchemaOrBool{Allows: true},
-					},
-				},
-			},
-		})
 		for _, b := range builders {
 			g := b.GetOpenAPIDefinitions()
 			if g != nil {
@@ -72,11 +63,61 @@ func GetOpenAPIDefinitions(builders []APIGroupBuilder, additionalGetters ...open
 	}
 }
 
+// addRoutePaths publishes a group version's custom routes in the spec, so a
+// served endpoint is discoverable rather than only documented in code.
+func addRoutePaths(openAPISpec *spec3.OpenAPI, gv schema.GroupVersion, routes *APIRoutes) {
+	for _, route := range routes.Root {
+		openAPISpec.Paths.Paths["/apis/"+gv.String()+"/"+route.Path] = &spec3.Path{
+			PathProps: *route.Spec,
+		}
+		addRouteSchemas(openAPISpec, route)
+	}
+	for _, route := range routes.Namespace {
+		openAPISpec.Paths.Paths["/apis/"+gv.String()+"/namespaces/{namespace}/"+route.Path] = &spec3.Path{
+			PathProps: *route.Spec,
+		}
+		addRouteSchemas(openAPISpec, route)
+	}
+}
+
+// addRouteSchemas publishes the components a route's spec references. An
+// unresolved $ref renders as an empty model rather than erroring.
+func addRouteSchemas(openAPISpec *spec3.OpenAPI, route APIRouteHandler) {
+	if len(route.Schemas) == 0 {
+		return
+	}
+	if openAPISpec.Components == nil {
+		openAPISpec.Components = &spec3.Components{}
+	}
+	if openAPISpec.Components.Schemas == nil {
+		openAPISpec.Components.Schemas = map[string]*spec.Schema{}
+	}
+	for name, schema := range route.Schemas {
+		// First writer wins: routes in a group version share these types, and a
+		// kind's own definitions must not be clobbered.
+		if _, exists := openAPISpec.Components.Schemas[name]; exists {
+			continue
+		}
+		openAPISpec.Components.Schemas[name] = &schema
+	}
+}
+
 func addBuilderRoutes(
 	targetGroupVersion schema.GroupVersion,
 	openAPISpec *spec3.OpenAPI,
 	apiGroupBuilders []APIGroupBuilder,
+	apiResourceConfig *serverstorage.ResourceConfig,
+	extra []GroupVersionRoutes,
 ) (*spec3.OpenAPI, error) {
+	// Before the builders, because a builder that post-processes the spec returns
+	// from the loop below without visiting the rest.
+	for _, e := range extra {
+		if e.Routes == nil || e.GroupVersion != targetGroupVersion {
+			continue
+		}
+		addRoutePaths(openAPISpec, e.GroupVersion, e.Routes)
+	}
+
 	for _, apiGroupBuilder := range apiGroupBuilders {
 		// Optionally include raw http handlers for all builders
 		for _, gv := range GetGroupVersions(apiGroupBuilder) {
@@ -87,17 +128,7 @@ func addBuilderRoutes(
 			if ok && provider != nil {
 				routes := provider.GetAPIRoutes(gv)
 				if routes != nil {
-					for _, route := range routes.Root {
-						openAPISpec.Paths.Paths["/apis/"+gv.String()+"/"+route.Path] = &spec3.Path{
-							PathProps: *route.Spec,
-						}
-					}
-
-					for _, route := range routes.Namespace {
-						openAPISpec.Paths.Paths["/apis/"+gv.String()+"/namespaces/{namespace}/"+route.Path] = &spec3.Path{
-							PathProps: *route.Spec,
-						}
-					}
+					addRoutePaths(openAPISpec, gv, routes)
 				}
 			}
 			// Support direct manipulation of API results
@@ -107,12 +138,42 @@ func addBuilderRoutes(
 			}
 		}
 	}
+
+	// filter out api groups that are disabled in APIEnablementOptions
+	for path := range openAPISpec.Paths.Paths {
+		if strings.HasPrefix(path, "/apis/"+targetGroupVersion.String()+"/") {
+			gv := targetGroupVersion.WithResource("")
+			if apiResourceConfig != nil && !apiResourceConfig.ResourceEnabled(gv) {
+				klog.InfoS("removing openapi routes for disabled resource", "gv", gv.String())
+				delete(openAPISpec.Paths.Paths, path)
+			}
+		}
+	}
+
 	return openAPISpec, nil
+}
+
+// Checks if the path is a "for all namespaces" endpoint
+// If the path is a cluster-scoped resource, return false
+func isAllRoute(prefix, path string, paths map[string]*spec3.Path) bool {
+	if strings.HasPrefix(path, prefix+"namespaces/") {
+		return false
+	}
+
+	// Extract the resource path after the group/version prefix
+	resourcePath := strings.TrimPrefix(path, prefix)
+	// Build the potential namespaced path to check
+	namespacedPath := prefix + "namespaces/{namespace}/" + resourcePath
+	// Check if the namespaced path exists
+	_, hasNamespacedPath := paths[namespacedPath]
+	// If the namespaced path exists, this is a "for all namespaces" endpoint - remove it
+	// Otherwise, it's a cluster-scoped resource - keep it
+	return hasNamespacedPath
 }
 
 // Modify the OpenAPI spec to include the additional routes.
 // nolint:gocyclo
-func getOpenAPIPostProcessor(version string, builders []APIGroupBuilder, gvs []schema.GroupVersion) func(*spec3.OpenAPI) (*spec3.OpenAPI, error) {
+func getOpenAPIPostProcessor(version string, builders []APIGroupBuilder, gvs []schema.GroupVersion, apiResourceConfig *serverstorage.ResourceConfig, extra []GroupVersionRoutes) func(*spec3.OpenAPI) (*spec3.OpenAPI, error) {
 	return func(s *spec3.OpenAPI) (*spec3.OpenAPI, error) {
 		if s.Paths == nil {
 			return s, nil
@@ -147,7 +208,8 @@ func getOpenAPIPostProcessor(version string, builders []APIGroupBuilder, gvs []s
 					}
 
 					// Remove the "for all namespaces" global routes from OpenAPI (v3)
-					if !strings.HasPrefix(k, prefix+"namespaces/") {
+					// Except for cluster-scoped resources
+					if isAllRoute(prefix, k, copy.Paths.Paths) {
 						delete(copy.Paths.Paths, k)
 						continue
 					}
@@ -160,7 +222,27 @@ func getOpenAPIPostProcessor(version string, builders []APIGroupBuilder, gvs []s
 						}
 					}
 
-					// Replace any */* media types with json+yaml (protobuf?)
+					// Exclude esoteric/unsupported k8s properties on the list request
+					if v.Get != nil {
+						action, ok := v.Get.Extensions.GetString("x-kubernetes-action")
+						if ok && (action == "list") {
+							params := make([]*spec3.Parameter, 0, len(v.Get.Parameters))
+							for _, p := range v.Get.Parameters {
+								switch p.Name {
+								case
+									"allowWatchBookmarks",
+									"resourceVersionMatch",
+									"sendInitialEvents",
+									"shardSelector": // we may support this, but not yet
+								default:
+									params = append(params, p)
+								}
+							}
+							v.Get.Parameters = params
+						}
+					}
+
+					// Replace any */* media types with json+yaml
 					ops := []*spec3.Operation{v.Delete, v.Put, v.Post}
 					for _, op := range ops {
 						if op == nil || op.RequestBody == nil || len(op.RequestBody.Content) != 1 {
@@ -169,9 +251,8 @@ func getOpenAPIPostProcessor(version string, builders []APIGroupBuilder, gvs []s
 						content, ok := op.RequestBody.Content["*/*"]
 						if ok {
 							op.RequestBody.Content = map[string]*spec3.MediaType{
-								"application/json":                    content,
-								"application/yaml":                    content,
-								"application/vnd.kubernetes.protobuf": content,
+								"application/json": content,
+								"application/yaml": content,
 							}
 						}
 					}
@@ -201,10 +282,9 @@ func getOpenAPIPostProcessor(version string, builders []APIGroupBuilder, gvs []s
 							keep := make([]map[string]any, 0, len(gvks))
 							for _, val := range gvks {
 								gvk, ok := val.(map[string]any)
-								if ok && gvk["version"] == "__internal" {
-									continue
+								if ok && gvk["group"] == gv.Group && gvk["version"] != "__internal" {
+									keep = append(keep, gvk) // only expose real versions in the same group
 								}
-								keep = append(keep, gvk)
 							}
 							v.Extensions["x-kubernetes-group-version-kind"] = keep
 						}
@@ -217,33 +297,81 @@ func getOpenAPIPostProcessor(version string, builders []APIGroupBuilder, gvs []s
 					if idx > 0 {
 						parent := copy.Paths.Paths[path[:idx+6]]
 						if parent != nil && parent.Get != nil {
-							for _, op := range GetPathOperations(spec) {
-								if op != nil && op.Extensions != nil {
-									action, ok := op.Extensions.GetString("x-kubernetes-action")
-									if ok && action == "connect" {
-										op.Tags = parent.Get.Tags
-									}
+							for _, op := range GetPathOperations(&spec.PathProps) {
+								action, ok := op.Extensions.GetString("x-kubernetes-action")
+								if ok && action == "connect" {
+									op.Tags = parent.Get.Tags
 								}
 							}
 						}
 					}
 				}
-				return addBuilderRoutes(gv, &copy, builders)
+				result, err := addBuilderRoutes(gv, &copy, builders, apiResourceConfig, extra)
+				if err != nil {
+					return nil, err
+				}
+				// Remove protobuf from all paths (including routes added by addBuilderRoutes)
+				for _, path := range result.Paths.Paths {
+					allOps := GetPathOperations(&path.PathProps)
+					for _, op := range allOps {
+						if op == nil {
+							continue
+						}
+						// Remove protobuf from request body content types
+						if op.RequestBody != nil && op.RequestBody.Content != nil {
+							delete(op.RequestBody.Content, "application/vnd.kubernetes.protobuf")
+						}
+						// Remove protobuf from response content types
+						if op.Responses != nil {
+							if op.Responses.StatusCodeResponses != nil {
+								for _, response := range op.Responses.StatusCodeResponses {
+									if response.Content != nil {
+										delete(response.Content, "application/vnd.kubernetes.protobuf")
+										delete(response.Content, "application/vnd.kubernetes.protobuf;stream=watch")
+									}
+								}
+							}
+							// Handle default response
+							if op.Responses.Default != nil && op.Responses.Default.Content != nil {
+								delete(op.Responses.Default.Content, "application/vnd.kubernetes.protobuf")
+								delete(op.Responses.Default.Content, "application/vnd.kubernetes.protobuf;stream=watch")
+							}
+						}
+					}
+				}
+				return result, nil
 			}
 		}
 		return s, nil
 	}
 }
 
-func GetPathOperations(path *spec3.Path) []*spec3.Operation {
-	return []*spec3.Operation{
-		path.Get,
-		path.Head,
-		path.Delete,
-		path.Patch,
-		path.Post,
-		path.Put,
-		path.Trace,
-		path.Options,
+// GetPathOperations returns the set of non-nil operations defined on a path
+func GetPathOperations(path *spec3.PathProps) map[string]*spec3.Operation {
+	ops := make(map[string]*spec3.Operation)
+	if path.Get != nil {
+		ops[http.MethodGet] = path.Get
 	}
+	if path.Head != nil {
+		ops[http.MethodHead] = path.Head
+	}
+	if path.Delete != nil {
+		ops[http.MethodDelete] = path.Delete
+	}
+	if path.Post != nil {
+		ops[http.MethodPost] = path.Post
+	}
+	if path.Put != nil {
+		ops[http.MethodPut] = path.Put
+	}
+	if path.Patch != nil {
+		ops[http.MethodPatch] = path.Patch
+	}
+	if path.Trace != nil {
+		ops[http.MethodTrace] = path.Trace
+	}
+	if path.Options != nil {
+		ops[http.MethodOptions] = path.Options
+	}
+	return ops
 }

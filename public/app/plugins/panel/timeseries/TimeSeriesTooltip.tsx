@@ -1,20 +1,30 @@
-import { ReactNode } from 'react';
+import { type ReactNode } from 'react';
 
-import { DataFrame, Field, FieldType, formattedValueToString, InterpolateFunction, LinkModel } from '@grafana/data';
-import { SortOrder, TooltipDisplayMode } from '@grafana/schema/dist/esm/common/common.gen';
 import {
+  type DataFrame,
+  type Field,
+  FieldType,
+  formattedValueToString,
+  type InterpolateFunction,
+  type LinkModel,
+  usePluginContext,
+} from '@grafana/data';
+import { SortOrder, TooltipDisplayMode } from '@grafana/schema';
+import {
+  type AdHocFilterModel,
+  type FilterByGroupedLabelsModel,
+  type VizTooltipItem,
   VizTooltipContent,
   VizTooltipFooter,
   VizTooltipHeader,
   VizTooltipWrapper,
-  getContentItems,
-  VizTooltipItem,
-  AdHocFilterModel,
-} from '@grafana/ui/internal';
+  getFieldDisplayItems,
+  isTooltipScrollable,
+} from '@grafana/ui';
+import { AssistantTooltipButton } from 'app/core/components/AssistantTooltip/AssistantTooltipButton';
+import { type AssistantTooltipContext } from 'app/core/components/AssistantTooltip/buildAssistantContext';
 
 import { getFieldActions } from '../status-history/utils';
-
-import { isTooltipScrollable } from './utils';
 
 // exemplar / annotation / time region hovering?
 // add annotation UI / alert dismiss UI?
@@ -42,8 +52,11 @@ export interface TimeSeriesTooltipProps {
   dataLinks: LinkModel[];
   hideZeros?: boolean;
   adHocFilters?: AdHocFilterModel[];
+  filterByGroupedLabels?: FilterByGroupedLabelsModel;
   canExecuteActions?: boolean;
   compareDiffMs?: number[];
+  /** When provided, renders an "Add to Assistant" button in the pinned tooltip footer. */
+  assistantContext?: AssistantTooltipContext;
 }
 
 export const TimeSeriesTooltip = ({
@@ -62,7 +75,11 @@ export const TimeSeriesTooltip = ({
   adHocFilters,
   canExecuteActions,
   compareDiffMs,
+  filterByGroupedLabels,
+  assistantContext,
 }: TimeSeriesTooltipProps) => {
+  const pluginContext = usePluginContext();
+
   const xField = series.fields[0];
   let xVal = xField.values[dataIdxs[0]!];
 
@@ -72,7 +89,7 @@ export const TimeSeriesTooltip = ({
 
   const xDisp = formattedValueToString(xField.display!(xVal));
 
-  const contentItems = getContentItems(
+  const contentItems = getFieldDisplayItems(
     series.fields,
     xField,
     dataIdxs,
@@ -91,11 +108,32 @@ export const TimeSeriesTooltip = ({
     const hasOneClickLink = dataLinks.some((dataLink) => dataLink.oneClick === true);
 
     if (isPinned || hasOneClickLink) {
+      const visualizationType = pluginContext?.meta?.id ?? 'timeseries';
       const dataIdx = dataIdxs[seriesIdx]!;
-      const actions = canExecuteActions ? getFieldActions(series, field, replaceVariables, dataIdx) : [];
+      const actions = canExecuteActions
+        ? getFieldActions(series, field, replaceVariables, dataIdx, visualizationType)
+        : [];
 
       footer = (
-        <VizTooltipFooter dataLinks={dataLinks} actions={actions} annotate={annotate} adHocFilters={adHocFilters} />
+        <VizTooltipFooter
+          dataLinks={dataLinks}
+          actions={actions}
+          annotate={annotate}
+          adHocFilters={adHocFilters}
+          filterByGroupedLabels={filterByGroupedLabels}
+          additionalContent={
+            isPinned && assistantContext != null ? (
+              <AssistantTooltipButton
+                series={series}
+                seriesIdx={seriesIdx}
+                dataIdxs={dataIdxs}
+                replaceVariables={replaceVariables}
+                context={assistantContext}
+                xVal={xVal}
+              />
+            ) : undefined
+          }
+        />
       );
     }
   }

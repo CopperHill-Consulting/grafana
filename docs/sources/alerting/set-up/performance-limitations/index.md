@@ -58,32 +58,53 @@ For more information, refer to [this GitHub issue](https://github.com/grafana/gr
 
 ## High load on database caused by a high number of alert instances
 
-If you have a high number of alert instances, it can happen that the load on the database gets very high, as each state
-transition of an alert instance is saved in the database after every evaluation.
+If you have a high number of alert rules or alert instances, the load on the database can get very high.
 
-### Compressed alert state
+Grafana performs one SQL update per alert rule after each evaluation. This update groups all alert instances belonging to the rule together and compresses them into a single protobuf-based row, which keeps database overhead low even for alert rules with many instances.
 
-When the `alertingSaveStateCompressed` feature toggle is enabled, Grafana saves the alert rule state in a compressed form. Instead of performing an individual SQL update for each alert instance, Grafana performs a single SQL update per alert rule, updating all alert instances belonging to that rule.
+{{< admonition type="warning" >}}
+Earlier versions of Grafana wrote alert instance state to the database uncompressed, one row per instance, and let you opt in to compressed storage with the `alertingSaveStateCompressed` feature toggle. Grafana 13.2 removes that feature toggle and the uncompressed storage path entirely.
 
-This can significantly reduce database overhead for alert rules with many alert instances.
+If you're upgrading from a Grafana version where you had explicitly disabled `alertingSaveStateCompressed`, enable it and let Grafana run for at least one evaluation cycle _before_ you upgrade to Grafana 13.2 or later. Otherwise, any alert state still held in the old uncompressed format isn't read after the upgrade. This doesn't cause data loss beyond the alert state itself: Grafana re-evaluates every rule and rebuilds instance state from scratch, but you might see a brief, one-time gap in alert history and current state immediately after the upgrade.
+{{< /admonition >}}
 
 ### Save state periodically
 
-High load can be also prevented by writing to the database periodically, instead of after every evaluation.
+You can also reduce database load by writing states periodically instead of after every evaluation.
 
-To save state periodically, enable the `alertingSaveStatePeriodic` feature toggle.
+Enable the `alertingSaveStatePeriodic` feature toggle to save alert states at the interval specified by `state_periodic_save_interval` instead of after every rule evaluation. Grafana groups all alert instances by rule UID and compresses them together for efficient storage.
 
-By default, it saves the states every 5 minutes to the database and on each shutdown. The periodic interval
-can also be configured using the `state_periodic_save_interval` configuration flag. During this process, Grafana deletes all existing alert instances from the database and then writes the entire current set of instances back in batches in a single transaction.
-Configure the size of each batch using the `state_periodic_save_batch_size` configuration option.
+By default, Grafana saves the states every 5 minutes and on each shutdown. Note that `state_periodic_save_batch_size` and `state_periodic_save_jitter_enabled` don't apply here, since Grafana groups instances by rule UID rather than by batch.
 
-The time it takes to write to the database periodically can be monitored using the `state_full_sync_duration_seconds` metric
-that is exposed by Grafana.
+```ini
+[unified_alerting]
+state_periodic_save_interval = 1m
+```
 
 If Grafana crashes or is force killed, then the database can be up to `state_periodic_save_interval` seconds out of date.
 When Grafana restarts, the UI might show incorrect state for some alerts until the alerts are re-evaluated.
 In some cases, alerts that were firing before the crash might fire again.
 If this happens, Grafana might send duplicate notifications for firing alerts.
+
+## Limit on the number of results per alert rule
+
+Each alert rule evaluation generates one alert instance per series in the rule's query result set. Rules with high-cardinality result sets consume more CPU, memory, network, and database resources, and can produce a large number of alert instances (refer to [High load on database caused by a high number of alert instances](#high-load-on-database-caused-by-a-high-number-of-alert-instances)).
+
+To prevent this, Grafana can limit the number of query evaluation results a single alert rule produces in one evaluation. When a rule's query returns more results than the limit, the evaluation fails with an error similar to the following:
+
+```
+query evaluation returned too many results: 12345 (limit: 10000)
+```
+
+The alert rule enters the [Error state](/docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/alert-rule-evaluation/nodata-and-error-states/) and produces no alert instances for that evaluation until you reduce its result set below the limit.
+
+In self-managed Grafana, set this limit using the [`alerting_rule_evaluation_results`](/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana#alerting_rule_evaluation_results) option in the `[quota]` section. The default is `-1` (unlimited). In Grafana Cloud, Grafana Labs manages this limit.
+
+To resolve the error, reduce the cardinality of the rule's result set:
+
+- Aggregate the query so it returns fewer series. For example, sum or average by fewer labels.
+- Add label filters so the query returns only the series you need to alert on.
+- Split a single high-cardinality rule into several rules with narrower queries.
 
 ## Alert rule migrations for Grafana 11.6.0
 

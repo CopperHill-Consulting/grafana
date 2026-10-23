@@ -1,10 +1,14 @@
 package v0alpha1
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
 
 	"github.com/grafana/grafana-app-sdk/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type TeamClient struct {
@@ -76,24 +80,102 @@ func (c *TeamClient) Patch(ctx context.Context, identifier resource.Identifier, 
 	return c.client.Patch(ctx, identifier, req, opts)
 }
 
-func (c *TeamClient) UpdateStatus(ctx context.Context, identifier resource.Identifier, newStatus TeamStatus, opts resource.UpdateOptions) (*Team, error) {
-	return c.client.Update(ctx, &Team{
-		TypeMeta: metav1.TypeMeta{
-			Kind:       TeamKind().Kind(),
-			APIVersion: GroupVersion.Identifier(),
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			ResourceVersion: opts.ResourceVersion,
-			Namespace:       identifier.Namespace,
-			Name:            identifier.Name,
-		},
-		Status: newStatus,
-	}, resource.UpdateOptions{
-		Subresource:     "status",
-		ResourceVersion: opts.ResourceVersion,
-	})
-}
-
 func (c *TeamClient) Delete(ctx context.Context, identifier resource.Identifier, opts resource.DeleteOptions) error {
 	return c.client.Delete(ctx, identifier, opts)
+}
+
+type CreateTeamMemberRequest struct {
+	Body    CreateTeamMemberRequestBody
+	Headers http.Header
+}
+
+func (c *TeamClient) CreateTeamMember(ctx context.Context, identifier resource.Identifier, request CreateTeamMemberRequest) (*CreateTeamMemberResponse, error) {
+	body, err := json.Marshal(request.Body)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal body to JSON: %w", err)
+	}
+	resp, err := c.client.SubresourceRequest(ctx, identifier, resource.CustomRouteRequestOptions{
+		Path:    "/addmember",
+		Verb:    "POST",
+		Body:    io.NopCloser(bytes.NewReader(body)),
+		Headers: request.Headers,
+	})
+	if err != nil {
+		return nil, err
+	}
+	cast := CreateTeamMemberResponse{}
+	err = json.Unmarshal(resp, &cast)
+	if err != nil {
+		return nil, fmt.Errorf("unable to unmarshal response bytes into CreateTeamMemberResponse: %w", err)
+	}
+	return &cast, nil
+}
+
+type GetTeamGroupsRequest struct {
+	Headers http.Header
+}
+
+func (c *TeamClient) GetTeamGroups(ctx context.Context, identifier resource.Identifier, request GetTeamGroupsRequest) (*GetTeamGroupsResponse, error) {
+	resp, err := c.client.SubresourceRequest(ctx, identifier, resource.CustomRouteRequestOptions{
+		Path:    "/groups",
+		Verb:    "GET",
+		Headers: request.Headers,
+	})
+	if err != nil {
+		return nil, err
+	}
+	cast := GetTeamGroupsResponse{}
+	err = json.Unmarshal(resp, &cast)
+	if err != nil {
+		return nil, fmt.Errorf("unable to unmarshal response bytes into GetTeamGroupsResponse: %w", err)
+	}
+	return &cast, nil
+}
+
+type GetTeamMembersRequest struct {
+	Headers http.Header
+}
+
+func (c *TeamClient) GetTeamMembers(ctx context.Context, identifier resource.Identifier, request GetTeamMembersRequest) (*GetTeamMembersResponse, error) {
+	resp, err := c.client.SubresourceRequest(ctx, identifier, resource.CustomRouteRequestOptions{
+		Path:    "/members",
+		Verb:    "GET",
+		Headers: request.Headers,
+	})
+	if err != nil {
+		return nil, err
+	}
+	cast := GetTeamMembersResponse{}
+	err = json.Unmarshal(resp, &cast)
+	if err != nil {
+		return nil, fmt.Errorf("unable to unmarshal response bytes into GetTeamMembersResponse: %w", err)
+	}
+	return &cast, nil
+}
+
+type DeleteTeamMemberRequest struct {
+	Body    DeleteTeamMemberRequestBody
+	Headers http.Header
+}
+
+func (c *TeamClient) DeleteTeamMember(ctx context.Context, identifier resource.Identifier, request DeleteTeamMemberRequest) (*DeleteTeamMemberResponse, error) {
+	body, err := json.Marshal(request.Body)
+	if err != nil {
+		return nil, fmt.Errorf("unable to marshal body to JSON: %w", err)
+	}
+	resp, err := c.client.SubresourceRequest(ctx, identifier, resource.CustomRouteRequestOptions{
+		Path:    "/removemember",
+		Verb:    "POST",
+		Body:    io.NopCloser(bytes.NewReader(body)),
+		Headers: request.Headers,
+	})
+	if err != nil {
+		return nil, err
+	}
+	cast := DeleteTeamMemberResponse{}
+	err = json.Unmarshal(resp, &cast)
+	if err != nil {
+		return nil, fmt.Errorf("unable to unmarshal response bytes into DeleteTeamMemberResponse: %w", err)
+	}
+	return &cast, nil
 }

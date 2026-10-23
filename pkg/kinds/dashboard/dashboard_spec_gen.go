@@ -32,7 +32,7 @@ type Spec struct {
 	// to see if the version has changed since the last time.
 	Revision *int64 `json:"revision,omitempty"`
 	// ID of a dashboard imported from the https://grafana.com/grafana/dashboards/ portal
-	GnetId *string `json:"gnetId,omitempty"`
+	GnetId *int64 `json:"gnetId,omitempty"`
 	// Tags associated with dashboard.
 	Tags []string `json:"tags,omitempty"`
 	// Timezone of dashboard. Accepted values are IANA TZDB zone ID or "browser" or "utc".
@@ -191,6 +191,9 @@ type Panel struct {
 	TimeShift *string `json:"timeShift,omitempty"`
 	// Controls if the timeFrom or timeShift overrides are shown in the panel header
 	HideTimeOverride *bool `json:"hideTimeOverride,omitempty"`
+	// Compare the current time range with a previous period
+	// For example "1d" to compare current period but shifted back 1 day
+	TimeCompare *string `json:"timeCompare,omitempty"`
 	// Dynamically load the panel
 	LibraryPanel *LibraryPanelRef `json:"libraryPanel,omitempty"`
 	// Sets panel queries cache timeout.
@@ -201,12 +204,16 @@ type Panel struct {
 	Options map[string]any `json:"options,omitempty"`
 	// Field options allow you to change how the data is displayed in your visualizations.
 	FieldConfig *FieldConfigSource `json:"fieldConfig,omitempty"`
+	// When a panel is migrated from a previous version (Angular to React), this field is set to the original panel type.
+	// This is used to determine the original panel type when migrating to a new version so the plugin migration can be applied.
+	AutoMigrateFrom *string `json:"autoMigrateFrom,omitempty"`
 }
 
 // NewPanel creates a new Panel object.
 func NewPanel() *Panel {
 	return &Panel{
-		Transparent: (func(input bool) *bool { return &input })(false),
+		Transparent:     (func(input bool) *bool { return &input })(false),
+		RepeatDirection: (func(input PanelRepeatDirection) *PanelRepeatDirection { return &input })(PanelRepeatDirectionH),
 	}
 }
 
@@ -273,13 +280,15 @@ type DashboardLink struct {
 	// If true, all dashboards links will be displayed in a dropdown. If false, all dashboards links will be displayed side by side. Only valid if the type is dashboards
 	AsDropdown bool `json:"asDropdown"`
 	// Placement can be used to display the link somewhere else on the dashboard other than above the visualisations.
-	Placement string `json:"placement,omitempty"`
+	Placement *string `json:"placement,omitempty"`
 	// If true, the link will be opened in a new tab
 	TargetBlank bool `json:"targetBlank"`
 	// If true, includes current template variables values in the link as query params
 	IncludeVars bool `json:"includeVars"`
 	// If true, includes current time range in the link as query params
 	KeepTime bool `json:"keepTime"`
+	// The source that registered the link (if any)
+	Origin *ControlSourceRef `json:"origin,omitempty"`
 }
 
 // NewDashboardLink creates a new DashboardLink object.
@@ -287,7 +296,7 @@ func NewDashboardLink() *DashboardLink {
 	return &DashboardLink{
 		Tags:        []string{},
 		AsDropdown:  false,
-		Placement:   DashboardLinkPlacement,
+		Placement:   (func(input string) *string { return &input })(DashboardLinkPlacement),
 		TargetBlank: false,
 		IncludeVars: false,
 		KeepTime:    false,
@@ -305,6 +314,26 @@ const (
 // Dashboard Link placement. Defines where the link should be displayed.
 // - "inControlsMenu" renders the link in bottom part of the dashboard controls dropdown menu
 const DashboardLinkPlacement = "inControlsMenu"
+
+type ControlSourceRef = DatasourceControlSourceRef
+
+// NewControlSourceRef creates a new ControlSourceRef object.
+func NewControlSourceRef() *ControlSourceRef {
+	return NewDatasourceControlSourceRef()
+}
+
+type DatasourceControlSourceRef struct {
+	Type string `json:"type"`
+	// The plugin type-id
+	Group string `json:"group"`
+}
+
+// NewDatasourceControlSourceRef creates a new DatasourceControlSourceRef object.
+func NewDatasourceControlSourceRef() *DatasourceControlSourceRef {
+	return &DatasourceControlSourceRef{
+		Type: "datasource",
+	}
+}
 
 // Transformations allow to manipulate data returned by a query before the system applies a visualization.
 // Using transformations you can: rename fields, join time series data, perform mathematical operations across queries,
@@ -334,6 +363,8 @@ func NewDataTransformerConfig() *DataTransformerConfig {
 type MatcherConfig struct {
 	// The matcher id. This is used to find the matcher implementation from registry.
 	Id string `json:"id"`
+	// If set, limits this matcher to fields of that type. If not set, "series" mode is used.
+	Scope *MatcherScope `json:"scope,omitempty"`
 	// The matcher options. This is specific to the matcher implementation.
 	Options any `json:"options,omitempty"`
 }
@@ -344,6 +375,15 @@ func NewMatcherConfig() *MatcherConfig {
 		Id: "",
 	}
 }
+
+type MatcherScope string
+
+const (
+	MatcherScopeSeries     MatcherScope = "series"
+	MatcherScopeNested     MatcherScope = "nested"
+	MatcherScopeAnnotation MatcherScope = "annotation"
+	MatcherScopeExemplar   MatcherScope = "exemplar"
+)
 
 // A library panel is a reusable panel that you can use in any dashboard.
 // When you make a change to a library panel, that change propagates to all instances of where the panel is used.
@@ -400,7 +440,7 @@ type FieldConfig struct {
 	// True if data source field supports ad-hoc filters
 	Filterable *bool `json:"filterable,omitempty"`
 	// Unit a field should use. The unit you select is applied to all fields except time.
-	// You can use the units ID availables in Grafana or a custom unit.
+	// You can use the units ID available in Grafana or a custom unit.
 	// Available units in Grafana: https://github.com/grafana/grafana/blob/main/packages/grafana-data/src/valueFormats/categories.ts
 	// As custom unit, you can use the following formats:
 	// `suffix:<suffix>` for custom unit that should go after value.
@@ -585,6 +625,8 @@ type Threshold struct {
 	// Value represents a specified metric for the threshold, which triggers a visual change in the dashboard when this value is met or exceeded.
 	// Nulls currently appear here when serializing -Infinity to JSON.
 	Value *float64 `json:"value"`
+	// Optional dashboard-variable expression (e.g. `$myVar`) resolved at render time; `value` is the numeric fallback when the expression cannot be resolved to a single finite number.
+	ValueExpr *string `json:"valueExpr,omitempty"`
 	// Color represents the color of the visual change that will occur in the dashboard when the threshold value is met or exceeded.
 	Color string `json:"color"`
 }
@@ -615,7 +657,12 @@ func NewFieldColor() *FieldColor {
 // `thresholds`: From thresholds. Informs Grafana to take the color from the matching threshold
 // `palette-classic`: Classic palette. Grafana will assign color by looking up a color in a palette by series index. Useful for Graphs and pie charts and other categorical data visualizations
 // `palette-classic-by-name`: Classic palette (by name). Grafana will assign color by looking up a color in a palette by series name. Useful for Graphs and pie charts and other categorical data visualizations
-// `continuous-GrYlRd`: ontinuous Green-Yellow-Red palette mode
+// `continuous-viridis`: Continuous Viridis palette mode
+// `continuous-magma`: Continuous Magma palette mode
+// `continuous-plasma`: Continuous Plasma palette mode
+// `continuous-inferno`: Continuous Inferno palette mode
+// `continuous-cividis`: Continuous Cividis palette mode
+// `continuous-GrYlRd`: Continuous Green-Yellow-Red palette mode
 // `continuous-RdYlGr`: Continuous Red-Yellow-Green palette mode
 // `continuous-BlYlRd`: Continuous Blue-Yellow-Red palette mode
 // `continuous-YlRd`: Continuous Yellow-Red palette mode
@@ -633,6 +680,11 @@ const (
 	FieldColorModeIdThresholds           FieldColorModeId = "thresholds"
 	FieldColorModeIdPaletteClassic       FieldColorModeId = "palette-classic"
 	FieldColorModeIdPaletteClassicByName FieldColorModeId = "palette-classic-by-name"
+	FieldColorModeIdContinuousViridis    FieldColorModeId = "continuous-viridis"
+	FieldColorModeIdContinuousMagma      FieldColorModeId = "continuous-magma"
+	FieldColorModeIdContinuousPlasma     FieldColorModeId = "continuous-plasma"
+	FieldColorModeIdContinuousInferno    FieldColorModeId = "continuous-inferno"
+	FieldColorModeIdContinuousCividis    FieldColorModeId = "continuous-cividis"
 	FieldColorModeIdContinuousGrYlRd     FieldColorModeId = "continuous-GrYlRd"
 	FieldColorModeIdContinuousRdYlGr     FieldColorModeId = "continuous-RdYlGr"
 	FieldColorModeIdContinuousBlYlRd     FieldColorModeId = "continuous-BlYlRd"
@@ -807,6 +859,8 @@ type VariableModel struct {
 	Multi *bool `json:"multi,omitempty"`
 	// Allow custom values to be entered in the variable
 	AllowCustomValue *bool `json:"allowCustomValue,omitempty"`
+	// Whether the group-by operator is enabled in the ad hoc filter combobox.
+	EnableGroupBy *bool `json:"enableGroupBy,omitempty"`
 	// Options that can be selected for a variable.
 	Options []VariableOption `json:"options,omitempty"`
 	// Options to config when to refresh a variable
@@ -820,6 +874,10 @@ type VariableModel struct {
 	// Optional field, if you want to extract part of a series name or metric node segment.
 	// Named capture groups can be used to separate the display text and value.
 	Regex *string `json:"regex,omitempty"`
+	// Optional, indicates whether a custom type variable uses CSV or JSON to define its values
+	ValuesFormat *VariableModelValuesFormat `json:"valuesFormat,omitempty"`
+	// Determine whether regex applies to variable value or display text
+	RegexApplyTo *VariableRegexApplyTo `json:"regexApplyTo,omitempty"`
 	// Additional static options for query variable
 	StaticOptions []VariableOption `json:"staticOptions,omitempty"`
 	// Ordering of static options in relation to options returned from data source for query variable
@@ -832,7 +890,9 @@ func NewVariableModel() *VariableModel {
 		SkipUrlSync:      (func(input bool) *bool { return &input })(false),
 		Multi:            (func(input bool) *bool { return &input })(false),
 		AllowCustomValue: (func(input bool) *bool { return &input })(true),
+		EnableGroupBy:    (func(input bool) *bool { return &input })(false),
 		IncludeAll:       (func(input bool) *bool { return &input })(false),
+		ValuesFormat:     (func(input VariableModelValuesFormat) *VariableModelValuesFormat { return &input })(VariableModelValuesFormatCsv),
 	}
 }
 
@@ -845,6 +905,7 @@ func NewVariableModel() *VariableModel {
 // `textbox`: Display a free text input field with an optional default value.
 // `custom`: Define the variable options manually using a comma-separated list.
 // `system`: Variables defined by Grafana. See: https://grafana.com/docs/grafana/latest/dashboards/variables/add-template-variables/#global-variables
+// `switch`: Boolean variables rendered as a switch
 type VariableType string
 
 const (
@@ -858,6 +919,7 @@ const (
 	VariableTypeCustom     VariableType = "custom"
 	VariableTypeSystem     VariableType = "system"
 	VariableTypeSnapshot   VariableType = "snapshot"
+	VariableTypeSwitch     VariableType = "switch"
 )
 
 // Determine if the variable shows on dashboard
@@ -879,6 +941,8 @@ type VariableOption struct {
 	Text StringOrArrayOfString `json:"text"`
 	// Value of the option
 	Value StringOrArrayOfString `json:"value"`
+	// Additional properties for multi-props variables
+	Properties map[string]string `json:"properties,omitempty"`
 }
 
 // NewVariableOption creates a new VariableOption object.
@@ -926,6 +990,15 @@ const (
 	VariableSortNaturalDesc                     VariableSort = 8
 )
 
+// Determine whether regex applies to variable value or display text
+// Accepted values are "value" (apply to value used in queries) or "text" (apply to display text shown to users)
+type VariableRegexApplyTo string
+
+const (
+	VariableRegexApplyToValue VariableRegexApplyTo = "value"
+	VariableRegexApplyToText  VariableRegexApplyTo = "text"
+)
+
 // Contains the list of annotations that are associated with the dashboard.
 // Annotations are used to overlay event markers and overlay event tags on graphs.
 // Grafana comes with a native annotation store and the ability to add annotation events directly from the graph panel or via the HTTP API.
@@ -962,6 +1035,8 @@ type AnnotationQuery struct {
 	Type *string `json:"type,omitempty"`
 	// Set to 1 for the standard annotation query all dashboards have by default.
 	BuiltIn *float64 `json:"builtIn,omitempty"`
+	// Placement can be used to display the annotation query somewhere else on the dashboard other than the default location.
+	Placement *string `json:"placement,omitempty"`
 }
 
 // NewAnnotationQuery creates a new AnnotationQuery object.
@@ -971,6 +1046,7 @@ func NewAnnotationQuery() *AnnotationQuery {
 		Enable:     true,
 		Hide:       (func(input bool) *bool { return &input })(false),
 		BuiltIn:    (func(input float64) *float64 { return &input })(0),
+		Placement:  (func(input string) *string { return &input })(AnnotationQueryPlacement),
 	}
 }
 
@@ -1012,6 +1088,10 @@ func NewAnnotationTarget() *AnnotationTarget {
 		Tags: []string{},
 	}
 }
+
+// Annotation Query placement. Defines where the annotation query should be displayed.
+// - "inControlsMenu" renders the annotation query in the dashboard controls dropdown menu
+const AnnotationQueryPlacement = "inControlsMenu"
 
 // A dashboard snapshot shares an interactive dashboard publicly.
 // It is a read-only version of a dashboard, and is not editable.
@@ -1152,6 +1232,13 @@ const (
 	DataTransformerConfigTopicSeries      DataTransformerConfigTopic = "series"
 	DataTransformerConfigTopicAnnotations DataTransformerConfigTopic = "annotations"
 	DataTransformerConfigTopicAlertStates DataTransformerConfigTopic = "alertStates"
+)
+
+type VariableModelValuesFormat string
+
+const (
+	VariableModelValuesFormatCsv  VariableModelValuesFormat = "csv"
+	VariableModelValuesFormatJson VariableModelValuesFormat = "json"
 )
 
 type VariableModelStaticOptionsOrder string

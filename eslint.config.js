@@ -1,4 +1,5 @@
-// @ts-check
+// TODO: Migrate to Typescript.
+// @ts-nocheck
 const emotionPlugin = require('@emotion/eslint-plugin');
 const restrictedGlobals = require('confusing-browser-globals');
 const importPlugin = require('eslint-plugin-import');
@@ -8,6 +9,7 @@ const jsxA11yPlugin = require('eslint-plugin-jsx-a11y');
 const lodashPlugin = require('eslint-plugin-lodash');
 const barrelPlugin = require('eslint-plugin-no-barrel-files');
 const reactPlugin = require('eslint-plugin-react');
+const reactPreferFunctionComponentPlugin = require('eslint-plugin-react-prefer-function-component');
 const testingLibraryPlugin = require('eslint-plugin-testing-library');
 const unicornPlugin = require('eslint-plugin-unicorn');
 
@@ -15,11 +17,9 @@ const grafanaConfig = require('@grafana/eslint-config/flat');
 const grafanaPlugin = require('@grafana/eslint-plugin');
 const grafanaI18nPlugin = require('@grafana/i18n/eslint-plugin');
 
-const pluginsToTranslate = [
-  'public/app/plugins/panel',
-  'public/app/plugins/datasource/azuremonitor',
-  'public/app/plugins/datasource/mssql',
-];
+const jsTsFiles = '*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}';
+
+const pluginsToTranslate = ['public/app/plugins/panel', 'public/app/plugins/datasource/azuremonitor'];
 
 const commonTestIgnores = [
   '**/*.{test,spec}.{ts,tsx}',
@@ -30,6 +30,7 @@ const commonTestIgnores = [
   '**/*.mock.{ts,tsx}',
   '**/{test-helpers,testHelpers}.{ts,tsx}',
   '**/{spec,test-helpers}/**/*.{ts,tsx}',
+  'packages/grafana-test-utils/src/**/*.{ts,tsx}',
 ];
 
 const generatedFiles = ['**/*.gen.ts', '**/*_gen.ts'];
@@ -63,12 +64,21 @@ const baseImportConfig = {
       group: ['@grafana/ui/src/*', '@grafana/runtime/src/*', '@grafana/data/src/*'],
       message: 'Import from the public export instead.',
     },
+    {
+      group: ['react-router', 'react-router-dom'],
+      message: 'Import from react-router-dom-v5-compat instead until the react-router v6 migration is complete.',
+    },
   ],
   paths: [
     {
       name: 'react-redux',
       importNames: ['useDispatch', 'useSelector'],
       message: 'Please import from app/types/store instead.',
+    },
+    {
+      name: 'react-use',
+      importNames: ['useObservable'],
+      message: 'react-use is being phased out. Import useObservable from @grafana/data/unstable instead.',
     },
   ],
 };
@@ -86,6 +96,14 @@ function withBaseRestrictedImportsConfig(config = {}) {
   return finalConfig;
 }
 
+const datavizDefaultImportsRestrictions = [
+  {
+    group: ['@emotion/css'],
+    importNames: ['cx'],
+    message: 'Do not use "cx" from @emotion/css. Instead, use `clsx` and compose together only strings.',
+  },
+];
+
 /**
  * @type {Array<import('eslint').Linter.Config>}
  */
@@ -100,6 +118,7 @@ module.exports = [
       '**/build/',
       '**/compiled/',
       '**/dist/',
+      'coverage/',
       'data/',
       'deployment_tools_config.json',
       'devenv',
@@ -115,6 +134,11 @@ module.exports = [
       'scripts/grafana-server/tmp',
       'packages/grafana-ui/src/graveyard', // deprecated UI components slated for removal
       'public/build-swagger', // swagger build output
+      'apps/plugins/plugin/src/generated/meta/v0alpha1',
+      'apps/plugins/plugin/src/generated/plugin/v0alpha1',
+      'packages/get-document/index.js',
+      'packages/mapbox-jsonlint-lines-primitives/lib/jsonlint.js',
+      'packages/mapbox-jsonlint-lines-primitives/lib/formatter.js',
     ],
   },
   ...grafanaConfig,
@@ -129,7 +153,8 @@ module.exports = [
       // it also conflicts with the betterer eslint rules so disabled
       reportUnusedDisableDirectives: false,
     },
-    files: ['**/*.{ts,tsx,js}'],
+    files: [`**/${jsTsFiles}`],
+    ignores: ['packages/grafana-ui/src/components/Forms/Legacy/**'],
     plugins: {
       '@emotion': emotionPlugin,
       lodash: lodashPlugin,
@@ -139,6 +164,7 @@ module.exports = [
       'no-barrel-files': barrelPlugin,
       '@grafana': grafanaPlugin,
       unicorn: unicornPlugin,
+      'react-prefer-function-component': reactPreferFunctionComponentPlugin,
     },
 
     settings: {
@@ -155,6 +181,11 @@ module.exports = [
       '@grafana/no-border-radius-literal': 'error',
       '@grafana/no-unreduced-motion': 'error',
       '@grafana/no-restricted-img-srcs': 'error',
+      '@grafana/zod-import-namespace': 'error',
+      '@grafana/no-direct-date-fns': 'error',
+      '@grafana/no-direct-create-monitoring-logger': 'error',
+      '@grafana/no-get-data-source-srv': 'error',
+      'react-prefer-function-component/react-prefer-function-component': ['error', { allowJsxUtilityClass: true }],
       'react/prop-types': 'off',
       // need to ignore emotion's `css` prop, see https://github.com/jsx-eslint/eslint-plugin-react/blob/master/docs/rules/no-unknown-property.md#rule-options
       'react/no-unknown-property': ['error', { ignore: ['css'] }],
@@ -179,18 +210,34 @@ module.exports = [
       ],
       'no-restricted-imports': ['error', baseImportConfig],
       'no-restricted-globals': ['error'].concat(restrictedGlobals),
+      // React 19 related TransitionGroup rules to prevent usage of findDomNode. Remove once React 19 is the default
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "JSXElement[openingElement.name.name=/^(CSSTransition|Transition)$/]:not(:has(JSXAttribute[name.name='nodeRef']))",
+          message:
+            'CSSTransition components must have a nodeRef attribute to avoid findDOMNode usage which breaks in React 19. See https://reactcommunity.org/react-transition-group/transition#Transition-prop-nodeRef for more details.',
+        },
+      ],
 
       // Use typescript's no-redeclare for compatibility with overrides
       'no-redeclare': 'off',
       '@typescript-eslint/no-redeclare': ['error'],
-      'unicorn/no-empty-file': 'error',
-      'no-constant-condition': 'error',
-      'no-restricted-syntax': [
+      '@typescript-eslint/consistent-type-imports': [
         'error',
         {
-          // value regex is to filter out whitespace-only text nodes (e.g. new lines and spaces in the JSX)
-          selector: "JSXElement[openingElement.name.name='a'] > JSXText[value!=/^\\s*$/]",
-          message: 'No bare anchor nodes containing only text. Use `TextLink` instead.',
+          fixStyle: 'inline-type-imports',
+        },
+      ],
+      'unicorn/no-empty-file': 'error',
+      'no-constant-condition': 'error',
+      '@grafana/define-feature-events': 'error',
+      '@grafana/no-plain-links': 'error',
+      'react-hooks/exhaustive-deps': [
+        'error',
+        {
+          additionalHooks: 'use(Async)$',
         },
       ],
     },
@@ -232,6 +279,23 @@ module.exports = [
     },
   },
   {
+    name: 'grafana/grafana-ui-no-test-utils',
+    files: ['packages/grafana-ui/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        withBaseRestrictedImportsConfig({
+          patterns: [
+            {
+              group: ['@grafana/test-utils'],
+              message: "'@grafana/test-utils' creates a circular dependency with '@grafana/ui'",
+            },
+          ],
+        }),
+      ],
+    },
+  },
+  {
     name: 'grafana/story-rules',
     files: ['packages/grafana-ui/src/**/*.story.tsx'],
     rules: {
@@ -250,6 +314,9 @@ module.exports = [
     name: 'grafana/jsx-a11y-overrides',
     files: ['**/*.tsx'],
     ignores: ['**/*.{spec,test}.tsx'],
+    plugins: {
+      'jsx-a11y': jsxA11yPlugin,
+    },
     rules: {
       ...jsxA11yPlugin.configs.recommended.rules,
       'jsx-a11y/no-autofocus': [
@@ -271,10 +338,14 @@ module.exports = [
   {
     // No NPM package should import from @grafana/*/internal because it does not exist
     // outside of this repo - they're not published to NPM.
-    name: 'grafana/packages-overrides',
+    name: 'grafana/packages',
     files: ['packages/**/*.{ts,tsx}'],
     ignores: [],
+    plugins: {
+      import: importPlugin,
+    },
     rules: {
+      'import/no-extraneous-dependencies': ['error', { includeInternal: true }],
       'no-restricted-imports': [
         'error',
         withBaseRestrictedImportsConfig({
@@ -339,6 +410,27 @@ module.exports = [
     },
   },
   {
+    name: 'grafana/css-in-js-validation-unified',
+    plugins: {
+      '@grafana': grafanaPlugin,
+    },
+    files: ['public/app/features/alerting/unified/**/*.{ts,tsx}'],
+    rules: {
+      '@grafana/no-invalid-css-properties': 'error',
+    },
+  },
+  {
+    name: 'grafana/i18n-plural-defaults',
+    plugins: {
+      '@grafana/i18n': grafanaI18nPlugin,
+    },
+    files: ['**/*.{ts,tsx,js}'],
+    rules: {
+      '@grafana/i18n/t-plural-defaults': 'error',
+      '@grafana/i18n/trans-plural-defaults': 'error',
+    },
+  },
+  {
     // Sections of codebase that have all translation markup issues fixed
     name: 'grafana/i18n-overrides',
     plugins: {
@@ -350,7 +442,6 @@ module.exports = [
       'packages/grafana-ui/**/*.{ts,tsx,js,jsx}',
       'packages/grafana-data/**/*.{ts,tsx,js,jsx}',
       'packages/grafana-sql/**/*.{ts,tsx,js,jsx}',
-      'packages/grafana-prometheus/**/*.{ts,tsx,js,jsx}',
       ...pluginsToTranslate.map((plugin) => `${plugin}/**/*.{ts,tsx,js,jsx}`),
     ],
     ignores: [
@@ -361,7 +452,10 @@ module.exports = [
       '**/mock*.{ts,tsx}',
     ],
     rules: {
-      '@grafana/i18n/no-untranslated-strings': ['error', { calleesToIgnore: ['^css$', 'use[A-Z].*'] }],
+      '@grafana/i18n/no-untranslated-strings': [
+        'error',
+        { calleesToIgnore: ['^css$', 'use[A-Z].*'], basePaths: ['public/app/features'] },
+      ],
       '@grafana/i18n/no-translation-top-level': 'error',
     },
   },
@@ -370,6 +464,7 @@ module.exports = [
     plugins: {
       'testing-library': testingLibraryPlugin,
       'jest-dom': jestDomPlugin,
+      jest: jestPlugin,
     },
     files: [
       'public/app/features/alerting/**/__tests__/**/*.[jt]s?(x)',
@@ -414,21 +509,9 @@ module.exports = [
     name: 'grafana/decoupled-plugins-overrides',
     files: [
       'public/app/plugins/datasource/azuremonitor/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/cloud-monitoring/**/*.{ts,tsx}',
       'public/app/plugins/datasource/cloudwatch/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/elasticsearch/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/elasticsearch/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/grafana-postgresql-datasource/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/grafana-pyroscope-datasource/**/*.{ts,tsx}',
       'public/app/plugins/datasource/grafana-testdata-datasource/**/*.{ts,tsx}',
       'public/app/plugins/datasource/graphite/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/jaeger/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/loki/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/loki/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/mysql/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/parca/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/tempo/**/*.{ts,tsx}',
-      'public/app/plugins/datasource/zipkin/**/*.{ts,tsx}',
     ],
     plugins: {
       import: importPlugin,
@@ -459,12 +542,40 @@ module.exports = [
 
   {
     // custom rule for Table to avoid performance regressions
+    files: ['packages/grafana-ui/src/components/Table/TableNG/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        withBaseRestrictedImportsConfig({
+          patterns: [
+            ...datavizDefaultImportsRestrictions,
+            {
+              group: ['@grafana/data'],
+              importNames: ['getFieldDisplayName'],
+              message:
+                'Using the method inside Table can have performance implications which are unnecessary. Instead, use the local `getDisplayName` from the table utils.',
+            },
+          ],
+        }),
+      ],
+    },
+  },
+
+  {
+    // custom rule for Table to avoid performance regressions
     files: ['packages/grafana-ui/src/components/Table/TableNG/Cells/**/*.{ts,tsx}'],
     rules: {
       'no-restricted-imports': [
         'error',
         withBaseRestrictedImportsConfig({
           patterns: [
+            ...datavizDefaultImportsRestrictions,
+            {
+              group: ['@grafana/data'],
+              importNames: ['getFieldDisplayName'],
+              message:
+                'Using the method inside Table can have performance implications which are unnecessary. Instead, use the local `getDisplayName` from the table utils.',
+            },
             {
               group: ['**/themes/ThemeContext'],
               importNames: ['useStyles2', 'useTheme2'],
@@ -477,20 +588,35 @@ module.exports = [
     },
   },
 
+  // other dataviz panels which should just get our default set of restrictions
+  {
+    files: ['public/app/plugins/panel/state-timeline/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        withBaseRestrictedImportsConfig({
+          patterns: [...datavizDefaultImportsRestrictions],
+        }),
+      ],
+    },
+  },
+
   // Old betterer rules config:
   {
-    files: ['**/*.{js,jsx,ts,tsx}'],
-    ignores:
+    files: [`**/${jsTsFiles}`],
+    ignores: [
       // FIXME: Remove once all enterprise issues are fixed -
       // we don't have a suppressions file/approach for enterprise code yet
-      enterpriseIgnores,
+      ...enterpriseIgnores,
+      'packages/grafana-ui/src/components/Forms/Legacy/**',
+    ],
     rules: {
       '@typescript-eslint/no-explicit-any': 'error',
       '@grafana/no-aria-label-selectors': 'error',
     },
   },
   {
-    files: ['**/*.{js,jsx,ts,tsx}'],
+    files: [`**/${jsTsFiles}`],
     ignores: [
       ...commonTestIgnores,
       // FIXME: Remove once all enterprise issues are fixed -
@@ -499,45 +625,35 @@ module.exports = [
     ],
     rules: {
       '@typescript-eslint/consistent-type-assertions': ['error', { assertionStyle: 'never' }],
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: 'Identifier[name=localStorage]',
-          message: 'Direct usage of localStorage is not allowed. import store from @grafana/data instead',
-        },
-        {
-          selector: 'MemberExpression[object.name=localStorage]',
-          message: 'Direct usage of localStorage is not allowed. import store from @grafana/data instead',
-        },
-        {
-          selector:
-            'Program:has(ImportDeclaration[source.value="@grafana/ui"] ImportSpecifier[imported.name="Card"]) JSXOpeningElement[name.name="Card"]:not(:has(JSXAttribute[name.name="noMargin"]))',
-          message:
-            'Add noMargin prop to Card components to remove built-in margins. Use layout components like Stack or Grid with the gap prop instead for consistent spacing.',
-        },
-        {
-          selector:
-            'Program:has(ImportDeclaration[source.value="@grafana/ui"] ImportSpecifier[imported.name="Field"]) JSXOpeningElement[name.name="Field"]:not(:has(JSXAttribute[name.name="noMargin"]))',
-          message:
-            'Add noMargin prop to Field components to remove built-in margins. Use layout components like Stack or Grid with the gap prop instead for consistent spacing.',
-        },
-        {
-          selector: 'CallExpression[callee.type="MemberExpression"][callee.property.name="localeCompare"]',
-          message:
-            'Using localeCompare() can cause performance issues when sorting large datasets. Consider using Intl.Collator for better performance when sorting arrays, or add an eslint-disable comment if sorting a small, known dataset.',
-        },
-        {
-          // eslint-disable-next-line no-restricted-syntax
-          selector: 'Literal[value=/gf-form/], TemplateElement[value.cooked=/gf-form/]',
-          // eslint-disable-next-line no-restricted-syntax
-          message: 'gf-form usage has been deprecated. Use a component from @grafana/ui or custom CSS instead.',
-        },
-        {
-          selector:
-            "Property[key.name='a11y'][value.type='ObjectExpression'] Property[key.name='test'][value.value='off']",
-          message: 'Skipping a11y tests is not allowed. Please fix the component or story instead.',
-        },
-      ],
+      '@grafana/no-direct-local-storage-access': 'error',
+      '@grafana/require-no-margin': 'error',
+      '@grafana/no-locale-compare': 'error',
+      // eslint-disable-next-line @grafana/no-gf-form
+      '@grafana/no-gf-form': 'error',
+      '@grafana/no-config-apps': 'error',
+      '@grafana/no-config-panels': 'error',
+    },
+  },
+  {
+    files: [...commonTestIgnores],
+    ignores: [
+      // FIXME: Remove once all enterprise issues are fixed -
+      // we don't have a suppressions file/approach for enterprise code yet
+      ...enterpriseIgnores,
+    ],
+    rules: {
+      '@grafana/no-config-apps': 'error',
+      '@grafana/no-config-panels': 'error',
+    },
+    plugins: {
+      '@grafana': grafanaPlugin,
+    },
+  },
+  {
+    files: [...enterpriseIgnores],
+    rules: {
+      '@grafana/no-config-apps': 'error',
+      '@grafana/no-config-panels': 'error',
     },
   },
   {
@@ -547,6 +663,8 @@ module.exports = [
       // FIXME: Remove once all enterprise issues are fixed -
       // we don't have a suppressions file/approach for enterprise code yet
       ...enterpriseIgnores,
+      // Ignore decoupled plugin webpack configs
+      'public/app/**/webpack.config.ts',
     ],
     rules: {
       'no-barrel-files/no-barrel-files': 'error',
@@ -572,4 +690,17 @@ module.exports = [
       ],
     },
   },
+
+  // {
+  //   name: 'grafana/plugin-external-import-paths',
+  //   files: [
+  //     'public/app/plugins/panel/histogram/**/*.{ts,tsx}',
+  //   ],
+  //   plugins: {
+  //     '@grafana': grafanaPlugin,
+  //   },
+  //   rules: {
+  //     '@grafana/no-plugin-external-import-paths': 'error',
+  //   },
+  // },
 ];

@@ -24,6 +24,14 @@ func AddTablesMigrations(mg *migrator.Migrator) {
 	mg.AddMigration("add last_applied column to alert_configuration_history", migrator.NewAddColumnMigration(migrator.Table{Name: "alert_configuration_history"}, &migrator.Column{
 		Name: "last_applied", Type: migrator.DB_Int, Nullable: false, Default: "0",
 	}))
+	mg.AddMigration("add message column to alert_rule_version", migrator.NewAddColumnMigration(migrator.Table{Name: "alert_rule_version"}, &migrator.Column{
+		Name: "message", Type: migrator.DB_Text, Nullable: true,
+	}))
+	mg.AddMigration("add column external_alertmanager_uid in ngalert_configuration", migrator.NewAddColumnMigration(migrator.Table{Name: "ngalert_configuration"}, &migrator.Column{
+		Name: "external_alertmanager_uid", Type: migrator.DB_NVarchar, Length: UIDMaxLength, Nullable: true,
+	}))
+
+	AddManagerPropertiesColumnsToProvenanceType(mg)
 	// End of migration log, add new migrations above this line.
 }
 

@@ -11,16 +11,23 @@ labels:
     - enterprise
     - oss
 title: Provision Grafana
-weight: 600
+menuTitle: Provision Grafana
+weight: 4100
 ---
 
 # Provision Grafana
 
 Grafana has an active provisioning system that uses configuration files. You can define data sources and dashboards using files that can be version controlled, making GitOps more natural.
 
+{{< admonition type="note" >}}
+
+For advanced as code options such as Infrastructure as code, Git Sync or on-prem file provisioning refer to [Deploy, configure and provision Grafana with as-code workflows](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/as-code/).
+
+{{< /admonition >}}
+
 ## Configuration file
 
-Refer to [Configuration](../../setup-grafana/configure-grafana/) for more information on what you can configure in `grafana.ini`.
+Refer to [Configuration](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/setup-grafana/configure-grafana/) for more information on what you can configure in `grafana.ini`.
 
 ### Configuration file locations
 
@@ -77,19 +84,6 @@ datasources:
       password3: 'Pa$$sw0rd' # Resolved as Pa$sw0rd
       password4: 'Pa$sw0rd' # Resolved as Pa
 ```
-
-## Configuration management tools
-
-The Grafana community maintains libraries for many popular configuration management tools.
-
-| Tool      | Project                                                                                                                           |
-| --------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Puppet    | <https://forge.puppet.com/puppet/grafana>                                                                                         |
-| Ansible   | <https://github.com/grafana/grafana-ansible-collection>                                                                           |
-| Chef      | <https://github.com/sous-chefs/chef-grafana>                                                                                      |
-| Saltstack | <https://github.com/salt-formulas/salt-formula-grafana>                                                                           |
-| Jsonnet   | <https://github.com/grafana/grafonnet-lib/>)                                                                                      |
-| NixOS     | [`services.grafana.provision` module](https://github.com/NixOS/nixpkgs/blob/master/nixos/modules/services/monitoring/grafana.nix) |
 
 ## Data sources
 
@@ -253,6 +247,7 @@ Common settings in the [built-in core data sources](../../datasources/#built-in-
 | `incrementalQuerying`           | string  | Prometheus                                                       | Experimental: Turn on incremental querying to enhance dashboard reload performance with slow data sources                                                                                                                                                                                     |
 | `incrementalQueryOverlapWindow` | string  | Prometheus                                                       | Experimental: Configure incremental query overlap window. Requires a valid duration string, for example, `180s` or `15m` Default value is `10m` (10 minutes).                                                                                                                                 |
 | `disableRecordingRules`         | boolean | Prometheus                                                       | Experimental: Turn off Prometheus recording rules                                                                                                                                                                                                                                             |
+| `seriesEndpoint`                | boolean | Prometheus                                                       | Using Prometheus `/api/v1/series` endpoint                                                                                                                                                                                                                                                    |
 | `implementation`                | string  | Alertmanager                                                     | The implementation of the Alertmanager data source, such as `prometheus`, `cortex` or `mimir`                                                                                                                                                                                                 |
 | `handleGrafanaManagedAlerts`    | boolean | Alertmanager                                                     | When enabled, Grafana-managed alerts are sent to this Alertmanager                                                                                                                                                                                                                            |
 
@@ -374,10 +369,75 @@ providers:
 ```
 
 When Grafana starts, it updates or creates all dashboards found in the configured path.
-It later polls that path every `updateIntervalSeconds` for updates to the dashboard files and updates its database.
+These files can define the dashboard using the dashboard JSON:
+
+```json
+{
+  "dashboard": {
+    "id": null,
+    "uid": "example-dashboard",
+    "title": "Production Overview",
+    "tags": ["production", "monitoring"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 0,
+    "refresh": "30s"
+  },
+  "folderUid": "monitoring-folder",
+  "overwrite": true
+}
+```
+
+Or using a Kubernetes format, for example `kubernetes-dashboard.json`:
+
+```json
+{
+  "kind": "Dashboard",
+  "apiVersion": "dashboard.grafana.app/v1",
+  "metadata": {
+    "name": "dashboard-uid"
+  },
+  "spec": {
+    "title": "Dashboard title",
+    "panels": [
+      {
+        "gridPos": {
+          "h": 13,
+          "w": 24,
+          "x": 0,
+          "y": 0
+        },
+        "options": {
+          "content": "<div><h1>Example panel</h1></div>",
+          "mode": "html"
+        },
+        "transparent": true,
+        "type": "text"
+      }
+    ]
+  }
+}
+```
+
+You _must_ use the Kubernetes resource format to provision dashboards v2 / dynamic dashboards.
 
 {{< admonition type="note" >}}
 Grafana installs dashboards at the root level if you don't set the `folder` field.
+{{< /admonition >}}
+
+#### Detect updates to provisioned dashboards files
+
+After Grafana provisions your dashboards, it checks the filesystem for changes and updates dashboards as needed.
+
+The mechanism Grafana uses to do this depends on your `updateIntervalSeconds` value:
+
+- **More than 10 seconds**: Grafana polls the path at that interval.
+- **10 seconds or less**: Grafana watches the filesystem for changes and updates dashboards when it detects them.
+
+{{< admonition type="note" >}}
+When `updateIntervalSeconds` is 10 or less, Grafana relies on filesystem watch events to detect changes.
+Depending on your filesystem and how you mount or sync dashboard files (for example, Docker bind mounts or some network filesystems), those events might not reach Grafana.
+To work around this, set `updateIntervalSeconds` to more than 10 to force polling, or update your setup so filesystem watch events are propagated.
 {{< /admonition >}}
 
 #### Make changes to a provisioned dashboard
@@ -398,12 +458,20 @@ If you set `allowUiUpdates` to `false`, you can't save changes to a provisioned 
 When you try to save changes to a provisioned dashboard, Grafana brings up a _Cannot save provisioned dashboard_ dialog box.
 
 Grafana offers options to export the JSON definition of a dashboard.
-Use either **Copy JSON to Clipboard** or **Save JSON to file** to sync your dashboard changes back to the provisioning source.
-Grafana removes the `id` field from the dashboard JSON to help the provisioning workflow.
+To export the dashboard JSON definition, follow these steps:
+
+1. Upon save, click **Advanced options** to expand the section, and then make the following selections:
+   - **Model**: Choose from **Classic** or **V2 Resource**. Choose **Classic** if you plan to use the dashboard in Grafana v12.4 or older.
+   - **Format**: For the V2 Resource only, choose from **JSON** or **YAML**
+
+1. Click either **Copy JSON to Clipboard** or **Save JSON to file**.
 
 The following screenshot illustrates this behavior.
 
 {{< figure src="/static/img/docs/v51/provisioning_cannot_save_dashboard.png" max-width="500px" class="docs-image--no-shadow" >}}
+
+Grafana removes the `id` field from the dashboard JSON to help the provisioning workflow.
+Now you sync your dashboard changes back to the provisioning source.
 
 ### Reusable dashboard URLs
 
@@ -454,7 +522,11 @@ To use `foldersFromFilesStructure`, you must unset the `folder` and `folderUid` 
 To provision dashboards to the root level, store them in the root of your `path`.
 
 {{< admonition type="note" >}}
-This feature doesn't let you create nested folder structures, where you have folders within folders.
+Nested folder structures are supported: the folder hierarchy on disk is recreated in Grafana.
+
+For example, `folderTwo/folderThree/dashboard3.json` creates a folder `folderTwo` containing a folder `folderThree` that contains the dashboard.
+
+The folder depth is limited to `4` levels.
 {{< /admonition >}}
 
 ## Alerting
@@ -604,14 +676,6 @@ Grafana encrypts secure settings in the database.
 | `singleEmail` |                |
 | `addresses`   |                |
 
-#### Alert notification `hipchat`
-
-| Name     | Secure setting |
-| -------- | -------------- |
-| `url`    |                |
-| `apikey` |                |
-| `roomid` |                |
-
 #### Alert notification `opsgenie`
 
 | Name               | Secure setting |
@@ -687,3 +751,14 @@ Grafana Enterprise supports:
 
 - [Provisioning role-based access control with Grafana](../roles-and-permissions/access-control/rbac-grafana-provisioning/)
 - [Provisioning role-based access control with Terraform](../roles-and-permissions/access-control/rbac-terraform-provisioning/)
+
+## Configuration management tools
+
+The Grafana community maintains libraries for many popular configuration management tools.
+
+| Tool    | Project                                                                                                                           |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Puppet  | <https://forge.puppet.com/puppet/grafana>                                                                                         |
+| Ansible | <https://github.com/grafana/grafana-ansible-collection>                                                                           |
+| Chef    | <https://github.com/sous-chefs/chef-grafana>                                                                                      |
+| NixOS   | [`services.grafana.provision` module](https://github.com/NixOS/nixpkgs/blob/master/nixos/modules/services/monitoring/grafana.nix) |

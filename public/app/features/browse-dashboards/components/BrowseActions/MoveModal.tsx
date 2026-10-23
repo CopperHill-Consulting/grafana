@@ -1,13 +1,14 @@
 import { useState } from 'react';
 
 import { Trans, t } from '@grafana/i18n';
-import { Alert, Button, Field, Modal, Text, Space, Box } from '@grafana/ui';
+import { Alert, Button, Field, Modal, Space } from '@grafana/ui';
 import { MoveActionAvailableTargetWarning } from 'app/features/provisioning/components/Shared/MoveActionAvailableTargetWarning';
 import { ProvisioningAwareFolderPicker } from 'app/features/provisioning/components/Shared/ProvisioningAwareFolderPicker';
 
-import { DashboardTreeSelection } from '../../types';
+import { type DashboardTreeSelection } from '../../types';
 
-import { DescendantCount } from './DescendantCount';
+import { AffectedFolderContents } from './AffectedFolderContents';
+import { getSelectedFolderUIDs } from './utils';
 
 export interface Props {
   isOpen: boolean;
@@ -19,7 +20,8 @@ export interface Props {
 export const MoveModal = ({ onConfirm, onDismiss, selectedItems, ...props }: Props) => {
   const [moveTarget, setMoveTarget] = useState<string>();
   const [isMoving, setIsMoving] = useState(false);
-  const selectedFolders = Object.keys(selectedItems.folder).filter((uid) => selectedItems.folder[uid]);
+
+  const selectedFolders = getSelectedFolderUIDs(selectedItems);
 
   const onMove = async () => {
     if (moveTarget !== undefined) {
@@ -45,13 +47,16 @@ export const MoveModal = ({ onConfirm, onDismiss, selectedItems, ...props }: Pro
 
       <MoveActionAvailableTargetWarning />
 
-      <Box paddingTop={2}>
-        <Text element="p">
-          <Trans i18nKey="browse-dashboards.action.move-modal-text">This action will move the following content:</Trans>
-        </Text>
+      <Space v={2} />
 
-        <DescendantCount selectedItems={selectedItems} />
-      </Box>
+      <AffectedFolderContents
+        selectedItems={selectedItems}
+        nonEmptyMessage={t('browse-dashboards.action.move-modal-folder-not-empty', '', {
+          count: selectedFolders.length,
+          defaultValue_one: 'Selected folder contains other resources that will be moved with it',
+          defaultValue_other: 'Selected folders contain other resources that will be moved with them',
+        })}
+      />
 
       <Space v={3} />
 

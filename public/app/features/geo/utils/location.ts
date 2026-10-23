@@ -1,21 +1,21 @@
-import { Geometry } from 'ol/geom';
+import { type Geometry } from 'ol/geom';
 
 import {
-  FieldMatcher,
+  type FieldMatcher,
   getFieldMatcher,
   FieldMatcherID,
-  DataFrame,
-  Field,
+  type DataFrame,
+  type Field,
   getFieldDisplayName,
   FieldType,
 } from '@grafana/data';
 import { t } from '@grafana/i18n';
-import { FrameGeometrySource, FrameGeometrySourceMode } from '@grafana/schema';
+import { type FrameGeometrySource, FrameGeometrySourceMode } from '@grafana/schema';
 
 import { getGeoFieldFromGazetteer, pointFieldFromGeohash, pointFieldFromLonLat } from '../format/utils';
-import { getGazetteer, Gazetteer } from '../gazetteer/gazetteer';
+import { getGazetteer, type Gazetteer } from '../gazetteer/gazetteer';
 
-export type FieldFinder = (frame: DataFrame) => Field | undefined;
+type FieldFinder = (frame: DataFrame) => Field | undefined;
 
 function getFieldFinder(matcher: FieldMatcher): FieldFinder {
   return (frame: DataFrame) => {
@@ -67,6 +67,16 @@ const defaultMatchers: LocationFieldMatchers = {
   lookup: matchLowerNames(new Set(['lookup'])),
   geo: (frame: DataFrame) => frame.fields.find((f) => f.type === FieldType.geo),
 };
+
+/**
+ * suggestions needs to run sync, and we just want to use the default matchers in that situation.
+ */
+export function getDefaultLocationMatchers(): LocationFieldMatchers {
+  return {
+    ...defaultMatchers,
+    mode: FrameGeometrySourceMode.Auto,
+  };
+}
 
 export async function getLocationMatchers(src?: FrameGeometrySource): Promise<LocationFieldMatchers> {
   const info: LocationFieldMatchers = {

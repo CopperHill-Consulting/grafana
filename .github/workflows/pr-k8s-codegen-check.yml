@@ -6,16 +6,21 @@ on:
     branches: [main]
     paths:
       - "pkg/apis/**"
-      - "pkg/aggregator/apis/**"
       - "pkg/apimachinery/apis/**"
       - "hack/**"
       - "apps/**"
       - "*.sum"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: K8s Codegen Check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-arm64
+    permissions:
+      contents: read
 
     steps:
     - name: Checkout repository
@@ -23,10 +28,10 @@ jobs:
       with:
         persist-credentials: false
 
-    - name: Set go version
-      uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5
+    - name: Setup Go
+      uses: ./.github/actions/setup-go
       with:
-        go-version-file: go.mod
+        cache-build: 'false'
 
     - name: Update k8s codegen
       run: ./hack/update-codegen.sh

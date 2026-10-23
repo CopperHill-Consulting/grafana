@@ -1,6 +1,7 @@
-import { PropsWithChildren } from 'react';
+import { type PropsWithChildren } from 'react';
 
 import { QueryLibraryContext } from './QueryLibraryContext';
+import { QueryLibraryTab } from './types';
 
 type Props = {
   queryLibraryEnabled?: boolean;
@@ -12,14 +13,33 @@ export function QueryLibraryContextProviderMock(props: PropsWithChildren<Props>)
       value={{
         openDrawer: jest.fn(),
         closeDrawer: jest.fn(),
+        clearCloseGuard: jest.fn(),
         isDrawerOpen: false,
         renderSavedQueryButtons: jest.fn(),
         renderQueryLibraryEditingHeader: jest.fn(),
         queryLibraryEnabled: Boolean(props.queryLibraryEnabled),
         context: 'explore',
+        setContext: jest.fn(),
         triggerAnalyticsEvent: jest.fn(),
         setNewQuery: jest.fn(),
         onSelectQuery: jest.fn(),
+        onFavorite: jest.fn(),
+        onUnfavorite: jest.fn(),
+        userFavorites: {},
+        setUserFavorites: jest.fn(),
+        isEditingQuery: false,
+        activeTab: QueryLibraryTab.ALL,
+        activeDatasources: [],
+        setActiveTab: jest.fn(),
+        onTabChange: jest.fn(),
+        setIsEditingQuery: jest.fn(),
+        onAddHistoryQueryToLibrary: jest.fn(),
+        highlightedQuery: undefined,
+        newQuery: undefined,
+        setCloseGuard: jest.fn(),
+        templateVariableOverrides: {},
+        setTemplateVariableOverrides: jest.fn(),
+        openedToSaveQuery: false,
       }}
     >
       {props.children}

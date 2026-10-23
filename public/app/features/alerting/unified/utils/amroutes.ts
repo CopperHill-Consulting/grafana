@@ -1,14 +1,26 @@
-import { SelectableValue } from '@grafana/data';
-import { MatcherOperator, ObjectMatcher, Route, RouteWithID } from 'app/plugins/datasource/alertmanager/types';
+import { type SelectableValue } from '@grafana/data';
+import {
+  MatcherOperator,
+  type ObjectMatcher,
+  ROUTES_META_SYMBOL,
+  type Route,
+  type RouteWithID,
+} from 'app/plugins/datasource/alertmanager/types';
 
-import { FormAmRoute } from '../types/amroutes';
-import { MatcherFieldValue } from '../types/silence-form';
+import { type FormAmRoute } from '../types/amroutes';
+import { type MatcherFieldValue } from '../types/silence-form';
 
 import { matcherToMatcherField } from './alertmanager';
 import { GRAFANA_RULES_SOURCE_NAME } from './datasource';
 import { encodeMatcher, normalizeMatchers, parseMatcherToArray, unquoteWithUnescape } from './matchers';
 import { findExistingRoute, hashRoute } from './routeTree';
 import { isValidPrometheusDuration, safeParsePrometheusDuration } from './time';
+
+/** Returns the provenance string for a route, preferring the symbol-keyed k8s metadata
+ *  over the legacy top-level field. */
+export function extractNotificationPolicyProvenance(route: Route): string | undefined {
+  return route[ROUTES_META_SYMBOL]?.provenance ?? route.provenance;
+}
 
 const matchersToArrayFieldMatchers = (
   matchers: Record<string, string> | undefined,
@@ -49,6 +61,7 @@ export const commonGroupByOptions = [
 
 export const emptyRoute: FormAmRoute = {
   id: '',
+  name: '',
   overrideGrouping: false,
   groupBy: defaultGroupBy,
   object_matchers: [],
@@ -65,7 +78,7 @@ export const emptyRoute: FormAmRoute = {
 
 // add unique identifiers to each route in the route tree, that way we can figure out what route we've edited / deleted
 // ⚠️ make sure this function uses _stable_ identifiers!
-export function addUniqueIdentifierToRoute(route: Route, position = '0'): RouteWithID {
+export function addUniqueIdentifierToRoute(route: Route, position = route.name ?? '0'): RouteWithID {
   const routeHash = hashRoute(route);
   const routes = route.routes ?? [];
 
@@ -112,6 +125,7 @@ export const amRouteToFormAmRoute = (route: RouteWithID | undefined): FormAmRout
 
   return {
     id,
+    name: route.name ?? '',
     // Frontend migration to use object_matchers instead of matchers, match, and match_re
     object_matchers: [
       ...matchers,
@@ -234,14 +248,6 @@ export function promDurationValidator(duration?: string) {
 
   return isValidPrometheusDuration(duration) || 'Invalid duration format. Must be {number}{time_unit}';
 }
-
-// function to convert ObjectMatchers to a array of strings
-export const objectMatchersToString = (matchers: ObjectMatcher[]): string[] => {
-  return matchers.map((matcher) => {
-    const [name, operator, value] = matcher;
-    return `${name}${operator}${value}`;
-  });
-};
 
 export const repeatIntervalValidator = (repeatInterval: string, groupInterval = '') => {
   if (repeatInterval.length === 0) {

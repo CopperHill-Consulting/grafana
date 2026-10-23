@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"math"
 	"math/rand"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -77,6 +79,24 @@ Timestamps will line up evenly on timeStepSeconds (For example, 60 seconds means
 		Name:        "Slow Query",
 		StringInput: "5s",
 		handler:     s.handleRandomWalkSlowScenario,
+	})
+
+	s.registerScenario(&Scenario{
+		ID:      kinds.TestDataQueryTypeFlakyQuery,
+		Name:    "Flaky Query",
+		handler: s.handleFlakyQueryScenario,
+	})
+
+	s.registerScenario(&Scenario{
+		ID:      kinds.TestDataQueryTypeExemplars,
+		Name:    "Exemplars",
+		handler: s.handleExemplarsScenario,
+		Description: `Returns only exemplars - the diamond markers a panel draws on top of a series - and no series of its own.
+Add a second query (Random Walk works well) to give them something to annotate.
+Values and timestamps are seeded from the dashboard time range, so the same range always returns the same exemplars.
+Leaving Min and Max empty derives the value range from a reference random walk over the same time range, padded by 10%.
+The exemplars ignore Start value, so pin Min and Max (or give the sibling query an explicit Start value and Spread) to keep both queries in the same band.
+Exemplar labels show in the tooltip. They are also what the legend filter matches on - it keeps the markers whose label field names and values match a visible series' labels - so with generated values, hiding any series in the legend hides every marker.`,
 	})
 
 	s.registerScenario(&Scenario{
@@ -159,6 +179,12 @@ Timestamps will line up evenly on timeStepSeconds (For example, 60 seconds means
 	})
 
 	s.registerScenario(&Scenario{
+		ID:      kinds.TestDataQueryTypeQueryMeta,
+		Name:    "Query Metadata",
+		handler: s.handleQueryMetaScenario,
+	})
+
+	s.registerScenario(&Scenario{
 		// Is no longer strictly a _server_ error scenario, but ID is kept for legacy :)
 		ID:          kinds.TestDataQueryTypeServerError500,
 		Name:        "Conditional Error",
@@ -211,6 +237,13 @@ Timestamps will line up evenly on timeStepSeconds (For example, 60 seconds means
 		handler: s.handleErrorWithSourceScenario,
 	})
 
+	s.registerScenario(&Scenario{
+		ID:          kinds.TestDataQueryTypeErrorsAndNotices,
+		Name:        "Errors and notices",
+		handler:     s.handleErrorsAndNoticesScenario,
+		Description: "Returns a random walk series with one query-result notice of each severity (info, warning, error) attached to the frame meta. Useful for previewing the panel query errors and notices UI.",
+	})
+
 	s.queryMux.HandleFunc("", s.handleFallbackScenario)
 }
 
@@ -237,11 +270,12 @@ func instrumentScenarioHandler(logger log.Logger, scenario kinds.TestDataQueryTy
 func GetJSONModel(j json.RawMessage) (kinds.TestDataQuery, error) {
 	model := kinds.TestDataQuery{
 		// Default values
-		ScenarioId:  kinds.TestDataQueryTypeRandomWalk,
-		SeriesCount: 1,
-		Lines:       10,
-		StartValue:  rand.Float64() * 100,
-		Spread:      1,
+		ScenarioId:    kinds.TestDataQueryTypeRandomWalk,
+		SeriesCount:   1,
+		Lines:         10,
+		StartValue:    rand.Float64() * 100,
+		Spread:        1,
+		ExemplarCount: defaultExemplarCount,
 	}
 	if len(j) > 0 {
 		// csvWave has saved values that are single values, not arrays
@@ -390,6 +424,75 @@ func (s *Service) handleCSVMetricValuesScenario(ctx context.Context, req *backen
 	return resp, nil
 }
 
+func (s *Service) handleQueryMetaScenario(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	resp := backend.NewQueryDataResponse()
+
+	if len(req.Queries) == 0 {
+		return nil, errors.New("no queries")
+	}
+
+	refId := req.Queries[0].RefID
+
+	username := req.PluginContext.User.Name
+
+	keys := []string{"username"}
+	values := []string{username}
+
+	frame := data.NewFrame("",
+		data.NewField("keys", nil, keys),
+		data.NewField("values", nil, values),
+	)
+	r := backend.DataResponse{}
+	r.Frames = data.Frames{frame}
+
+	resp.Responses[refId] = r
+	return resp, nil
+}
+
+// handleErrorsAndNoticesScenario returns a normal random walk time series whose
+// frame meta carries one query-result notice of each severity (info, warning,
+// error). It is a live example for the unified panel query errors and notices UI
+// (feature toggle grafana.newPanelQueryErrorsUI). One notice sets Inspect so the
+// inspector has a tab to navigate to.
+func (s *Service) handleErrorsAndNoticesScenario(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	resp := backend.NewQueryDataResponse()
+
+	notices := []data.Notice{
+		{
+			Severity: data.NoticeSeverityInfo,
+			Text:     "This is an info notice",
+		},
+		{
+			Severity: data.NoticeSeverityWarning,
+			Text:     "This query is slow - consider narrowing the range",
+		},
+		{
+			Severity: data.NoticeSeverityError,
+			Text:     "Datasource returned a partial result",
+			Inspect:  data.InspectTypeError,
+		},
+	}
+
+	for _, q := range req.Queries {
+		model, err := GetJSONModel(q.JSON)
+		if err != nil {
+			continue
+		}
+
+		frame := RandomWalk(q, model, 0)
+		if frame.Meta == nil {
+			frame.Meta = &data.FrameMeta{}
+		}
+		frame.Meta.Notices = notices
+
+		respD := resp.Responses[q.RefID]
+		respD.Frames = append(respD.Frames, frame)
+		resp.Responses[q.RefID] = respD
+	}
+
+	return resp, nil
+}
+
 func (s *Service) handleRandomWalkWithErrorScenario(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
 	resp := backend.NewQueryDataResponse()
 
@@ -423,6 +526,87 @@ func (s *Service) handleRandomWalkSlowScenario(ctx context.Context, req *backend
 
 		respD := resp.Responses[q.RefID]
 		respD.Frames = append(respD.Frames, RandomWalk(q, model, 0))
+		resp.Responses[q.RefID] = respD
+	}
+
+	return resp, nil
+}
+
+func (s *Service) handleFlakyQueryScenario(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	resp := backend.NewQueryDataResponse()
+
+	shouldError := false
+	if len(req.Queries) > 0 {
+		if model, err := GetJSONModel(req.Queries[0].JSON); err == nil && model.ErrorProbability > 0 {
+			if rand.Float64()*100 < model.ErrorProbability {
+				shouldError = true
+			}
+		}
+	}
+
+	for _, q := range req.Queries {
+		model, err := GetJSONModel(q.JSON)
+		if err != nil {
+			continue
+		}
+
+		baseDelay, _ := time.ParseDuration(model.QueryDelay)
+		time.Sleep(flakyQueryDelay(baseDelay, model.QueryDelayVariability))
+
+		if shouldError {
+			status := backend.Status(model.ErrorStatusCode)
+			if status == 0 {
+				status = backend.StatusBadRequest
+			}
+			src := backend.ErrorSourcePlugin
+			if model.ErrorSource == kinds.ErrorSourceDownstream {
+				src = backend.ErrorSourceDownstream
+			}
+			resp.Responses[q.RefID] = backend.ErrDataResponseWithSource(status, src, model.ErrorMessage)
+			continue
+		}
+
+		respD := resp.Responses[q.RefID]
+		respD.Frames = append(respD.Frames, RandomWalk(q, model, 0))
+		resp.Responses[q.RefID] = respD
+	}
+
+	return resp, nil
+}
+
+// flakyQueryDelay applies a symmetric jitter to base, where variability is a
+// percentage (0-100). A variability of 100 yields a uniform delay in [0, 2*base].
+// The result is clamped to a non-negative duration.
+func flakyQueryDelay(base time.Duration, variability float64) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+
+	v := variability / 100
+	factor := 1 + (rand.Float64()*2-1)*v
+	delay := time.Duration(float64(base) * factor)
+	if delay < 0 {
+		return 0
+	}
+
+	return delay
+}
+
+// handleExemplarsScenario returns exemplars and nothing else. There is no delay
+// or error rate here: every query for a panel goes to the data source in one
+// request, so a slow or failing exemplar query is indistinguishable from a slow
+// or failing series query - use the flaky query scenario for that.
+func (s *Service) handleExemplarsScenario(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	resp := backend.NewQueryDataResponse()
+
+	for _, q := range req.Queries {
+		model, err := GetJSONModel(q.JSON)
+		if err != nil {
+			continue
+		}
+
+		respD := resp.Responses[q.RefID]
+		respD.Frames = append(respD.Frames, Exemplars(q, model))
 		resp.Responses[q.RefID] = respD
 	}
 
@@ -604,10 +788,14 @@ func (s *Service) handleLogsScenario(ctx context.Context, req *backend.QueryData
 		}
 
 		lines := model.Lines
+		if lines > 10000 {
+			lines = 10000
+		}
 		includeLevelColumn := model.LevelColumn
 
 		logLevelGenerator := newRandomStringProvider([]string{
 			"emerg",
+			"emergency",
 			"alert",
 			"crit",
 			"critical",
@@ -633,17 +821,14 @@ func (s *Service) handleLogsScenario(ctx context.Context, req *backend.QueryData
 		})
 
 		frame := data.NewFrame(q.RefID,
+			data.NewField("labels", data.Labels{}, []json.RawMessage{}),
 			data.NewField("time", nil, []time.Time{}),
 			data.NewField("message", nil, []string{}),
-			data.NewField("container_id", nil, []string{}),
-			data.NewField("hostname", nil, []string{}),
+			data.NewField("nanos", nil, []string{}),
+			data.NewField("labelTypes", nil, []json.RawMessage{}),
 		).SetMeta(&data.FrameMeta{
 			PreferredVisualization: "logs",
 		})
-
-		if includeLevelColumn {
-			frame.Fields = append(frame.Fields, data.NewField("level", nil, []string{}))
-		}
 
 		for i := int64(0); i < lines && to > from; i++ {
 			logLevel := logLevelGenerator.Next()
@@ -654,26 +839,147 @@ func (s *Service) handleLogsScenario(ctx context.Context, req *backend.QueryData
 			}
 
 			message := fmt.Sprintf("t=%s %smsg=\"Request Completed\" logger=context userId=1 orgId=1 uname=admin method=GET path=/api/datasources/proxy/152/api/prom/label status=502 remote_addr=[::1] time_ms=1 size=0 referer=\"http://localhost:3000/explore?left=%%5B%%22now-6h%%22,%%22now%%22,%%22Prometheus%%202.x%%22,%%7B%%7D,%%7B%%22ui%%22:%%5Btrue,true,true,%%22none%%22%%5D%%7D%%5D\"", timeFormatted, lvlString)
+			nanos := strconv.FormatInt(q.TimeRange.To.UnixNano(), 10)
 			containerID := containerIDGenerator.Next()
 			hostname := hostnameGenerator.Next()
 
 			t := time.Unix(to/int64(1e+3), (to%int64(1e+3))*int64(1e+6))
 
 			if includeLevelColumn {
-				frame.AppendRow(t, message, containerID, hostname, logLevel)
+				frame.AppendRow(
+					json.RawMessage(fmt.Sprintf(`{"container_id":"%s","hostname":"%s","level":"%s"}`, containerID, hostname, logLevel)),
+					t,
+					message,
+					nanos,
+					json.RawMessage(`{"container_id":"Indexed label","hostname":"Parsed field","level":"Metadata"}`),
+				)
 			} else {
-				frame.AppendRow(t, message, containerID, hostname)
+				frame.AppendRow(
+					json.RawMessage(fmt.Sprintf(`{"container_id":"%s","hostname":"%s"}`, containerID, hostname)),
+					t,
+					message,
+					nanos,
+					json.RawMessage(`{"container_id":"Indexed label","hostname":"Parsed field"}`),
+				)
 			}
 
 			to -= q.Interval.Milliseconds()
 		}
 
 		respD := resp.Responses[q.RefID]
+		dataPlaneErr := adjustDataplaneLogsFrame(frame, &q)
+		if dataPlaneErr != nil {
+			return nil, dataPlaneErr
+		}
 		respD.Frames = append(respD.Frames, frame)
 		resp.Responses[q.RefID] = respD
 	}
 
 	return resp, nil
+}
+
+// Adapted from /pkg/tsdb/loki/frame.go
+func adjustDataplaneLogsFrame(frame *data.Frame, query *backend.DataQuery) error {
+	// we check if the fields are of correct type and length
+	fields := frame.Fields
+	if len(fields) != 4 && len(fields) != 5 {
+		return fmt.Errorf("invalid field length in logs frame. expected 4 or 5, got %d", len(fields))
+	}
+
+	labelsField := fields[0]
+	timeField := fields[1]
+	lineField := fields[2]
+	stringTimeField := fields[3]
+	var labelTypesField *data.Field
+	if len(fields) == 5 {
+		labelTypesField = fields[4]
+		if labelTypesField.Type() != data.FieldTypeJSON {
+			return fmt.Errorf("invalid field types in logs frame. expected json, got %s", labelTypesField.Type())
+		}
+		labelTypesField.Name = "labelTypes"
+		labelTypesField.Config = &data.FieldConfig{
+			Custom: map[string]interface{}{
+				"hidden": true,
+			},
+		}
+	}
+
+	if (timeField.Type() != data.FieldTypeTime) || (lineField.Type() != data.FieldTypeString) || (labelsField.Type() != data.FieldTypeJSON) || (stringTimeField.Type() != data.FieldTypeString) {
+		return fmt.Errorf("invalid field types in logs frame. expected time, string, json and string, got %s, %s, %s and %s", timeField.Type(), lineField.Type(), labelsField.Type(), stringTimeField.Type())
+	}
+
+	if (timeField.Len() != lineField.Len()) || (timeField.Len() != labelsField.Len()) || (timeField.Len() != stringTimeField.Len()) {
+		return fmt.Errorf("indifferent field lengths in logs frame. expected all to be equal, got %d, %d, %d and %d", timeField.Len(), lineField.Len(), labelsField.Len(), stringTimeField.Len())
+	}
+
+	// this returns an error when the length of fields do not match
+	_, err := frame.RowLen()
+	if err != nil {
+		return err
+	}
+
+	timeField.Name = "timestamp"
+	labelsField.Name = "labels"
+	lineField.Name = "body"
+
+	if frame.Meta == nil {
+		frame.Meta = &data.FrameMeta{}
+	}
+
+	frame.Meta.Custom = nil
+	frame.Meta.Type = data.FrameTypeLogLines
+	idField, err := makeIdField(stringTimeField, lineField, labelsField, query.RefID)
+	if err != nil {
+		return err
+	}
+
+	if labelTypesField != nil {
+		frame.Fields = data.Fields{labelsField, timeField, lineField, idField, labelTypesField}
+	} else {
+		frame.Fields = data.Fields{labelsField, timeField, lineField, idField}
+	}
+	return nil
+}
+
+func makeIdField(stringTimeField *data.Field, lineField *data.Field, labelsField *data.Field, refId string) (*data.Field, error) {
+	length := stringTimeField.Len()
+
+	ids := make([]string, length)
+
+	checksums := make(map[string]int)
+
+	for i := 0; i < length; i++ {
+		time := stringTimeField.At(i).(string)
+		line := lineField.At(i).(string)
+		labels := labelsField.At(i).(json.RawMessage)
+
+		sum, err := calculateCheckSum(time, line, labels)
+		if err != nil {
+			return nil, err
+		}
+
+		sumCount := checksums[sum]
+		idSuffix := ""
+		if sumCount > 0 {
+			// we had this checksum already, we need to do something to make it unique
+			idSuffix = fmt.Sprintf("_%d", sumCount)
+		}
+		checksums[sum] = sumCount + 1
+
+		ids[i] = sum + idSuffix
+	}
+	return data.NewField("id", nil, ids), nil
+}
+
+func calculateCheckSum(time string, line string, labels []byte) (string, error) {
+	input := []byte(line + "_")
+	input = append(input, labels...)
+	hash := fnv.New32()
+	_, err := hash.Write(input)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s_%x", time, hash.Sum32()), nil
 }
 
 func (s *Service) handleErrorWithSourceScenario(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
@@ -700,7 +1006,7 @@ func (s *Service) handleErrorWithSourceScenario(ctx context.Context, req *backen
 }
 
 func RandomWalk(query backend.DataQuery, model kinds.TestDataQuery, index int) *data.Frame {
-	rand := rand.New(rand.NewSource(time.Now().UnixNano() + int64(index)))
+	rand := rand.New(rand.NewSource(query.TimeRange.From.UnixNano() + query.TimeRange.To.UnixNano() + int64(index)))
 	timeWalkerMs := query.TimeRange.From.UnixNano() / int64(time.Millisecond)
 	to := query.TimeRange.To.UnixNano() / int64(time.Millisecond)
 	startValue := model.StartValue
@@ -769,6 +1075,194 @@ func RandomWalk(query backend.DataQuery, model kinds.TestDataQuery, index int) *
 	return frame
 }
 
+const (
+	defaultExemplarCount = 100
+	// Matches the point ceiling RandomWalk applies, so exemplars never outrun
+	// the series they annotate.
+	maxExemplarCount = 10000
+
+	defaultExemplarLabelLength = 16
+	maxExemplarLabelLength     = 128
+
+	exemplarLabelAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+)
+
+// Exemplars returns a frame of synthetic exemplars - the diamond markers a
+// panel draws on top of a series - and no series of its own.
+//
+// The frame contract is exact and fails silently when broken: the panel only
+// picks the frame up when the data topic is annotations, only maps rows whose
+// fields are named Time and Value, and treats any frame name other than
+// "exemplar" as a regular annotation, drawing markers and a vertical line on
+// top of the diamonds.
+func Exemplars(query backend.DataQuery, model kinds.TestDataQuery) *data.Frame {
+	r := rand.New(rand.NewSource(query.TimeRange.From.UnixNano() + query.TimeRange.To.UnixNano()))
+
+	count := model.ExemplarCount
+	if count <= 0 {
+		count = defaultExemplarCount
+	}
+	if count > maxExemplarCount {
+		count = maxExemplarCount
+	}
+
+	fromMs := query.TimeRange.From.UnixMilli()
+	toMs := query.TimeRange.To.UnixMilli()
+
+	// The interval is zero on some paths (resource calls, tests) and would
+	// divide by zero below.
+	intervalMs := query.Interval.Milliseconds()
+	if intervalMs <= 0 {
+		intervalMs = 1000
+	}
+
+	gridPoints := int((toMs - fromMs) / intervalMs)
+	if gridPoints < 1 {
+		gridPoints = 1
+	}
+	if gridPoints > maxExemplarCount {
+		gridPoints = maxExemplarCount
+	}
+
+	minValue, maxValue := exemplarValueRange(query, model, r)
+
+	indices := make([]int, count)
+	for i := range indices {
+		indices[i] = r.Intn(gridPoints)
+	}
+	// Duplicates are realistic - a single data point can carry several
+	// exemplars - and sorting keeps the frame time ascending.
+	sort.Ints(indices)
+
+	timeVec := make([]time.Time, count)
+	valueVec := make([]float64, count)
+	for i, idx := range indices {
+		timeVec[i] = time.UnixMilli(fromMs + int64(idx)*intervalMs)
+		valueVec[i] = minValue + r.Float64()*(maxValue-minValue)
+	}
+
+	frame := data.NewFrame("exemplar",
+		data.NewField(data.TimeSeriesTimeFieldName, nil, timeVec),
+		data.NewField(data.TimeSeriesValueFieldName, nil, valueVec),
+	)
+	frame.Fields = append(frame.Fields, exemplarLabelFields(model.ExemplarLabels, count, r)...)
+
+	frame.SetMeta(&data.FrameMeta{
+		DataTopic: data.DataTopicAnnotations,
+		// Not needed to render the diamonds, but it is what gates the tooltip
+		// max height option and the heatmap exemplars color picker.
+		Custom: map[string]any{"resultType": "exemplar"},
+	})
+
+	return frame
+}
+
+// exemplarValueRange derives the band exemplar values fall in. An explicit Min
+// or Max wins; a bound left blank comes from a reference random walk over the
+// same time range padded by 10%, so exemplars land where a sibling random_walk
+// query would draw its series.
+func exemplarValueRange(query backend.DataQuery, model kinds.TestDataQuery, r *rand.Rand) (float64, float64) {
+	ref := model
+	// GetJSONModel draws the default start value from the global source, which
+	// would move the band on every refresh - redraw it from the seeded one.
+	ref.StartValue = r.Float64() * 100
+	if ref.Spread == 0 {
+		ref.Spread = 1
+	}
+	// Keep the reference walk from being clipped by the bounds we are deriving
+	// from it, or thinned by dropped points.
+	ref.DropPercent = 0
+	ref.Min = nil
+	ref.Max = nil
+
+	values := RandomWalk(query, ref, 0).Fields[1]
+	walkMin, walkMax := math.Inf(1), math.Inf(-1)
+	for i := 0; i < values.Len(); i++ {
+		v, ok := values.At(i).(*float64)
+		if !ok || v == nil {
+			continue
+		}
+		walkMin = math.Min(walkMin, *v)
+		walkMax = math.Max(walkMax, *v)
+	}
+	// An empty time range produces a walk with no points at all.
+	if math.IsInf(walkMin, 1) || math.IsInf(walkMax, -1) {
+		walkMin, walkMax = ref.StartValue, ref.StartValue
+	}
+
+	pad := 0.1 * (walkMax - walkMin)
+	if pad <= 0 {
+		pad = 1
+	}
+
+	minValue, maxValue := walkMin-pad, walkMax+pad
+	if model.Min != nil {
+		minValue = *model.Min
+	}
+	if model.Max != nil {
+		maxValue = *model.Max
+	}
+	if minValue > maxValue {
+		minValue, maxValue = maxValue, minValue
+	}
+
+	return minValue, maxValue
+}
+
+// exemplarLabelFields builds one string field per requested label, matching the
+// long format Prometheus returns: time, value, then a field per label. Entries
+// without a name, with a duplicate name, or reusing the reserved Time and Value
+// names are dropped - each leaves the frame ambiguous for both the tooltip and
+// legend-based marker filtering.
+func exemplarLabelFields(labels []kinds.ExemplarLabel, rows int, r *rand.Rand) data.Fields {
+	fields := make(data.Fields, 0, len(labels))
+	seen := map[string]bool{
+		data.TimeSeriesTimeFieldName:  true,
+		data.TimeSeriesValueFieldName: true,
+	}
+
+	for _, label := range labels {
+		if label.Name == "" || seen[label.Name] {
+			continue
+		}
+		seen[label.Name] = true
+
+		length := label.Length
+		if length <= 0 {
+			length = defaultExemplarLabelLength
+		}
+		if length > maxExemplarLabelLength {
+			length = maxExemplarLabelLength
+		}
+
+		values := make([]string, rows)
+		for i := range values {
+			values[i] = randomString(r, length)
+		}
+
+		field := data.NewField(label.Name, nil, values)
+		if label.Link != "" {
+			field.SetConfig(&data.FieldConfig{Links: []data.DataLink{{
+				Title:       "Go to " + label.Name,
+				URL:         label.Link,
+				TargetBlank: true,
+			}}})
+		}
+
+		fields = append(fields, field)
+	}
+
+	return fields
+}
+
+func randomString(r *rand.Rand, length int) string {
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = exemplarLabelAlphabet[r.Intn(len(exemplarLabelAlphabet))]
+	}
+	return string(b)
+}
+
 func randomWalkTable(query backend.DataQuery, model kinds.TestDataQuery) *data.Frame {
 	rand := rand.New(rand.NewSource(time.Now().UnixNano()))
 	timeWalkerMs := query.TimeRange.From.UnixNano() / int64(time.Millisecond)
@@ -801,7 +1295,11 @@ func randomWalkTable(query backend.DataQuery, model kinds.TestDataQuery) *data.F
 	var info strings.Builder
 	state := data.EnumItemIndex(0)
 
-	for i := int64(0); i < query.MaxDataPoints && timeWalkerMs < to; i++ {
+	maxDataPoints := query.MaxDataPoints
+	if maxDataPoints > 10000 {
+		maxDataPoints = 10000
+	}
+	for i := int64(0); i < maxDataPoints && timeWalkerMs < to; i++ {
 		delta := rand.Float64() - 0.5
 		walker += delta
 

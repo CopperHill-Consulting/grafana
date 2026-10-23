@@ -1,45 +1,71 @@
 import { css } from '@emotion/css';
 import { isNumber } from 'lodash';
-import { ChangeEvent, PureComponent } from 'react';
-import * as React from 'react';
+import { type ChangeEvent, memo, useEffect, useRef, useState } from 'react';
 
 import {
-  GrafanaTheme2,
-  SelectableValue,
+  type GrafanaTheme2,
+  type SelectableValue,
   sortThresholds,
-  Threshold,
-  ThresholdsConfig,
+  type Threshold,
+  type ThresholdsConfig,
   ThresholdsMode,
-  ThemeContext,
 } from '@grafana/data';
 import { Trans, t } from '@grafana/i18n';
-import { Button, ColorPicker, colors, IconButton, Input, Label, RadioButtonGroup, stylesFactory } from '@grafana/ui';
+import { useFlagGrafanaThresholdsInterpolation } from '@grafana/runtime/internal';
+import { Button, ColorPicker, colors, IconButton, Input, Label, RadioButtonGroup, useStyles2 } from '@grafana/ui';
 
 export interface Props {
   thresholds: ThresholdsConfig;
   onChange: (thresholds: ThresholdsConfig) => void;
 }
 
-interface State {
-  steps: ThresholdWithKey[];
-}
-
-export class ThresholdsEditor extends PureComponent<Props, State> {
-  private latestThresholdInputRef: React.RefObject<HTMLInputElement>;
-
-  constructor(props: Props) {
-    super(props);
-
-    const steps = toThresholdsWithKey(props.thresholds!.steps);
+export const ThresholdsEditor = memo(function ThresholdsEditor({ thresholds, onChange }: Props) {
+  const [steps, setSteps] = useState<ThresholdWithKey[]>(() => {
+    const steps = toThresholdsWithKey(thresholds.steps);
     steps[0].value = -Infinity;
+    return steps;
+  });
+  const latestThresholdInputRef = useRef<HTMLInputElement>(null);
+  const isMounted = useRef(false);
+  const userAddedThreshold = useRef(false);
+  const styles = useStyles2(getStyles);
+  const interpolationEnabled = useFlagGrafanaThresholdsInterpolation();
 
-    this.state = { steps };
-    this.latestThresholdInputRef = React.createRef();
+  const stepsRef = useRef(steps);
+  stepsRef.current = steps;
+
+  // sync local steps when thresholds change
+  useEffect(() => {
+    const nextSteps = thresholds.steps ?? [];
+    const currentSteps = stepsRef.current;
+    const changed =
+      currentSteps.length !== nextSteps.length ||
+      currentSteps.some(
+        (s, i) =>
+          s.color !== nextSteps[i].color ||
+          s.value !== (nextSteps[i].value ?? -Infinity) ||
+          s.valueExpr !== nextSteps[i].valueExpr
+      );
+    if (changed) {
+      const newSteps = toThresholdsWithKey(thresholds.steps);
+      newSteps[0].value = -Infinity;
+      setSteps(newSteps);
+    }
+  }, [thresholds]);
+
+  useEffect(() => {
+    if (isMounted.current && userAddedThreshold.current) {
+      latestThresholdInputRef.current?.focus();
+      userAddedThreshold.current = false;
+    }
+    isMounted.current = true;
+  }, [steps.length]);
+
+  function fireOnChange(newSteps: ThresholdWithKey[]) {
+    onChange(thresholdsWithoutKey(thresholds, newSteps));
   }
 
-  onAddThreshold = () => {
-    const { steps } = this.state;
-
+  function onAddThreshold() {
     let nextValue = 0;
 
     if (steps.length > 1) {
@@ -61,17 +87,12 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
     const newThresholds = [...steps, add];
     sortThresholds(newThresholds);
 
-    this.setState({ steps: newThresholds }, () => {
-      if (this.latestThresholdInputRef.current) {
-        this.latestThresholdInputRef.current.focus();
-      }
-      this.onChange();
-    });
-  };
+    userAddedThreshold.current = true;
+    setSteps(newThresholds);
+    fireOnChange(newThresholds);
+  }
 
-  onRemoveThreshold = (threshold: ThresholdWithKey) => {
-    const { steps } = this.state;
-
+  function onRemoveThreshold(threshold: ThresholdWithKey) {
     if (!steps.length) {
       return;
     }
@@ -81,32 +102,39 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
       return;
     }
 
-    this.setState({ steps: steps.filter((t) => t.key !== threshold.key) }, this.onChange);
-  };
+    const newSteps = steps.filter((t) => t.key !== threshold.key);
+    setSteps(newSteps);
+    fireOnChange(newSteps);
+  }
 
-  onChangeThresholdValue = (event: ChangeEvent<HTMLInputElement>, threshold: ThresholdWithKey) => {
-    const cleanValue = event.target.value.replace(/,/g, '.');
-    const parsedValue = parseFloat(cleanValue);
-    const value = isNaN(parsedValue) ? '' : parsedValue;
+  function onChangeThresholdValue(event: ChangeEvent<HTMLInputElement>, threshold: ThresholdWithKey) {
+    const rawValue = event.target.value;
 
-    const steps = this.state.steps.map((t) => {
-      if (t.key === threshold.key) {
-        t = { ...t, value: value as number };
+    const newSteps = steps.map((t) => {
+      if (t.key !== threshold.key) {
+        return t;
       }
-      return t;
+
+      if (interpolationEnabled && rawValue.includes('$')) {
+        // a variable expression: store it alongside the numeric value, which stays as the fallback
+        return { ...t, valueExpr: rawValue };
+      }
+
+      const cleanValue = rawValue.replace(/,/g, '.');
+      const parsedValue = parseFloat(cleanValue);
+      const { valueExpr, ...numericStep } = t;
+      return { ...numericStep, value: (isNaN(parsedValue) ? '' : parsedValue) as number };
     });
 
-    if (steps.length) {
-      steps[0].value = -Infinity;
+    if (newSteps.length) {
+      newSteps[0].value = -Infinity;
     }
 
-    sortThresholds(steps);
-    this.setState({ steps });
-  };
+    sortThresholds(newSteps);
+    setSteps(newSteps);
+  }
 
-  onChangeThresholdColor = (threshold: ThresholdWithKey, color: string) => {
-    const { steps } = this.state;
-
+  function onChangeThresholdColor(threshold: ThresholdWithKey, color: string) {
     const newThresholds = steps.map((t) => {
       if (t.key === threshold.key) {
         t = { ...t, color: color };
@@ -115,28 +143,27 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
       return t;
     });
 
-    this.setState({ steps: newThresholds }, this.onChange);
-  };
+    setSteps(newThresholds);
+    fireOnChange(newThresholds);
+  }
 
-  onBlur = () => {
-    const steps = [...this.state.steps];
-    sortThresholds(steps);
-    this.setState({ steps }, this.onChange);
-  };
+  function onBlur() {
+    // an input left empty holds '' as its value — settle it to 0
+    const newSteps = steps.map((t) => (isNumber(t.value) ? t : { ...t, value: 0 }));
+    sortThresholds(newSteps);
+    setSteps(newSteps);
+    fireOnChange(newSteps);
+  }
 
-  onChange = () => {
-    this.props.onChange(thresholdsWithoutKey(this.props.thresholds, this.state.steps));
-  };
-
-  onModeChanged = (value?: ThresholdsMode) => {
-    this.props.onChange({
-      ...this.props.thresholds,
+  function onModeChanged(value?: ThresholdsMode) {
+    onChange({
+      ...thresholds,
       mode: value!,
     });
-  };
+  }
 
-  renderInput(threshold: ThresholdWithKey, styles: ThresholdStyles, idx: number) {
-    const isPercent = this.props.thresholds.mode === ThresholdsMode.Percentage;
+  function renderInput(threshold: ThresholdWithKey, idx: number) {
+    const isPercent = thresholds.mode === ThresholdsMode.Percentage;
     const thresholdNumber = idx + 1;
 
     const ariaLabel = t('dimensions.thresholds-editor.aria-label-threshold', 'Threshold {{thresholdNumber}}', {
@@ -153,7 +180,7 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
             <div className={styles.colorPicker}>
               <ColorPicker
                 color={threshold.color}
-                onChange={(color) => this.onChangeThresholdColor(threshold, color)}
+                onChange={(color) => onChangeThresholdColor(threshold, color)}
                 enableNamedColors={true}
               />
             </div>
@@ -164,20 +191,21 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
 
     return (
       <Input
-        type="number"
-        step="0.0001"
+        // with interpolation enabled, a text input so variable expressions (e.g. $myVar) can be typed
+        type={interpolationEnabled ? 'text' : 'number'}
+        step={interpolationEnabled ? undefined : '0.0001'}
         key={isPercent.toString()}
-        onChange={(event: ChangeEvent<HTMLInputElement>) => this.onChangeThresholdValue(event, threshold)}
-        value={threshold.value}
+        onChange={(event: ChangeEvent<HTMLInputElement>) => onChangeThresholdValue(event, threshold)}
+        value={interpolationEnabled ? (threshold.valueExpr ?? threshold.value) : threshold.value}
         aria-label={ariaLabel}
-        ref={idx === 0 ? this.latestThresholdInputRef : null}
-        onBlur={this.onBlur}
+        ref={idx === 0 ? latestThresholdInputRef : null}
+        onBlur={onBlur}
         prefix={
           <div className={styles.inputPrefix}>
             <div className={styles.colorPicker}>
               <ColorPicker
                 color={threshold.color}
-                onChange={(color) => this.onChangeThresholdColor(threshold, color)}
+                onChange={(color) => onChangeThresholdColor(threshold, color)}
                 enableNamedColors={true}
               />
             </div>
@@ -188,7 +216,7 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
           <IconButton
             className={styles.trashIcon}
             name="trash-alt"
-            onClick={() => this.onRemoveThreshold(threshold)}
+            onClick={() => onRemoveThreshold(threshold)}
             tooltip={t('dimensions.threshold-editor.tooltip-remove-threshold', 'Remove threshold {{thresholdNumber}}', {
               thresholdNumber,
             })}
@@ -198,74 +226,55 @@ export class ThresholdsEditor extends PureComponent<Props, State> {
     );
   }
 
-  render() {
-    const { thresholds } = this.props;
-    const { steps } = this.state;
+  const modes: Array<SelectableValue<ThresholdsMode>> = [
+    {
+      value: ThresholdsMode.Absolute,
+      label: t('dimensions.thresholds-editor.modes.label.absolute', 'Absolute'),
+      description: t(
+        'dimensions.thresholds-editor.modes.description.thresholds-based-absolute-values',
+        'Pick thresholds based on the absolute values'
+      ),
+    },
+    {
+      value: ThresholdsMode.Percentage,
+      label: t('dimensions.thresholds-editor.modes.label.percentage', 'Percentage'),
+      description: t(
+        'dimensions.thresholds-editor.modes.description.threshold-based-percent-between-minmax',
+        'Pick threshold based on the percent between min/max'
+      ),
+    },
+  ];
 
-    const modes: Array<SelectableValue<ThresholdsMode>> = [
-      {
-        value: ThresholdsMode.Absolute,
-        label: t('dimensions.thresholds-editor.modes.label.absolute', 'Absolute'),
-        description: t(
-          'dimensions.thresholds-editor.modes.description.thresholds-based-absolute-values',
-          'Pick thresholds based on the absolute values'
-        ),
-      },
-      {
-        value: ThresholdsMode.Percentage,
-        label: t('dimensions.thresholds-editor.modes.label.percentage', 'Percentage'),
-        description: t(
-          'dimensions.thresholds-editor.modes.description.threshold-based-percent-between-minmax',
-          'Pick threshold based on the percent between min/max'
-        ),
-      },
-    ];
-
-    return (
-      <ThemeContext.Consumer>
-        {(theme) => {
-          const styles = getStyles(theme);
-          return (
-            <div className={styles.wrapper}>
-              <Button
-                size="sm"
-                icon="plus"
-                onClick={() => this.onAddThreshold()}
-                variant="secondary"
-                className={styles.addButton}
-                fullWidth
-              >
-                <Trans i18nKey="dimensions.thresholds-editor.add-threshold">Add threshold</Trans>
-              </Button>
-              <div className={styles.thresholds}>
-                {steps
-                  .slice(0)
-                  .reverse()
-                  .map((threshold, idx) => (
-                    <div className={styles.item} key={`${threshold.key}`}>
-                      {this.renderInput(threshold, styles, idx)}
-                    </div>
-                  ))}
-              </div>
-
-              <div>
-                <Label
-                  description={t(
-                    'dimensions.thresholds-editor.description-percentage-means-thresholds-relative',
-                    'Percentage means thresholds relative to min & max'
-                  )}
-                >
-                  <Trans i18nKey="dimensions.thresholds-editor.thresholds-mode">Thresholds mode</Trans>
-                </Label>
-                <RadioButtonGroup options={modes} onChange={this.onModeChanged} value={thresholds.mode} />
-              </div>
+  return (
+    <div className={styles.wrapper}>
+      <Button size="sm" icon="plus" onClick={onAddThreshold} variant="secondary" className={styles.addButton} fullWidth>
+        <Trans i18nKey="dimensions.thresholds-editor.add-threshold">Add threshold</Trans>
+      </Button>
+      <div className={styles.thresholds}>
+        {steps
+          .slice(0)
+          .reverse()
+          .map((threshold, idx) => (
+            <div className={styles.item} key={`${threshold.key}`}>
+              {renderInput(threshold, idx)}
             </div>
-          );
-        }}
-      </ThemeContext.Consumer>
-    );
-  }
-}
+          ))}
+      </div>
+
+      <div>
+        <Label
+          description={t(
+            'dimensions.thresholds-editor.description-percentage-means-thresholds-relative',
+            'Percentage means thresholds relative to min & max'
+          )}
+        >
+          <Trans i18nKey="dimensions.thresholds-editor.thresholds-mode">Thresholds mode</Trans>
+        </Label>
+        <RadioButtonGroup options={modes} onChange={onModeChanged} value={thresholds.mode} />
+      </div>
+    </div>
+  );
+});
 
 interface ThresholdWithKey extends Threshold {
   key: number;
@@ -280,38 +289,33 @@ function toThresholdsWithKey(steps?: Threshold[]): ThresholdWithKey[] {
 
   return steps
     .filter((t, i) => isNumber(t.value) || i === 0)
-    .map((t) => {
-      return {
+    .map((t, i) => {
+      const step: ThresholdWithKey = {
         color: t.color,
         value: t.value === null ? -Infinity : t.value,
         key: counter++,
       };
+      // the base step never carries an expression
+      if (t.valueExpr && i > 0) {
+        step.valueExpr = t.valueExpr;
+      }
+      return step;
     });
 }
 
-export function thresholdsWithoutKey(thresholds: ThresholdsConfig, steps: ThresholdWithKey[]): ThresholdsConfig {
+function thresholdsWithoutKey(thresholds: ThresholdsConfig, steps: ThresholdWithKey[]): ThresholdsConfig {
   const mode = thresholds.mode ?? ThresholdsMode.Absolute;
   return {
     mode,
     steps: steps.map((t) => {
       const { key, ...rest } = t;
-      return rest; // everything except key
+      // never persist the '' an input cleared mid-edit holds — the backend requires a number
+      return isNumber(rest.value) ? rest : { ...rest, value: 0 };
     }),
   };
 }
 
-interface ThresholdStyles {
-  wrapper: string;
-  thresholds: string;
-  item: string;
-  colorPicker: string;
-  addButton: string;
-  percentIcon: string;
-  inputPrefix: string;
-  trashIcon: string;
-}
-
-const getStyles = stylesFactory((theme: GrafanaTheme2): ThresholdStyles => {
+const getStyles = (theme: GrafanaTheme2) => {
   return {
     wrapper: css({
       display: 'flex',
@@ -353,4 +357,4 @@ const getStyles = stylesFactory((theme: GrafanaTheme2): ThresholdStyles => {
       },
     }),
   };
-});
+};

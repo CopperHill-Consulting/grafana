@@ -1,26 +1,41 @@
 import { t } from '@grafana/i18n';
 
-import { RepositorySpec } from '../../../api/clients/provisioning/v0alpha1';
-import { RepositoryFormData } from '../types';
+import { type RepositorySpec, type RepositoryViewList } from '../../../api/clients/provisioning/v0alpha1';
+import { type RepositoryFormData } from '../types';
 import { specToData } from '../utils/data';
 
-export function getDefaultValues(repository?: RepositorySpec): RepositoryFormData {
+export interface GetDefaultValuesOptions {
+  repository?: RepositorySpec;
+  allowedTargets?: RepositoryViewList['allowedTargets'];
+}
+
+export function getDefaultValues({
+  repository,
+  allowedTargets = ['folder'],
+}: GetDefaultValuesOptions = {}): RepositoryFormData {
   if (!repository) {
+    const defaultTarget = allowedTargets.includes('folder') ? 'folder' : 'instance';
+
     return {
       type: 'github',
       title: t('provisioning.get-default-values.title.repository', 'Repository'),
       token: '',
+      signingMethod: '',
+      commitSigningKey: '',
+      smimeCertificate: '',
+      commit: { authorName: '', authorEmail: '', signerName: '', signerEmail: '', signerIsAuthor: false },
       url: '',
-      branch: 'main',
+      branch: '',
       generateDashboardPreviews: false,
       readOnly: false,
       prWorkflow: true,
-      path: 'grafana/',
+      path: '',
       sync: {
         enabled: false,
-        target: 'folder', // start with folder so we can shift to instance later (without an error)
+        target: defaultTarget,
         intervalSeconds: 60,
       },
+      enablePushToConfiguredBranch: false,
     };
   }
   return specToData(repository);

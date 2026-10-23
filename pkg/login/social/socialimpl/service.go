@@ -103,6 +103,11 @@ func (ss *SocialService) GetOAuthHttpClient(name string) (*http.Client, error) {
 		return nil, fmt.Errorf("oauth provider %q is not enabled", name)
 	}
 
+	timeout := 15 * time.Second
+	if info.TokenExchangeTimeout > 0 {
+		timeout = time.Duration(info.TokenExchangeTimeout) * time.Second
+	}
+
 	// handle call back
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
@@ -110,10 +115,10 @@ func (ss *SocialService) GetOAuthHttpClient(name string) (*http.Client, error) {
 			InsecureSkipVerify: info.TlsSkipVerify,
 		},
 		DialContext: (&net.Dialer{
-			Timeout:   time.Second * 10,
+			Timeout:   timeout,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout:   15 * time.Second,
+		TLSHandshakeTimeout:   timeout,
 		ExpectContinueTimeout: 1 * time.Second,
 		MaxIdleConns:          100,
 		IdleConnTimeout:       90 * time.Second,
@@ -121,7 +126,7 @@ func (ss *SocialService) GetOAuthHttpClient(name string) (*http.Client, error) {
 
 	oauthClient := &http.Client{
 		Transport: tr,
-		Timeout:   time.Second * 15,
+		Timeout:   timeout,
 	}
 
 	if info.TlsClientCert != "" || info.TlsClientKey != "" {
@@ -204,17 +209,17 @@ func createOAuthConnector(name string, info *social.OAuthInfo, cfg *setting.Cfg,
 	case social.AzureADProviderName:
 		return connectors.NewAzureADProvider(info, cfg, orgRoleMapper, ssoSettings, features, cache), nil
 	case social.GenericOAuthProviderName:
-		return connectors.NewGenericOAuthProvider(info, cfg, orgRoleMapper, ssoSettings, features), nil
+		return connectors.NewGenericOAuthProvider(info, cfg, orgRoleMapper, ssoSettings, features, cache), nil
 	case social.GitHubProviderName:
 		return connectors.NewGitHubProvider(info, cfg, orgRoleMapper, ssoSettings, features), nil
 	case social.GitlabProviderName:
-		return connectors.NewGitLabProvider(info, cfg, orgRoleMapper, ssoSettings, features), nil
+		return connectors.NewGitLabProvider(info, cfg, orgRoleMapper, ssoSettings, features, cache), nil
 	case social.GoogleProviderName:
-		return connectors.NewGoogleProvider(info, cfg, orgRoleMapper, ssoSettings, features), nil
+		return connectors.NewGoogleProvider(info, cfg, orgRoleMapper, ssoSettings, features, cache), nil
 	case social.GrafanaComProviderName:
 		return connectors.NewGrafanaComProvider(info, cfg, orgRoleMapper, ssoSettings, features), nil
 	case social.OktaProviderName:
-		return connectors.NewOktaProvider(info, cfg, orgRoleMapper, ssoSettings, features), nil
+		return connectors.NewOktaProvider(info, cfg, orgRoleMapper, ssoSettings, features, cache), nil
 	default:
 		return nil, fmt.Errorf("unknown oauth provider: %s", name)
 	}

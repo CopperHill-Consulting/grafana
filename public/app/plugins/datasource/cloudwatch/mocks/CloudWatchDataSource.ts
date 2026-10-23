@@ -1,18 +1,18 @@
 import { of } from 'rxjs';
 
 import {
-  CustomVariableModel,
-  DataSourceInstanceSettings,
-  DataSourcePluginMeta,
-  PluginMetaInfo,
+  type CustomVariableModel,
+  type DataSourceInstanceSettings,
+  type DataSourcePluginMeta,
+  type PluginMetaInfo,
   PluginType,
-  ScopedVars,
+  type ScopedVars,
   VariableHide,
 } from '@grafana/data';
-import { getBackendSrv, setBackendSrv, DataSourceWithBackend, TemplateSrv } from '@grafana/runtime';
+import { getBackendSrv, setBackendSrv, DataSourceWithBackend, type TemplateSrv } from '@grafana/runtime';
 
 import { CloudWatchDatasource } from '../datasource';
-import { CloudWatchJsonData } from '../types';
+import { type CloudWatchJsonData } from '../types';
 import { getVariableName } from '../utils/templateVariableUtils';
 
 import { initialCustomVariableModelState } from './CloudWatchVariables';
@@ -89,7 +89,7 @@ const info: PluginMetaInfo = {
   version: '',
 };
 
-export const meta: DataSourcePluginMeta<CloudWatchJsonData> = {
+const meta: DataSourcePluginMeta<CloudWatchJsonData> = {
   id: '',
   name: '',
   type: PluginType.datasource,
@@ -100,7 +100,6 @@ export const meta: DataSourcePluginMeta<CloudWatchJsonData> = {
 
 export const CloudWatchSettings: DataSourceInstanceSettings<CloudWatchJsonData> = {
   jsonData: { defaultRegion: 'us-west-1', tracingDatasourceUid: 'xray', logGroups: [] },
-  id: 0,
   uid: '',
   type: '',
   name: 'CloudWatch Test Datasource',
@@ -127,7 +126,7 @@ export function setupMockedDataSource({
   datasource.resources.getDimensionKeys = jest.fn().mockResolvedValue([]);
   datasource.resources.getMetrics = jest.fn().mockResolvedValue([]);
   datasource.resources.getAccounts = jest.fn().mockResolvedValue([]);
-  datasource.resources.getLogGroups = jest.fn().mockResolvedValue([]);
+  datasource.resources.getLogGroups = jest.fn().mockResolvedValue({ results: [] });
   datasource.resources.isMonitoringAccount = jest.fn().mockResolvedValue(false);
   const fetchMock = jest.fn().mockReturnValue(of({}));
   setBackendSrv({

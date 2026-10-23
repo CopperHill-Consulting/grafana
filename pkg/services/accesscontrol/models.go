@@ -1,6 +1,7 @@
 package accesscontrol
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -73,11 +74,17 @@ func (r Role) MarshalJSON() ([]byte, error) {
 
 // swagger:ignore
 type RoleDTO struct {
-	Version     int64        `json:"version"`
-	UID         string       `xorm:"uid" json:"uid"`
-	Name        string       `json:"name"`
-	DisplayName string       `json:"displayName,omitempty"`
-	Description string       `json:"description"`
+	// required:true
+	Version int64 `json:"version"`
+	// required:true
+	UID string `xorm:"uid" json:"uid"`
+	// required:true
+	Name string `json:"name"`
+	// required:true
+	DisplayName string `json:"displayName,omitempty"`
+	// required:true
+	Description string `json:"description"`
+	// required:true
 	Group       string       `xorm:"group_name" json:"group"`
 	Permissions []Permission `json:"permissions,omitempty"`
 	Delegatable *bool        `json:"delegatable,omitempty"`
@@ -87,7 +94,9 @@ type RoleDTO struct {
 	ID    int64 `json:"-" xorm:"pk autoincr 'id'"`
 	OrgID int64 `json:"-" xorm:"org_id"`
 
+	// required:true
 	Updated time.Time `json:"updated"`
+	// required:true
 	Created time.Time `json:"created"`
 }
 
@@ -193,16 +202,17 @@ type BuiltinRole struct {
 	Created time.Time
 }
 
-// Permission is the model for access control permissions.
+// Permission is the model for access control permissions
 type Permission struct {
 	ID     int64  `json:"-" xorm:"pk autoincr 'id'"`
 	RoleID int64  `json:"-" xorm:"role_id"`
 	Action string `json:"action"`
 	Scope  string `json:"scope"`
 
-	Kind       string `json:"-"`
-	Attribute  string `json:"-"`
-	Identifier string `json:"-"`
+	Kind           string `json:"-"`
+	Attribute      string `json:"-"`
+	Identifier     string `json:"-"`
+	DatasourceType string `json:"-" xorm:"datasource_type"`
 
 	Updated time.Time `json:"updated"`
 	Created time.Time `json:"created"`
@@ -226,6 +236,12 @@ type GetUserPermissionsQuery struct {
 	Roles        []string
 	TeamIDs      []int64
 	RolePrefixes []string
+	// ExcludeRedundantManagedPermissions filters out individual dashboard/folder action permissions
+	// from managed roles when action sets are enabled. These permissions are redundant because
+	// ExpandActionSets expands action set permissions (e.g. dashboards:view) into the individual
+	// actions (e.g. dashboards:read) in memory. Excluding them from the SQL query significantly
+	// reduces the number of rows loaded for large installations.
+	ExcludeRedundantManagedPermissions bool
 }
 
 // ResourcePermission is structure that holds all actions that either a team / user / builtin-role
@@ -394,6 +410,7 @@ const (
 	ScopeSettingsAll  = "settings:*"
 	ScopeSettingsSAML = "settings:auth.saml:*"
 	ScopeSettingsSCIM = "settings:auth.scim:*"
+	ScopeSettingsSMTP = "settings:smtp:*"
 
 	// Team related actions
 	ActionTeamsCreate           = "teams:create"
@@ -434,16 +451,32 @@ const (
 	// Alerting Notification actions (legacy)
 	ActionAlertingNotificationsRead  = "alert.notifications:read"
 	ActionAlertingNotificationsWrite = "alert.notifications:write"
+	// ActionAlertingNotificationsConfigHistoryRead gates read access to the raw Alertmanager config blob
+	// (GET /config/api/v1/alerts) and config history (GET /config/history).
+	// Restricted to admin-only in v13; endpoints will be removed in v14.
+	ActionAlertingNotificationsConfigHistoryRead = "alert.notifications.config-history:read"
+	// ActionAlertingNotificationsConfigHistoryWrite gates write access to config history
+	// (POST /config/history/{id}/_activate).
+	// Restricted to admin-only in v13; endpoint will be removed in v14.
+	ActionAlertingNotificationsConfigHistoryWrite = "alert.notifications.config-history:write"
+	// ActionAlertingNotificationSystemStatus gates access to alertmanager status API
+	ActionAlertingNotificationSystemStatus = "alert.notifications.system-status:read"
 
 	// Alerting notifications template actions
 	ActionAlertingNotificationsTemplatesRead   = "alert.notifications.templates:read"
 	ActionAlertingNotificationsTemplatesWrite  = "alert.notifications.templates:write"
 	ActionAlertingNotificationsTemplatesDelete = "alert.notifications.templates:delete"
+	ActionAlertingNotificationsTemplatesTest   = "alert.notifications.templates.test:write"
 
 	// Alerting notifications time interval actions
 	ActionAlertingNotificationsTimeIntervalsRead   = "alert.notifications.time-intervals:read"
 	ActionAlertingNotificationsTimeIntervalsWrite  = "alert.notifications.time-intervals:write"
 	ActionAlertingNotificationsTimeIntervalsDelete = "alert.notifications.time-intervals:delete"
+
+	// Alerting notifications inhibition rules actions
+	ActionAlertingNotificationsInhibitionRulesRead   = "alert.notifications.inhibition-rules:read"
+	ActionAlertingNotificationsInhibitionRulesWrite  = "alert.notifications.inhibition-rules:write"
+	ActionAlertingNotificationsInhibitionRulesDelete = "alert.notifications.inhibition-rules:delete"
 
 	// Alerting receiver actions
 	ActionAlertingReceiversList             = "alert.notifications.receivers:list"
@@ -451,14 +484,35 @@ const (
 	ActionAlertingReceiversReadSecrets      = "alert.notifications.receivers.secrets:read"
 	ActionAlertingReceiversCreate           = "alert.notifications.receivers:create"
 	ActionAlertingReceiversUpdate           = "alert.notifications.receivers:write"
+	ActionAlertingReceiversUpdateProtected  = "alert.notifications.receivers.protected:write"
 	ActionAlertingReceiversDelete           = "alert.notifications.receivers:delete"
-	ActionAlertingReceiversTest             = "alert.notifications.receivers:test"
+	ActionAlertingReceiversTest             = "alert.notifications.receivers:test" // This is a deprecated action, use ActionAlertingReceiversTestCreate instead
+	ActionAlertingReceiversTestCreate       = "alert.notifications.receivers.test:create"
 	ActionAlertingReceiversPermissionsRead  = "receivers.permissions:read"
 	ActionAlertingReceiversPermissionsWrite = "receivers.permissions:write"
 
-	// Alerting routes policies actions
+	// Alerting routes policies actions (legacy, unscoped - kept for backward compatibility)
 	ActionAlertingRoutesRead  = "alert.notifications.routes:read"
 	ActionAlertingRoutesWrite = "alert.notifications.routes:write"
+
+	AlertingNotificationsApiGroup = "notifications.alerting.grafana.app"
+	AlertingRoutesResource        = "routingtrees"
+	AlertingRoutesKind            = AlertingNotificationsApiGroup + "/" + AlertingRoutesResource
+	// Alerting managed routes actions (new, scoped per-resource)
+	ActionAlertingManagedRoutesRead      = AlertingRoutesKind + ":get"
+	ActionAlertingManagedRoutesWrite     = AlertingRoutesKind + ":update"
+	ActionAlertingManagedRoutesCreate    = AlertingRoutesKind + ":create"
+	ActionAlertingManagedRoutesDelete    = AlertingRoutesKind + ":delete"
+	ActionAlertingRoutesPermissionsRead  = AlertingRoutesKind + ":set_permissions"
+	ActionAlertingRoutesPermissionsWrite = AlertingRoutesKind + ":get_permissions"
+
+	// Alerting alertmanager import actions (scoped per import identifier, feature-flagged)
+	AlertingAlertmanagerImportsResource     = "alertmanagerimports"
+	AlertingAlertmanagerImportsKind         = AlertingNotificationsApiGroup + "/" + AlertingAlertmanagerImportsResource
+	ActionAlertingAlertmanagerImportsCreate = AlertingAlertmanagerImportsKind + ":create"
+	ActionAlertingAlertmanagerImportsRead   = AlertingAlertmanagerImportsKind + ":get"
+	ActionAlertingAlertmanagerImportsWrite  = AlertingAlertmanagerImportsKind + ":update"
+	ActionAlertingAlertmanagerImportsDelete = AlertingAlertmanagerImportsKind + ":delete"
 
 	// External alerting rule actions. We can only narrow it down to writes or reads, as we don't control the atomicity in the external system.
 	ActionAlertingRuleExternalWrite = "alert.rules.external:write"
@@ -484,6 +538,19 @@ const (
 	// ActionAlertingProvisioningSetStatus Gives access to set provisioning status to alerting resources. Cannot be used alone. Only in conjunction with other permissions.
 	ActionAlertingProvisioningSetStatus = "alert.provisioning.provenance:write"
 
+	// Config k8s resource actions, scoped per-resource. Reads are exposed to
+	// viewers; updates are gated to admins.
+	AlertingConfigResource     = "configs"
+	AlertingConfigKind         = AlertingNotificationsApiGroup + "/" + AlertingConfigResource
+	ActionAlertingConfigRead   = AlertingConfigKind + ":get"
+	ActionAlertingConfigUpdate = AlertingConfigKind + ":update"
+	// ActionAlertingConfigStatusUpdate gates writes to the /status
+	// subresource. Granted only to the in-process service identity (see
+	// pkg/apimachinery/identity/context.go). NOT registered in any fixed
+	// role — humans should never write status directly; the sync worker
+	// owns it.
+	ActionAlertingConfigStatusUpdate = AlertingConfigKind + "/status:update"
+
 	// Feature Management actions
 	ActionFeatureManagementRead  = "featuremgmt.read"
 	ActionFeatureManagementWrite = "featuremgmt.write"
@@ -496,6 +563,9 @@ const (
 
 	// Usage stats actions
 	ActionUsageStatsRead = "server.usagestats.report:read"
+
+	// Live (Grafana Live) actions
+	ActionLivePush = "live:push"
 )
 
 var (
@@ -583,4 +653,19 @@ var OrgsCreateAccessEvaluator = EvalAll(
 type QueryWithOrg struct {
 	OrgId  *int64 `json:"orgId"`
 	Global bool   `json:"global"`
+}
+
+type SeedPermission struct {
+	BuiltInRole string `xorm:"builtin_role"`
+	Action      string `xorm:"action"`
+	Scope       string `xorm:"scope"`
+	Origin      string `xorm:"origin"`
+}
+
+type RoleStore interface {
+	LoadRoles(ctx context.Context) (map[string]*RoleDTO, error)
+	SetRole(ctx context.Context, existingRole *RoleDTO, wantedRole RoleDTO) error
+	SetPermissions(ctx context.Context, existingRole *RoleDTO, wantedRole RoleDTO) error
+	CreateRole(ctx context.Context, role RoleDTO) error
+	DeleteRoles(ctx context.Context, roleUIDs []string) error
 }

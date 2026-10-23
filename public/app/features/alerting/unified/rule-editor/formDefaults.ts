@@ -1,11 +1,14 @@
 import { clamp } from 'lodash';
-import { z } from 'zod';
+import * as z from 'zod';
 
+import { store } from '@grafana/data';
 import { config, getDataSourceSrv } from '@grafana/runtime';
-import { RuleWithLocation } from 'app/types/unified-alerting';
-import { GrafanaAlertStateDecision, RulerRuleDTO } from 'app/types/unified-alerting-dto';
+import { alertingAlertRuleFormSchema } from 'app/features/plugins/components/restrictedGrafanaApis/alerting/alertRuleFormSchema';
+import { type RuleWithLocation } from 'app/types/unified-alerting';
+import { GrafanaAlertStateDecision, type RulerRuleDTO } from 'app/types/unified-alerting-dto';
 
-import { RuleFormType, RuleFormValues } from '../types/rule-form';
+import { shouldUseRulesAPIV2 } from '../featureToggles';
+import { RuleFormType, type RuleFormValues } from '../types/rule-form';
 // TODO Ideally all of these should be moved here
 import { getRulesAccess } from '../utils/access-control';
 import { defaultAnnotations } from '../utils/constants';
@@ -79,6 +82,8 @@ export const getDefaultFormValues = (ruleType?: RuleFormType): RuleFormValues =>
     dataSourceName: GRAFANA_RULES_SOURCE_NAME, // let's use Grafana-managed alert rule by default
     type, // viewers can't create prom alerts
     group: '',
+    // New Grafana rules default to ungrouped when the v2 API is enabled; flag-off keeps the legacy grouped flow.
+    isUngroupedRuleGroup: shouldUseRulesAPIV2(),
 
     // grafana
     folder: undefined,
@@ -109,7 +114,7 @@ export const getDefaultFormValues = (ruleType?: RuleFormType): RuleFormValues =>
 export const getDefautManualRouting = () => {
   // check in local storage
   // if it's not set, we'll default to true
-  const manualRouting = localStorage.getItem(MANUAL_ROUTING_KEY);
+  const manualRouting = store.get(MANUAL_ROUTING_KEY);
   return manualRouting !== 'false';
 };
 
@@ -118,13 +123,9 @@ function getDefaultEditorSettings(ruleType?: RuleFormType) {
     return undefined;
   }
 
-  const editorSettingsEnabled = config.featureToggles.alertingQueryAndExpressionsStepMode ?? false;
-  if (!editorSettingsEnabled) {
-    return undefined;
-  }
   //then, check in local storage if the user has saved last rule with sections simplified
-  const queryEditorSettings = localStorage.getItem(SIMPLIFIED_QUERY_EDITOR_KEY);
-  const notificationStepSettings = localStorage.getItem(MANUAL_ROUTING_KEY);
+  const queryEditorSettings = store.get(SIMPLIFIED_QUERY_EDITOR_KEY);
+  const notificationStepSettings = store.get(MANUAL_ROUTING_KEY);
   return {
     simplifiedQueryEditor: queryEditorSettings !== 'false',
     simplifiedNotificationEditor: notificationStepSettings !== 'false',
@@ -151,52 +152,16 @@ export function formValuesFromQueryParams(ruleDefinition: string, type: RuleForm
         annotations: normalizeDefaultAnnotations(ruleFromQueryParams.annotations ?? []),
         queries: ruleFromQueryParams.queries ?? getDefaultQueries(),
         type: ruleFromQueryParams.type ?? type ?? RuleFormType.grafana,
-        evaluateEvery: DEFAULT_GROUP_EVALUATION_INTERVAL,
+        evaluateEvery: ruleFromQueryParams.evaluateEvery ?? DEFAULT_GROUP_EVALUATION_INTERVAL,
       })
     )
   );
 }
+// schema for cloud rule form values. This is necessary because the cloud rule form values are not the same as the grafana rule form values.
+// schema for grafana rule values is navigateToAlertFormSchema , shared in the restrictedGrafanaApis.
+// TODO: add this to the DMA new plugin.
 
-export function formValuesFromPrefill(rule: Partial<RuleFormValues>): RuleFormValues {
-  // coerce prefill params to a valid RuleFormValues interface
-  const parsedRule = ruleFormValuesSchema.parse(rule);
-
-  return revealHiddenQueries({
-    ...getDefaultFormValues(rule.type),
-    ...parsedRule,
-  });
-}
-
-export function formValuesFromExistingRule(rule: RuleWithLocation<RulerRuleDTO>) {
-  return revealHiddenQueries(rulerRuleToFormValues(rule));
-}
-
-export function defaultFormValuesForRuleType(ruleType: RuleFormType): RuleFormValues {
-  return {
-    ...getDefaultFormValues(ruleType),
-    condition: 'C',
-    queries: getDefaultQueries(isGrafanaRecordingRuleByType(ruleType)),
-    type: ruleType,
-    evaluateEvery: DEFAULT_GROUP_EVALUATION_INTERVAL,
-  };
-}
-
-// TODO This function is not 100% valid. There is no support for cloud form type because
-// it's not valid from the path param point of view.
-export function translateRouteParamToRuleType(param = ''): RuleFormType {
-  if (param === 'recording') {
-    return RuleFormType.cloudRecording;
-  }
-
-  if (param === 'grafana-recording') {
-    return RuleFormType.grafanaRecording;
-  }
-
-  return RuleFormType.grafana;
-}
-
-// we use this schema to coerce prefilled query params into a valid "FormValues" interface
-const ruleFormValuesSchema = z.looseObject({
+const cloudRuleFormValuesSchema = z.looseObject({
   name: z.string().optional(),
   type: z.enum(RuleFormType).catch(RuleFormType.grafana),
   dataSourceName: z.string().optional().default(''),
@@ -273,3 +238,51 @@ const ruleFormValuesSchema = z.looseObject({
   expression: z.string().optional(),
   missingSeriesEvalsToResolve: z.number().optional(),
 });
+
+export function formValuesFromPrefill(rule: Partial<RuleFormValues>): RuleFormValues {
+  let parsedRule: z.infer<typeof alertingAlertRuleFormSchema> | z.infer<typeof cloudRuleFormValuesSchema>;
+  // differencitate between cloud and grafana prefill
+  if (rule.type === RuleFormType.cloudAlerting) {
+    // we use this schema to coerce prefilled query params into a valid "FormValues" interface
+    parsedRule = cloudRuleFormValuesSchema.parse(rule);
+  } else {
+    // grafana prefill
+    // coerce prefill params to a valid RuleFormValues interface
+    parsedRule = alertingAlertRuleFormSchema.parse(rule);
+  }
+
+  return setQueryEditorSettings(
+    revealHiddenQueries({
+      ...getDefaultFormValues(rule.type),
+      ...parsedRule,
+    })
+  );
+}
+
+export function formValuesFromExistingRule(rule: RuleWithLocation<RulerRuleDTO>) {
+  return revealHiddenQueries(rulerRuleToFormValues(rule));
+}
+
+export function defaultFormValuesForRuleType(ruleType: RuleFormType): RuleFormValues {
+  return {
+    ...getDefaultFormValues(ruleType),
+    condition: 'C',
+    queries: getDefaultQueries(isGrafanaRecordingRuleByType(ruleType)),
+    type: ruleType,
+    evaluateEvery: DEFAULT_GROUP_EVALUATION_INTERVAL,
+  };
+}
+
+// TODO This function is not 100% valid. There is no support for cloud form type because
+// it's not valid from the path param point of view.
+export function translateRouteParamToRuleType(param = ''): RuleFormType {
+  if (param === 'recording') {
+    return RuleFormType.cloudRecording;
+  }
+
+  if (param === 'grafana-recording') {
+    return RuleFormType.grafanaRecording;
+  }
+
+  return RuleFormType.grafana;
+}

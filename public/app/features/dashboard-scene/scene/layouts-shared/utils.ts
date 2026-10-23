@@ -1,30 +1,19 @@
 import { useEffect, useRef } from 'react';
 
-import { SceneObject } from '@grafana/scenes';
-import { contextSrv } from 'app/core/core';
+import { config } from '@grafana/runtime';
+import { contextSrv } from 'app/core/services/context_srv';
 
-import { DashboardLayoutManager, isDashboardLayoutManager } from '../types/DashboardLayoutManager';
+import { type RowItem } from '../layout-rows/RowItem';
+import { type TabItem } from '../layout-tabs/TabItem';
+import { type DashboardLayoutManager } from '../types/DashboardLayoutManager';
 import { isLayoutParent } from '../types/LayoutParent';
+import { type LayoutRegistryItem } from '../types/LayoutRegistryItem';
 
-export function findParentLayout(sceneObject: SceneObject): DashboardLayoutManager | null {
-  let parent = sceneObject.parent;
-
-  while (parent) {
-    if (isDashboardLayoutManager(parent)) {
-      return parent;
-    }
-
-    parent = parent.parent;
-  }
-
-  return null;
-}
-
-export interface EditPaneInputAutoFocusProps {
+export interface SidebarInputAutoFocusProps {
   autoFocus?: boolean;
 }
 
-export function useEditPaneInputAutoFocus({ autoFocus }: EditPaneInputAutoFocusProps = {}) {
+export function useSidebarInputAutoFocus({ autoFocus }: SidebarInputAutoFocusProps = {}) {
   const ref = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -69,15 +58,64 @@ export function generateUniqueTitle(title: string | undefined, existingTitles: S
   return baseTitle;
 }
 
-export function ungroupLayout(layout: DashboardLayoutManager, innerLayout: DashboardLayoutManager) {
-  const layoutParent = layout.parent!;
-  if (isLayoutParent(layoutParent)) {
-    innerLayout.clearParent();
-    layoutParent.switchLayout(innerLayout);
+export function deduplicateTitles(items: TabItem[] | RowItem[]) {
+  const existingTitles = new Set<string>();
+
+  for (const item of items) {
+    if (!item.state.title) {
+      continue;
+    }
+
+    const uniqueTitle = generateUniqueTitle(item.state.title, existingTitles);
+
+    if (uniqueTitle !== item.state.title) {
+      item.setState({ title: uniqueTitle });
+    }
+
+    existingTitles.add(uniqueTitle);
   }
 }
 
+function switchLayoutOnParent(current: DashboardLayoutManager, newLayout: DashboardLayoutManager, skipUndo?: boolean) {
+  const layoutParent = current.parent;
+  if (layoutParent && isLayoutParent(layoutParent)) {
+    layoutParent.switchLayout(newLayout, skipUndo);
+  }
+}
+
+export function changeLayoutTo(
+  currentManager: DashboardLayoutManager,
+  layoutItem: LayoutRegistryItem,
+  skipUndo?: boolean
+) {
+  switchLayoutOnParent(currentManager, layoutItem.createFromLayout(currentManager), skipUndo);
+}
+
+export function ungroupLayout(layout: DashboardLayoutManager, innerLayout: DashboardLayoutManager, skipUndo?: boolean) {
+  innerLayout.clearParent();
+  switchLayoutOnParent(layout, innerLayout, skipUndo);
+}
+
 export function getIsLazy(preload: boolean | undefined): boolean {
+  // When a dashboard does not explicitly set preload, fall back to the instance-wide default.
+  // Nullish coalescing keeps an explicit `false` authoritative - only undefined defers to the config default.
+  const shouldPreload = preload ?? config.dashboardDefaultPreload;
   // We don't want to lazy load panels in the case of image renderer
-  return !(preload || (contextSrv.user && contextSrv.user.authenticatedBy === 'render'));
+  return !(shouldPreload || (contextSrv.user && contextSrv.user.authenticatedBy === 'render'));
+}
+
+export enum GridLayoutType {
+  AutoGridLayout = 'AutoGridLayout',
+  GridLayout = 'GridLayout',
+}
+
+export function mapIdToGridLayoutType(id?: string): GridLayoutType | undefined {
+  switch (id) {
+    case GridLayoutType.AutoGridLayout:
+      return GridLayoutType.AutoGridLayout;
+    case GridLayoutType.GridLayout:
+      return GridLayoutType.GridLayout;
+    default:
+      return undefined;
+  }
 }

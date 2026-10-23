@@ -8,15 +8,16 @@ import {
 import { t } from '@grafana/i18n';
 import { AxisPlacement, VisibilityMode } from '@grafana/schema';
 import { commonOptionsBuilder } from '@grafana/ui';
+import { addAnnotationOptions } from 'app/features/panel/options/builder/annotations';
+import { showDefaultSuggestion } from 'app/features/panel/suggestions/utils';
 
 import { InsertNullsEditor } from '../timeseries/InsertNullsEditor';
 import { SpanNullsEditor } from '../timeseries/SpanNullsEditor';
-import { NullEditorSettings } from '../timeseries/config';
+import { type NullEditorSettings } from '../timeseries/config';
 
 import { StateTimelinePanel } from './StateTimelinePanel';
 import { timelinePanelChangedHandler } from './migrations';
-import { defaultFieldConfig, defaultOptions, FieldConfig, Options } from './panelcfg.gen';
-import { StatTimelineSuggestionsSupplier } from './suggestions';
+import { defaultFieldConfig, defaultOptions, type FieldConfig, type Options } from './panelcfg.gen';
 
 export const plugin = new PanelPlugin<Options, FieldConfig>(StateTimelinePanel)
   .setPanelChangeHandler(timelinePanelChangedHandler)
@@ -154,8 +155,35 @@ export const plugin = new PanelPlugin<Options, FieldConfig>(StateTimelinePanel)
         },
       });
 
-    commonOptionsBuilder.addLegendOptions(builder, false);
+    commonOptionsBuilder.addLegendOptions(builder, false, true);
     commonOptionsBuilder.addTooltipOptions(builder);
+    addAnnotationOptions(builder);
   })
-  .setSuggestionsSupplier(new StatTimelineSuggestionsSupplier())
+  .setSuggestionsSupplier(
+    showDefaultSuggestion((ds) => {
+      if (!ds.hasData) {
+        return;
+      }
+
+      // This panel needs a time field and a string or number field
+      if (
+        !ds.hasFieldType(FieldType.time) ||
+        (!ds.hasFieldType(FieldType.string) && !ds.hasFieldType(FieldType.number))
+      ) {
+        return;
+      }
+
+      // If there are many series then they won't fit on y-axis so this panel is not good fit
+      if (ds.fieldCountByType(FieldType.number) >= 30) {
+        return;
+      }
+
+      // Probably better ways to filter out this by inspecting the types of string values so view this as temporary
+      if (ds.hasPreferredVisualisationType('logs')) {
+        return;
+      }
+
+      return true;
+    })
+  )
   .setDataSupport({ annotations: true });

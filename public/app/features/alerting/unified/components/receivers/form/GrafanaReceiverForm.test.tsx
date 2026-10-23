@@ -1,10 +1,15 @@
 import 'core-js/stable/structured-clone';
-import { MemoryHistoryBuildOptions } from 'history';
-import { ComponentProps, ReactNode } from 'react';
+import { type MemoryHistoryBuildOptions } from 'history';
+import { HttpResponse, delay, http } from 'msw';
+import { type ComponentProps, type ReactNode } from 'react';
 import { clickSelectOption } from 'test/helpers/selectOptionInTest';
-import { render, screen, waitFor } from 'test/test-utils';
+import { render, screen, waitFor, within } from 'test/test-utils';
 import { byLabelText, byRole, byTestId, byText } from 'testing-library-selector';
 
+import { selectors } from '@grafana/e2e-selectors';
+import { config } from '@grafana/runtime';
+import { mockComboboxRect } from '@grafana/test-utils';
+import { AppNotificationList } from 'app/core/components/AppNotifications/AppNotificationList';
 import { disablePlugin } from 'app/features/alerting/unified/mocks/server/configure';
 import {
   setOnCallFeatures,
@@ -12,15 +17,22 @@ import {
 } from 'app/features/alerting/unified/mocks/server/handlers/plugins/configure-plugins';
 import { AlertmanagerProvider } from 'app/features/alerting/unified/state/AlertmanagerContext';
 import { SupportedPlugin } from 'app/features/alerting/unified/types/pluginBridges';
-import { AlertManagerCortexConfig } from 'app/plugins/datasource/alertmanager/types';
+import { type AlertManagerCortexConfig } from 'app/plugins/datasource/alertmanager/types';
 import { AccessControlAction } from 'app/types/accessControl';
 
+import { logError, logWarning } from '../../../Analytics';
 import { AlertmanagerConfigBuilder, setupMswServer } from '../../../mockApi';
 import { grantUserPermissions } from '../../../mocks';
 import { alertingFactory } from '../../../mocks/server/db';
 import { captureRequests } from '../../../mocks/server/events';
 
 import { GrafanaReceiverForm } from './GrafanaReceiverForm';
+
+jest.mock('../../../Analytics', () => ({
+  ...jest.requireActual('../../../Analytics'),
+  logError: jest.fn(),
+  logWarning: jest.fn(),
+}));
 
 const renderWithProvider = (
   children: ReactNode,
@@ -37,7 +49,7 @@ const renderWithProvider = (
 const server = setupMswServer();
 
 const ui = {
-  typeSelector: byTestId('items.0.type'),
+  typeSelector: byTestId(selectors.pages.Alerting.ContactPointForm.integrationTypeField('items.0.')),
   loadingIndicator: byText('Loading notifiers...'),
   integrationType: byLabelText('Integration'),
   onCallIntegrationType: byRole('radiogroup'),
@@ -48,7 +60,13 @@ const ui = {
     existing: byRole('radio', { name: 'Use an existing IRM integration' }),
   },
   newOnCallIntegrationName: byRole('textbox', { name: /Integration name/ }),
-  existingOnCallIntegrationSelect: (index: number) => byTestId(`items.${index}.settings.url`),
+  // Test contact point UI elements
+  testButton: byRole('button', { name: /Test/ }),
+  testModal: byRole('dialog'),
+  sendTestNotificationButton: byRole('button', { name: /send test notification/i }),
+  closeModalButton: byRole('button', { name: /Close/ }),
+  existingOnCallIntegrationSelect: (index: number) =>
+    byTestId(selectors.pages.Alerting.ContactPointForm.settingsField(`items.${index}.settings.url`)),
   saveButton: byRole('button', { name: /save contact point/i }),
   slack: {
     recipient: byRole('textbox', { name: /^Recipient/ }),
@@ -86,27 +104,44 @@ const ui = {
       },
     },
     optionalSettings: byRole('button', { name: /optional webhook settings/i }),
+    payload: {
+      container: byTestId('items.0.settings.payload.container'),
+      template: byRole('textbox', { name: /^Payload Template/ }),
+      deleteButton: byTestId('items.0.settings.payload.delete-button'),
+    },
   },
+  invalidFormToast: byRole('alert', { name: /there are errors in the form/i }),
+};
+
+const webhookContactPointWithPayload = (payloadTemplate: string) => {
+  const contactPointName = 'webhook-payload-test';
+
+  return alertingFactory.alertmanager.grafana.contactPoint
+    .withIntegrations((integrationFactory) => [
+      integrationFactory
+        .webhook()
+        .params({
+          settings: {
+            url: 'http://example.com',
+            payload: {
+              template: payloadTemplate,
+              vars: { severity: 'critical' },
+            },
+          },
+        })
+        .build(),
+    ])
+    .build({ id: 'webhook-id', name: contactPointName, metadata: { name: contactPointName } });
 };
 
 describe('GrafanaReceiverForm', () => {
   beforeAll(() => {
-    const mockGetBoundingClientRect = jest.fn(() => ({
-      width: 120,
-      height: 120,
-      top: 0,
-      left: 0,
-      bottom: 0,
-      right: 0,
-    }));
-
-    Object.defineProperty(Element.prototype, 'getBoundingClientRect', {
-      value: mockGetBoundingClientRect,
-    });
+    mockComboboxRect();
   });
 
   beforeEach(() => {
     grantUserPermissions([
+      AccessControlAction.AlertingReceiversRead,
       AccessControlAction.AlertingNotificationsRead,
       AccessControlAction.AlertingNotificationsWrite,
     ]);
@@ -118,7 +153,7 @@ describe('GrafanaReceiverForm', () => {
 
   it('handles nested secure fields correctly', async () => {
     const capturedRequests = captureRequests(
-      (req) => req.url.includes('/v0alpha1/namespaces/default/receivers') && req.method === 'POST'
+      (req) => req.url.includes('/v1beta1/namespaces/default/receivers') && req.method === 'POST'
     );
     const { user } = renderWithProvider(<GrafanaReceiverForm />);
     const { type, click } = user;
@@ -160,7 +195,10 @@ describe('GrafanaReceiverForm', () => {
       await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
 
       // Select Slack receiver
-      await clickSelectOption(byTestId('items.0.type').get(), 'Slack');
+      await clickSelectOption(
+        byTestId(selectors.pages.Alerting.ContactPointForm.integrationTypeField('items.0.')).get(),
+        'Slack'
+      );
 
       // Enter a value in the recipient field (required)
       await user.type(ui.slack.recipient.get(), 'my-channel');
@@ -183,7 +221,10 @@ describe('GrafanaReceiverForm', () => {
       await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
 
       // Select Slack receiver
-      await clickSelectOption(byTestId('items.0.type').get(), 'Slack');
+      await clickSelectOption(
+        byTestId(selectors.pages.Alerting.ContactPointForm.integrationTypeField('items.0.')).get(),
+        'Slack'
+      );
 
       // Token field should be initially enabled
       const tokenField = ui.slack.token.get();
@@ -283,7 +324,7 @@ describe('GrafanaReceiverForm', () => {
         .build({ id: 'amazon-sns-id', name: contactPointName, metadata: { name: contactPointName } });
 
       const capture = captureRequests(
-        (req) => req.url.includes(`/v0alpha1/namespaces/default/receivers/${contactPoint.id}`) && req.method === 'PUT'
+        (req) => req.url.includes(`/v1beta1/namespaces/default/receivers/${contactPoint.id}`) && req.method === 'PUT'
       );
 
       const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
@@ -387,7 +428,7 @@ describe('GrafanaReceiverForm', () => {
       await user.click(newIntegrationRadio.get());
       expect(newIntegrationRadio.get()).toBeChecked();
 
-      await user.type(ui.newOnCallIntegrationName.get(), 'emea-oncall');
+      await user.type(await ui.newOnCallIntegrationName.find(), 'emea-oncall');
 
       // eslint-disable-next-line testing-library/no-node-access
       expect(ui.integrationType.get().closest('form')).toHaveFormValues({
@@ -424,7 +465,9 @@ describe('GrafanaReceiverForm', () => {
 
       await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
 
-      expect(byTestId('items.0.type').get()).toHaveTextContent('Grafana IRM');
+      expect(
+        byTestId(selectors.pages.Alerting.ContactPointForm.integrationTypeField('items.0.')).get()
+      ).toHaveTextContent('Grafana IRM');
       expect(byLabelText('URL').get()).toHaveValue('https://oncall.example.com');
     });
   });
@@ -556,7 +599,7 @@ describe('GrafanaReceiverForm', () => {
         .build({ id: 'webhook-id', name: contactPointName, metadata: { name: contactPointName } });
 
       const capture = captureRequests(
-        (req) => req.url.includes(`/v0alpha1/namespaces/default/receivers/${contactPoint.id}`) && req.method === 'PUT'
+        (req) => req.url.includes(`/v1beta1/namespaces/default/receivers/${contactPoint.id}`) && req.method === 'PUT'
       );
 
       const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
@@ -597,6 +640,651 @@ describe('GrafanaReceiverForm', () => {
       expect(integrationPayload.secureFields).not.toHaveProperty('http_config.oauth2.tls_config.clientKey');
 
       expect(postRequestBody).toMatchSnapshot();
+    });
+
+    it('should remove the custom payload when deleted and the template is a single template reference', async () => {
+      const contactPoint = webhookContactPointWithPayload('{{ template "webhook.default.payload" . }}');
+
+      const savedIntegrations: Array<{ settings: Record<string, unknown> }> = [];
+      server.use(
+        http.put(
+          '/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers/:name',
+          async ({ request }) => {
+            const body = await request.clone().json();
+            savedIntegrations.push(...body.spec.integrations);
+            // returning no response lets the default handler respond as usual
+          }
+        )
+      );
+
+      const { user } = renderWithProvider(
+        <>
+          <AppNotificationList />
+          <GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />
+        </>
+      );
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+      await user.click(ui.webhook.optionalSettings.get());
+
+      // A single template reference renders the template picker only, so the registered textarea never mounts
+      expect(await ui.webhook.payload.container.find()).toBeInTheDocument();
+      expect(ui.webhook.payload.template.query()).not.toBeInTheDocument();
+
+      await user.click(await ui.webhook.payload.deleteButton.find());
+      await user.click(ui.saveButton.get());
+
+      expect(ui.invalidFormToast.query()).not.toBeInTheDocument();
+
+      await waitFor(() => expect(savedIntegrations).toHaveLength(1));
+      expect(savedIntegrations[0].settings).not.toHaveProperty('payload');
+      expect(savedIntegrations[0].settings).toHaveProperty('url', 'http://example.com');
+    });
+  });
+
+  describe('Test contact point', () => {
+    it('should use "-" placeholder UID when testing a new contact point', async () => {
+      const capturedRequests = captureRequests(
+        (req) => req.url.includes('/apis/notifications.alerting.grafana.app/') && req.method === 'POST'
+      );
+
+      const { user } = renderWithProvider(<GrafanaReceiverForm />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Fill in the required name field
+      const nameField = screen.getByRole('textbox', { name: /^name/i });
+      await user.type(nameField, 'my-new-contact-point');
+
+      // Fill in the required email field
+      const emailField = screen.getByRole('textbox', { name: /^Addresses/ });
+      await user.clear(emailField);
+      await user.type(emailField, 'test@example.com');
+
+      // Click the test button
+      await user.click(ui.testButton.get());
+
+      // Wait for the modal and send the test notification
+      await waitFor(() => expect(ui.testModal.query()).toBeInTheDocument());
+      await user.click(ui.sendTestNotificationButton.get());
+
+      const [request] = await capturedRequests;
+
+      // For new receivers, the K8s API uses "-" as a placeholder UID in the URL
+      // This signals to the backend that permissions are checked against receivers:type:new scope
+      expect(request.url).toContain('/receivers/-/test');
+    });
+
+    it('should use the contact point UID when testing an existing contact point', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [
+          integrationFactory
+            .email()
+            .params({ settings: { addresses: 'existing@example.com' } })
+            .build(),
+        ])
+        .build({
+          id: 'contact-point-id',
+          name: 'my-existing-contact-point',
+          metadata: { name: 'my-existing-contact-point' },
+        });
+
+      const capturedRequests = captureRequests(
+        (req) => req.url.includes('/apis/notifications.alerting.grafana.app/') && req.method === 'POST'
+      );
+
+      const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Click the test button
+      await user.click(ui.testButton.get());
+
+      // Wait for the modal and send the test notification
+      await waitFor(() => expect(ui.testModal.query()).toBeInTheDocument());
+      await user.click(ui.sendTestNotificationButton.get());
+
+      const [request] = await capturedRequests;
+
+      // For existing receivers, the K8s API uses the receiver's UID in the URL
+      // This allows the backend to check permissions against receivers:uid:<uid> scope
+      expect(request.url).toContain('/receivers/contact-point-id/test');
+    });
+
+    it('should use the original contact point UID even when the name is changed in the form', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [
+          integrationFactory
+            .email()
+            .params({ settings: { addresses: 'test@example.com' } })
+            .build(),
+        ])
+        .build({
+          id: 'contact-point-id',
+          name: 'original-name',
+          metadata: { name: 'original-name' },
+        });
+
+      const capturedRequests = captureRequests(
+        (req) => req.url.includes('/apis/notifications.alerting.grafana.app/') && req.method === 'POST'
+      );
+
+      const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Change the name in the form to simulate a rename
+      const nameField = screen.getByRole('textbox', { name: /^name/i });
+      await user.clear(nameField);
+      await user.type(nameField, 'renamed-contact-point');
+
+      // Click the test button
+      await user.click(ui.testButton.get());
+
+      // Wait for the modal and send the test notification
+      await waitFor(() => expect(ui.testModal.query()).toBeInTheDocument());
+      await user.click(ui.sendTestNotificationButton.get());
+
+      const [request] = await capturedRequests;
+
+      // Even though the name was changed in the form, the test should use the original UID
+      // This is critical for authorization - the backend identifies receivers by UID, not name
+      expect(request.url).toContain('/receivers/contact-point-id/test');
+    });
+  });
+
+  describe('Test contact point - K8s Test API', () => {
+    it('should use K8s API for testing an integration', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.webhook().build()])
+        .build();
+
+      const capturedRequests = captureRequests(
+        (req) => req.url.includes('/apis/notifications.alerting.grafana.app/') && req.method === 'POST'
+      );
+
+      const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Find and click the test button
+      const testButton = await screen.findByRole('button', { name: /test/i });
+      await user.click(testButton);
+
+      // Modal should open
+      expect(await screen.findByText(/test contact point/i)).toBeInTheDocument();
+
+      // Submit the test
+      const sendButton = screen.getByRole('button', { name: /send test notification/i });
+      await user.click(sendButton);
+
+      // Should show success
+      await waitFor(() => {
+        expect(screen.getByText(/test notification sent successfully/i)).toBeInTheDocument();
+      });
+
+      // Verify the request was made to the K8s API endpoint
+      const [request] = await capturedRequests;
+      expect(request.url).toContain('/apis/notifications.alerting.grafana.app/');
+      expect(request.url).toContain('/receivers/');
+      expect(request.url).toContain('/test');
+    });
+
+    it('should use "-" placeholder for receiver UID when testing a new contact point', async () => {
+      // Set up a handler that only succeeds when the receiver UID is "-"
+      // This proves the correct endpoint was called through UI side effects
+      server.use(
+        http.post<{ namespace: string; name: string }>(
+          '/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers/:name/test',
+          ({ params }) => {
+            if (params.name !== '-') {
+              return HttpResponse.json(
+                { message: `Expected receiver UID to be "-", got "${params.name}"` },
+                { status: 400 }
+              );
+            }
+            return HttpResponse.json({
+              apiVersion: 'notifications.alerting.grafana.app/v1beta1',
+              kind: 'CreateReceiverIntegrationTest',
+              status: 'success',
+              duration: '150ms',
+            });
+          }
+        )
+      );
+
+      // Render form without contactPoint prop - this is a brand new contact point
+      const { user } = renderWithProvider(<GrafanaReceiverForm />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Fill in the required fields
+      const nameField = screen.getByRole('textbox', { name: /^name/i });
+      await user.type(nameField, 'my-new-contact-point');
+
+      const emailField = screen.getByRole('textbox', { name: /^Addresses/ });
+      await user.clear(emailField);
+      await user.type(emailField, 'test@example.com');
+
+      // Click the test button
+      await user.click(ui.testButton.get());
+
+      // Wait for the modal to open
+      await waitFor(() => expect(ui.testModal.query()).toBeInTheDocument());
+
+      // Send the test notification
+      await user.click(ui.sendTestNotificationButton.get());
+
+      expect(screen.getByText(/test notification sent successfully/i)).toBeInTheDocument();
+    });
+
+    it('should not show test button when canTest annotation is false', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.webhook().build()])
+        .build({
+          metadata: {
+            annotations: {
+              'grafana.com/access/canTest': 'false',
+            },
+          },
+        });
+
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Test button should not be visible or disabled
+      const testButton = screen.queryByRole('button', { name: /test/i });
+      expect(testButton).not.toBeInTheDocument();
+    });
+
+    it('should not show test button when canTest annotation is missing', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.webhook().build()])
+        .build({
+          metadata: {
+            annotations: {
+              'grafana.com/access/canTest': undefined,
+            },
+          },
+        });
+
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      const testButton = screen.queryByRole('button', { name: /test/i });
+      expect(testButton).not.toBeInTheDocument();
+    });
+
+    it('should show test button when canTest annotation is true', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.webhook().build()])
+        .build({
+          metadata: {
+            annotations: {
+              'grafana.com/access/canTest': 'true',
+            },
+          },
+        });
+
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      expect(ui.testButton.get()).toBeInTheDocument();
+    });
+
+    it('should disable send button while test notification is in progress', async () => {
+      // Use a delayed handler to observe the loading state
+      server.use(
+        http.post<{ namespace: string; name: string }>(
+          '/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers/:name/test',
+          async () => {
+            await delay(100);
+            return HttpResponse.json({
+              apiVersion: 'notifications.alerting.grafana.app/v1beta1',
+              kind: 'CreateReceiverIntegrationTest',
+              status: 'success',
+              duration: '150ms',
+            });
+          }
+        )
+      );
+
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.webhook().build()])
+        .build();
+
+      const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Open the test modal
+      await user.click(ui.testButton.get());
+      await waitFor(() => expect(ui.testModal.query()).toBeInTheDocument());
+
+      // Button should be enabled before clicking
+      const sendButton = ui.sendTestNotificationButton.get();
+      expect(sendButton).toBeEnabled();
+
+      // Click to send test notification
+      await user.click(sendButton);
+
+      // Button should be disabled while loading
+      expect(sendButton).toBeDisabled();
+
+      // Wait for success and verify button is enabled again
+      await waitFor(() => {
+        expect(screen.getByText(/test notification sent successfully/i)).toBeInTheDocument();
+      });
+      expect(sendButton).toBeEnabled();
+    });
+
+    it('should display error message when K8s API returns an error', async () => {
+      const errorMessage = 'Connection refused: unable to reach webhook endpoint';
+      server.use(
+        http.post<{ namespace: string; name: string }>(
+          '/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers/:name/test',
+          () => {
+            return HttpResponse.json({
+              apiVersion: 'notifications.alerting.grafana.app/v1beta1',
+              kind: 'CreateReceiverIntegrationTest',
+              status: 'failure',
+              duration: '50ms',
+              error: errorMessage,
+            });
+          }
+        )
+      );
+
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.webhook().build()])
+        .build();
+
+      const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Open the test modal
+      await user.click(ui.testButton.get());
+      await waitFor(() => expect(ui.testModal.query()).toBeInTheDocument());
+
+      // Send the test notification
+      await user.click(ui.sendTestNotificationButton.get());
+
+      await waitFor(() => {
+        expect(screen.getByText(/test notification failed/i)).toBeInTheDocument();
+      });
+      expect(screen.getByText(errorMessage)).toBeInTheDocument();
+
+      expect(screen.queryByText(/test notification sent successfully/i)).not.toBeInTheDocument();
+    });
+
+    it('should display error message when K8s API returns HTTP error', async () => {
+      server.use(
+        http.post<{ namespace: string; name: string }>(
+          '/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers/:name/test',
+          () => {
+            return HttpResponse.json({ message: 'Internal server error: database connection failed' }, { status: 500 });
+          }
+        )
+      );
+
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.webhook().build()])
+        .build();
+
+      const { user } = renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      // Open the test modal
+      await user.click(ui.testButton.get());
+      await waitFor(() => expect(ui.testModal.query()).toBeInTheDocument());
+
+      // Send the test notification
+      await user.click(ui.sendTestNotificationButton.get());
+
+      // Should show the error alert
+      await waitFor(() => {
+        expect(screen.getByText(/test notification failed/i)).toBeInTheDocument();
+      });
+
+      // Success message should not be shown
+      expect(screen.queryByText(/test notification sent successfully/i)).not.toBeInTheDocument();
+    });
+  });
+
+  describe('Imported (provisioned) contact point', () => {
+    it('should not show Reset buttons for configured secure fields when contact point is provisioned', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.slack({ token: 'xoxb-my-token' }).build()])
+        .build({ provenance: 'converted_prometheus' });
+
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      const tokenField = ui.slack.token.get();
+      expect(tokenField).toHaveValue('configured');
+      expect(tokenField).toBeDisabled();
+
+      expect(screen.queryByRole('button', { name: 'Reset' })).not.toBeInTheDocument();
+    });
+
+    it('should not show Save button when contact point is provisioned', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [
+          integrationFactory
+            .email()
+            .params({ settings: { addresses: 'test@example.com' } })
+            .build(),
+        ])
+        .build({ provenance: 'converted_prometheus' });
+
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      expect(ui.saveButton.query()).not.toBeInTheDocument();
+    });
+
+    it('should not show Duplicate or Delete buttons when contact point is provisioned', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [
+          integrationFactory
+            .email()
+            .params({ settings: { addresses: 'test@example.com' } })
+            .build(),
+        ])
+        .build({ provenance: 'converted_prometheus' });
+
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      expect(screen.queryByRole('button', { name: /Duplicate/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Delete/ })).not.toBeInTheDocument();
+    });
+
+    it('should make the name field read-only when contact point is provisioned', async () => {
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [
+          integrationFactory
+            .email()
+            .params({ settings: { addresses: 'test@example.com' } })
+            .build(),
+        ])
+        .build({ provenance: 'converted_prometheus', name: 'provisioned-cp' });
+
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode={true} />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      const nameField = screen.getByRole('textbox', { name: /^name/i });
+      expect(nameField).toHaveAttribute('readonly');
+    });
+
+    it('should show test button for a provisioned contact point when the user has the test permission', async () => {
+      // Regression: isTestable was previously computed as !readOnly && canTest. For provisioned
+      // contact points, EditReceiverView sets readOnly=true (canWrite annotation is false), which
+      // suppressed the test button even when the user held the test permission (canTest=true).
+      // isTestable is now driven solely by useContactPointAbility(Test), which reads the
+      // grafana.com/access/canTest annotation independently of whether the form is read-only.
+      const contactPoint = alertingFactory.alertmanager.grafana.contactPoint
+        .withIntegrations((integrationFactory) => [integrationFactory.email().build()])
+        .build({
+          metadata: {
+            annotations: {
+              'grafana.com/access/canTest': 'true',
+            },
+          },
+        });
+
+      // readOnly={true} simulates what EditReceiverView passes for provisioned contact points
+      renderWithProvider(<GrafanaReceiverForm contactPoint={contactPoint} editMode readOnly />);
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      expect(ui.testButton.get()).toBeInTheDocument();
+    });
+  });
+
+  describe('with alertingSyncNotifiersApiMigration flag enabled', () => {
+    beforeEach(() => {
+      config.featureToggles.alertingSyncNotifiersApiMigration = true;
+    });
+
+    afterEach(() => {
+      config.featureToggles.alertingSyncNotifiersApiMigration = false;
+    });
+
+    it('should load notifiers from k8s API and render form correctly', async () => {
+      renderWithProvider(<GrafanaReceiverForm />);
+
+      await waitFor(() => {
+        expect(ui.loadingIndicator.query()).not.toBeInTheDocument();
+      });
+
+      // Verify integration type selector is populated
+      expect(ui.integrationType.get()).toBeInTheDocument();
+    });
+
+    it('should render options correctly when selecting an integration type', async () => {
+      renderWithProvider(<GrafanaReceiverForm />);
+
+      await waitFor(() => {
+        expect(ui.loadingIndicator.query()).not.toBeInTheDocument();
+      });
+
+      // Select Slack notifier type and verify options from versions are rendered
+      await clickSelectOption(ui.typeSelector.get(), 'Slack');
+
+      // Verify that options from the version are displayed
+      expect(ui.slack.recipient.get()).toBeInTheDocument();
+    });
+  });
+
+  describe('error handling', () => {
+    beforeEach(() => {
+      jest.mocked(logError).mockClear();
+      jest.mocked(logWarning).mockClear();
+    });
+
+    it('surfaces the backend message and details.causes in the toast on save failure', async () => {
+      const capturedRequests = captureRequests(
+        (req) => req.url.includes('/v1beta1/namespaces/default/receivers') && req.method === 'POST'
+      );
+
+      server.use(
+        http.post('/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers', () =>
+          HttpResponse.json(
+            {
+              kind: 'Status',
+              apiVersion: 'v1',
+              metadata: {},
+              status: 'Failure',
+              code: 400,
+              reason: 'BadRequest',
+              message: 'receiver is invalid',
+              details: {
+                causes: [{ field: 'spec.integrations[0].settings.url', message: 'URL must be valid' }],
+              },
+            },
+            { status: 400 }
+          )
+        )
+      );
+
+      const { user } = renderWithProvider(
+        <>
+          <AppNotificationList />
+          <GrafanaReceiverForm />
+        </>
+      );
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      await clickSelectOption(ui.typeSelector.get(), 'MQTT');
+      await user.type(screen.getByLabelText(/^name/i), 'broken-mqtt');
+      await user.type(screen.getByLabelText(/broker url/i), 'tcp://example.com:1883');
+      await user.type(screen.getByLabelText(/topic/i), 'alerts');
+      await user.click(ui.saveButton.get());
+
+      // Confirm the request actually fired so we know the form passed validation
+      await capturedRequests;
+
+      const toast = await screen.findByRole('alert', { name: /failed to save the contact point/i });
+      expect(within(toast).getByText(/receiver is invalid/i)).toBeInTheDocument();
+      expect(within(toast).getByText(/URL must be valid/i)).toBeInTheDocument();
+
+      // 4xx responses are the user's invalid payload, not an app failure → warn, not error
+      await waitFor(() => {
+        expect(jest.mocked(logWarning)).toHaveBeenCalledWith(
+          'Failed to save the contact point',
+          expect.objectContaining({ status: '400' })
+        );
+      });
+      expect(jest.mocked(logError)).not.toHaveBeenCalled();
+    });
+
+    it('logs 5xx save failures at error level', async () => {
+      const capturedRequests = captureRequests(
+        (req) => req.url.includes('/v1beta1/namespaces/default/receivers') && req.method === 'POST'
+      );
+
+      server.use(
+        http.post('/apis/notifications.alerting.grafana.app/v1beta1/namespaces/:namespace/receivers', () =>
+          HttpResponse.json({ message: 'database unavailable' }, { status: 500 })
+        )
+      );
+
+      const { user } = renderWithProvider(
+        <>
+          <AppNotificationList />
+          <GrafanaReceiverForm />
+        </>
+      );
+
+      await waitFor(() => expect(ui.loadingIndicator.query()).not.toBeInTheDocument());
+
+      await clickSelectOption(ui.typeSelector.get(), 'MQTT');
+      await user.type(screen.getByLabelText(/^name/i), 'broken-mqtt-5xx');
+      await user.type(screen.getByLabelText(/broker url/i), 'tcp://example.com:1883');
+      await user.type(screen.getByLabelText(/topic/i), 'alerts');
+      await user.click(ui.saveButton.get());
+
+      await capturedRequests;
+
+      await screen.findByRole('alert', { name: /failed to save the contact point/i });
+
+      await waitFor(() => {
+        expect(jest.mocked(logError)).toHaveBeenCalledTimes(1);
+      });
+      expect(jest.mocked(logError).mock.calls[0][0]).toBeInstanceOf(Error);
+      expect(jest.mocked(logError).mock.calls[0][0].message).toBe('Failed to save the contact point');
+      expect(jest.mocked(logWarning)).not.toHaveBeenCalled();
     });
   });
 });

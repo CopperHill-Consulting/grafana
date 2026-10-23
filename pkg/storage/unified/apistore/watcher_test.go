@@ -8,15 +8,14 @@ package apistore_test
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	badger "github.com/dgraph-io/badger/v4"
+	"github.com/grafana/dskit/services"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gocloud.dev/blob/fileblob"
-	"gocloud.dev/blob/memblob"
 	"k8s.io/apimachinery/pkg/api/apitesting"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -105,24 +104,23 @@ func testSetup(t testing.TB, opts ...setupOption) (context.Context, storage.Inte
 		Resource: "pods",
 	}
 
-	bucket := memblob.OpenBucket(nil)
-	if true {
-		tmp, err := os.MkdirTemp("", "xxx-*")
-		require.NoError(t, err)
-
-		bucket, err = fileblob.OpenBucket(tmp, &fileblob.Options{
-			CreateDir: true,
-			Metadata:  fileblob.MetadataDontWrite, // skip
-		})
-		require.NoError(t, err)
-	}
 	ctx := storagetesting.NewContext()
 
 	var server resource.ResourceServer
 	switch setupOpts.storageType {
 	case StorageTypeFile:
-		backend, err := resource.NewCDKBackend(ctx, resource.CDKBackendOptions{
-			Bucket: bucket,
+		// Create in-memory BadgerDB for testing
+		db, err := badger.Open(badger.DefaultOptions("").
+			WithInMemory(true).
+			WithLogger(nil))
+		require.NoError(t, err)
+
+		kv := resource.NewBadgerKV(db)
+		backend, err := resource.NewKVStorageBackend(resource.KVBackendOptions{
+			KvStore: kv,
+			WatchOptions: resource.WatchOptions{
+				SettleDelay: 1 * time.Millisecond,
+			},
 		})
 		require.NoError(t, err)
 
@@ -132,11 +130,11 @@ func testSetup(t testing.TB, opts ...setupOption) (context.Context, storage.Inte
 		require.NoError(t, err)
 
 		// Issue a health check to ensure the server is initialized
-		_, err = server.IsHealthy(ctx, &resourcepb.HealthCheckRequest{})
+		_, err = server.IsHealthy(ctx, &resourcepb.HealthCheckRequest{}) //nolint:staticcheck
 		require.NoError(t, err)
 	case StorageTypeUnified:
 		testutil.SkipIntegrationTestInShortMode(t)
-		dbstore := infraDB.InitTestDB(t)
+		dbstore := infraDB.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 		cfg := setting.NewCfg()
 
 		eDB, err := dbimpl.ProvideResourceDB(dbstore, cfg, nil)
@@ -146,17 +144,18 @@ func testSetup(t testing.TB, opts ...setupOption) (context.Context, storage.Inte
 		ret, err := sql.NewBackend(sql.BackendOptions{
 			DBProvider:      eDB,
 			PollingInterval: time.Millisecond, // Keep this fast
+			DisablePruner:   infraDB.IsTestDbSQLite(),
 		})
 		require.NoError(t, err)
 		require.NotNil(t, ret)
 		ctx := storagetesting.NewContext()
-		err = ret.Init(ctx)
-		require.NoError(t, err)
+		svc, ok := ret.(services.Service)
+		require.True(t, ok)
+		require.NoError(t, services.StartAndAwaitRunning(ctx, svc))
 
 		server, err = resource.NewResourceServer(resource.ResourceServerOptions{
 			Backend:     ret,
 			Diagnostics: ret,
-			Lifecycle:   ret,
 		})
 		require.NoError(t, err)
 	default:

@@ -1,12 +1,12 @@
 import { groupBy } from 'lodash';
 
 import {
-  DataFrame,
-  Field as DataFrameField,
-  DataFrameJSON,
-  Field,
+  type DataFrame,
+  type Field as DataFrameField,
+  type DataFrameJSON,
+  type Field,
   FieldType,
-  GrafanaTheme2,
+  type GrafanaTheme2,
   MappingType,
   ThresholdsMode,
   getDisplayProcessor,
@@ -14,31 +14,25 @@ import {
 import { fieldIndexComparer } from '@grafana/data/internal';
 
 import { labelsMatchMatchers } from '../../../utils/alertmanager';
-import { parsePromQLStyleMatcherLooseSafe } from '../../../utils/matchers';
-import { LogRecord } from '../state-history/common';
-import { isLine, isNumbers } from '../state-history/useRuleHistoryRecords';
-
-import { LABELS_FILTER, STATE_FILTER_FROM, STATE_FILTER_TO } from './CentralAlertHistoryScene';
-import { StateFilterValues } from './constants';
+import { isPromQLStyleMatcher, parsePromQLStyleMatcherLooseSafe } from '../../../utils/matchers';
+import { type LogRecord, historyDataFrameToLogRecords } from '../state-history/common';
 
 const GROUPING_INTERVAL = 10 * 1000; // 10 seconds
-const QUERY_PARAM_PREFIX = 'var-'; // Prefix used by Grafana to sync variables in the URL
 
 /**
- * Parse label filters and prepare backend filters.
- * Backend supports only exact matchers.
+ * Normalise a free-text PromQL-style label filter string into the selector
+ * format expected by the backend `matchers` query parameter.
+ *
+ * - Empty / whitespace-only input → undefined (param omitted from request)
+ * - Already wrapped in `{}` → returned as-is
+ * - Bare matchers like `foo="bar",baz=~".*"` → wrapped in `{foo="bar",baz=~".*"}`
  */
-export function parseBackendLabelFilters(labelFilter: string): Record<string, string> {
-  const labelMatchers = parsePromQLStyleMatcherLooseSafe(labelFilter);
-  const labelFilters: Record<string, string> = {};
-
-  labelMatchers.forEach((matcher) => {
-    if (!matcher.isRegex && matcher.isEqual) {
-      labelFilters[matcher.name] = matcher.value;
-    }
-  });
-
-  return labelFilters;
+export function toMatchersParam(labelFilter: string): string | undefined {
+  const trimmed = labelFilter.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return isPromQLStyleMatcher(trimmed) ? trimmed : `{${trimmed}}`;
 }
 
 interface HistoryFilters {
@@ -55,20 +49,8 @@ const emptyFilters: HistoryFilters = {
  * We group all records by alert instance (unique set of labels) and create a DataFrame for each group (instance).
  * This allows us to be able to filter by labels and states in the groupDataFramesByTime function.
  */
-export function historyResultToDataFrame({ data }: DataFrameJSON, filters = emptyFilters): DataFrame[] {
-  // Extract timestamps and lines from the response
-  const [tsValues = [], lines = []] = data?.values ?? [];
-  const timestamps = isNumbers(tsValues) ? tsValues : [];
-
-  const logRecords = timestamps.reduce<LogRecord[]>((acc, timestamp: number, index: number) => {
-    const line = lines[index];
-    if (!isLine(line)) {
-      return acc;
-    }
-
-    acc.push({ timestamp, line });
-    return acc;
-  }, []);
+export function historyResultToDataFrame(stateHistory: DataFrameJSON, filters = emptyFilters): DataFrame[] {
+  const logRecords = historyDataFrameToLogRecords(stateHistory);
 
   // Group log records by alert instance
   const logRecordsByInstance = groupBy(logRecords, (record: LogRecord) => {
@@ -85,27 +67,11 @@ export function historyResultToDataFrame({ data }: DataFrameJSON, filters = empt
   return groupDataFramesByTimeAndFilterByLabels(dataFrames, filters);
 }
 
-// Scenes sync variables in the URL adding a prefix to the variable name.
-export function getLabelsFilterInQueryParams() {
-  const queryParams = new URLSearchParams(window.location.search);
-  return queryParams.get(`${QUERY_PARAM_PREFIX}${LABELS_FILTER}`) ?? '';
-}
-
-export function getStateFilterToInQueryParams() {
-  const queryParams = new URLSearchParams(window.location.search);
-  return queryParams.get(`${QUERY_PARAM_PREFIX}${STATE_FILTER_TO}`) ?? StateFilterValues.all;
-}
-
-export function getStateFilterFromInQueryParams() {
-  const queryParams = new URLSearchParams(window.location.search);
-  return queryParams.get(`${QUERY_PARAM_PREFIX}${STATE_FILTER_FROM}`) ?? StateFilterValues.all;
-}
-
 /*
  * This function groups the data frames by time and filters them by labels.
  * The interval is set to 10 seconds.
  * */
-export function groupDataFramesByTimeAndFilterByLabels(dataFrames: DataFrame[], filters: HistoryFilters): DataFrame[] {
+function groupDataFramesByTimeAndFilterByLabels(dataFrames: DataFrame[], filters: HistoryFilters): DataFrame[] {
   // Filter data frames by labels. This is used to filter out the data frames that do not match the query.
   const labelsFilterValue = filters.labels;
   const dataframesFiltered = dataFrames.filter((frame) => {

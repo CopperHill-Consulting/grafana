@@ -3,13 +3,11 @@
 package apistore
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"time"
 
-	"gocloud.dev/blob/fileblob"
-	"gocloud.dev/blob/memblob"
+	badger "github.com/dgraph-io/badger/v4"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apiserver/pkg/registry/generic"
@@ -19,7 +17,9 @@ import (
 	flowcontrolrequest "k8s.io/apiserver/pkg/util/flowcontrol/request"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/grafana/grafana/pkg/infra/log"
 	secret "github.com/grafana/grafana/pkg/registry/apis/secret/contracts"
+	"github.com/grafana/grafana/pkg/services/apiserver/versionpolicy"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
 )
 
@@ -35,6 +35,16 @@ type RESTOptionsGetter struct {
 
 	// Each group+resource may need custom options
 	options map[string]StorageOptions
+
+	// versionPolicy is shared across every resource this getter serves; nil disables maxAllowedVersion enforcement.
+	versionPolicy *versionpolicy.VersionPolicyRegistry
+}
+
+// VersionPolicy returns the registry this getter enforces against; nil when enforcement is disabled.
+// A getter that wraps this one and replaces the RESTOptions decorator has to copy this onto the
+// StorageOptions it builds, or the resources it serves skip the cap.
+func (r *RESTOptionsGetter) VersionPolicy() *versionpolicy.VersionPolicyRegistry {
+	return r.versionPolicy
 }
 
 func NewRESTOptionsGetterForClient(
@@ -42,6 +52,7 @@ func NewRESTOptionsGetterForClient(
 	secrets secret.InlineSecureValueSupport,
 	original storagebackend.Config,
 	configProvider RestConfigProvider,
+	versionPolicy *versionpolicy.VersionPolicyRegistry,
 ) *RESTOptionsGetter {
 	return &RESTOptionsGetter{
 		client:         client,
@@ -49,26 +60,44 @@ func NewRESTOptionsGetterForClient(
 		original:       original,
 		options:        make(map[string]StorageOptions),
 		configProvider: configProvider,
+		versionPolicy:  versionPolicy,
 	}
 }
 
 func NewRESTOptionsGetterMemory(originalStorageConfig storagebackend.Config, secrets secret.InlineSecureValueSupport) (*RESTOptionsGetter, error) {
-	backend, err := resource.NewCDKBackend(context.Background(), resource.CDKBackendOptions{
-		Bucket: memblob.OpenBucket(&memblob.Options{}),
+	// Create BadgerDB with in-memory mode
+	db, err := badger.Open(badger.DefaultOptions("").
+		WithInMemory(true).
+		WithMemTableSize(256 << 10).  // 256KB memtable size
+		WithValueThreshold(16 << 10). // 16KB threshold for storing values in LSM vs value log
+		WithNumMemtables(2).          // Keep only 2 memtables in memory
+		WithLogger(nil))
+	if err != nil {
+		return nil, err
+	}
+
+	kv := resource.NewBadgerKV(db)
+	backend, err := resource.NewKVStorageBackend(resource.KVBackendOptions{
+		KvStore:                kv,
+		Log:                    log.New(),
+		DisableStorageServices: true,
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	server, err := resource.NewResourceServer(resource.ResourceServerOptions{
 		Backend: backend,
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	return NewRESTOptionsGetterForClient(
 		resource.NewLocalResourceClient(server),
 		secrets,
 		originalStorageConfig,
+		nil,
 		nil,
 	), nil
 }
@@ -83,29 +112,33 @@ func NewRESTOptionsGetterForFileXX(path string,
 		path = filepath.Join(os.TempDir(), "grafana-apiserver")
 	}
 
-	bucket, err := fileblob.OpenBucket(filepath.Join(path, "resource"), &fileblob.Options{
-		CreateDir: true,
-		Metadata:  fileblob.MetadataDontWrite, // skip
+	db, err := badger.Open(badger.DefaultOptions(filepath.Join(path, "badger")).
+		WithLogger(nil))
+	if err != nil {
+		return nil, err
+	}
+
+	kv := resource.NewBadgerKV(db)
+	backend, err := resource.NewKVStorageBackend(resource.KVBackendOptions{
+		KvStore: kv,
+		Log:     log.New(),
 	})
 	if err != nil {
 		return nil, err
 	}
-	backend, err := resource.NewCDKBackend(context.Background(), resource.CDKBackendOptions{
-		Bucket: bucket,
-	})
-	if err != nil {
-		return nil, err
-	}
+
 	server, err := resource.NewResourceServer(resource.ResourceServerOptions{
 		Backend: backend,
 	})
 	if err != nil {
 		return nil, err
 	}
+
 	return NewRESTOptionsGetterForClient(
 		resource.NewLocalResourceClient(server),
 		nil, // secrets
 		originalStorageConfig,
+		nil,
 		nil,
 	), nil
 }
@@ -149,6 +182,7 @@ func (r *RESTOptionsGetter) GetRESTOptions(resource schema.GroupResource, _ runt
 		) (storage.Interface, factory.DestroyFunc, error) {
 			opts := r.options[resource.String()]
 			opts.SecureValues = r.secrets
+			opts.VersionPolicy = r.versionPolicy
 			return NewStorage(config, r.client, keyFunc, nil, newFunc, newListFunc, getAttrsFunc,
 				trigger, indexers, r.configProvider, opts)
 		},

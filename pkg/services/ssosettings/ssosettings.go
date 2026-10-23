@@ -22,6 +22,8 @@ type Service interface {
 	ListWithRedactedSecrets(ctx context.Context) ([]*models.SSOSettings, error)
 	// GetForProvider returns the SSO settings for a given provider (DB or config file)
 	GetForProvider(ctx context.Context, provider string) (*models.SSOSettings, error)
+	// GetForProviderFromCache returns the SSO settings for a given provider from cache. It falls back to GetForProvider if the settings are not in the cache.
+	GetForProviderFromCache(ctx context.Context, provider string) (*models.SSOSettings, error)
 	// GetForProviderWithRedactedSecrets returns the SSO settings for a given provider (DB or config file) with secret values redacted
 	GetForProviderWithRedactedSecrets(ctx context.Context, provider string) (*models.SSOSettings, error)
 	// Upsert creates or updates the SSO settings for a given provider
@@ -29,7 +31,7 @@ type Service interface {
 	// Delete deletes the SSO settings for a given provider (soft delete)
 	Delete(ctx context.Context, provider string) error
 	// Patch updates the specified SSO settings (key-value pairs) for a given provider
-	Patch(ctx context.Context, provider string, data map[string]any) error
+	Patch(ctx context.Context, provider string, data map[string]any, requester identity.Requester) error
 	// RegisterReloadable registers a reloadable for a given provider
 	RegisterReloadable(provider string, reloadable Reloadable)
 	// Reload reloads the settings for a given provider
@@ -48,9 +50,16 @@ type Reloadable interface {
 // than the database. This is useful for providers that are not configured in the database, but instead are configured
 // using the config file and/or environment variables. Used mostly for backwards compatibility.
 type FallbackStrategy interface {
-	IsMatch(provider string) bool
+	IsMatch(ctx context.Context, provider string) bool
 	// TODO: check if GetProviderConfig can return an error
 	GetProviderConfig(ctx context.Context, provider string) (map[string]any, error)
+}
+
+// MTSettingsFallback marks a FallbackStrategy that reads from MT-Settings. When
+// such a strategy serves a read (past the storage read-flip), MT-Settings wins
+// the read precedence over the legacy database.
+type MTSettingsFallback interface {
+	ServesMTSettings() bool
 }
 
 // Store is a SSO settings store

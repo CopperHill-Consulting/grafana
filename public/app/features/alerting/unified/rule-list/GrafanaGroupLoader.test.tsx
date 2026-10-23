@@ -1,16 +1,17 @@
 import { render } from 'test/test-utils';
 import { byLabelText, byRole } from 'testing-library-selector';
 
+import { useAssistant } from '@grafana/assistant';
 import { setPluginComponentsHook, setPluginLinksHook } from '@grafana/runtime';
 import { AccessControlAction } from 'app/types/accessControl';
-import { GrafanaRuleGroupIdentifier } from 'app/types/unified-alerting';
+import { type GrafanaRuleGroupIdentifier } from 'app/types/unified-alerting';
 import {
-  GrafanaPromRuleDTO,
-  GrafanaPromRuleGroupDTO,
+  type GrafanaPromRuleDTO,
+  type GrafanaPromRuleGroupDTO,
   PromAlertingRuleState,
   PromRuleType,
-  RulerGrafanaRuleDTO,
-  RulerRuleGroupDTO,
+  type RulerGrafanaRuleDTO,
+  type RulerRuleGroupDTO,
 } from 'app/types/unified-alerting-dto';
 
 import { setupMswServer } from '../mockApi';
@@ -21,6 +22,12 @@ import { rulerRuleType } from '../utils/rules';
 import { intervalToSeconds } from '../utils/time';
 
 import { GrafanaGroupLoader } from './GrafanaGroupLoader';
+
+jest.mock('@grafana/assistant', () => ({
+  useAssistant: jest.fn(),
+  createAssistantContextItem: jest.fn((type, data) => ({ type, ...data })),
+}));
+const mockUseAssistant = jest.mocked(useAssistant);
 
 setPluginLinksHook(() => ({ links: [], isLoading: false }));
 setPluginComponentsHook(() => ({ components: [], isLoading: false }));
@@ -41,11 +48,19 @@ const ui = {
     export: () => byRole('menuitem', { name: /export/i }),
     delete: () => byRole('menuitem', { name: /delete/i }),
     pause: () => byRole('menuitem', { name: /pause/i }),
+    analyzeRule: () => byRole('menuitem', { name: /analyze rule/i }),
   },
 };
 
 describe('GrafanaGroupLoader', () => {
   beforeEach(() => {
+    mockUseAssistant.mockReturnValue({
+      isLoading: false,
+      isAvailable: false,
+      openAssistant: jest.fn(),
+      closeAssistant: jest.fn(),
+      toggleAssistant: jest.fn(),
+    });
     grantUserPermissions([
       AccessControlAction.AlertingRuleUpdate,
       AccessControlAction.AlertingRuleDelete,
@@ -210,6 +225,70 @@ describe('GrafanaGroupLoader', () => {
     expect(ui.menuItems.pause().get()).toBeInTheDocument();
 
     // Verify that the menu contains all 6 expected menu items
+    const menuItems = byRole('menuitem').getAll();
+    expect(menuItems.length).toBe(6);
+  });
+
+  it('should render Analyze rule menu item when assistant is available', async () => {
+    mockUseAssistant.mockReturnValue({
+      isLoading: false,
+      isAvailable: true,
+      openAssistant: jest.fn(),
+      closeAssistant: jest.fn(),
+      toggleAssistant: jest.fn(),
+    });
+
+    setGrafanaPromRules([rulerGroupToPromGroup(grafanaRulerGroup)]);
+
+    const groupIdentifier = getGroupIdentifier(grafanaRulerGroup);
+
+    const { user } = render(
+      <GrafanaGroupLoader groupIdentifier={groupIdentifier} namespaceName={grafanaRulerNamespace.name} />
+    );
+
+    const [rule1] = grafanaRulerGroup.rules;
+    const ruleListItem = await ui.ruleItem(rule1.grafana_alert.title).find();
+
+    // Click the More button to open the menu
+    const moreButton = ui.moreButton().get(ruleListItem);
+    await user.click(moreButton);
+
+    // Check that Analyze rule menu item is present
+    expect(ui.menuItems.analyzeRule().get()).toBeInTheDocument();
+
+    // With assistant enabled, there should be 7 menu items (6 + Analyze rule)
+    const menuItems = byRole('menuitem').getAll();
+    expect(menuItems.length).toBe(7);
+  });
+
+  it('should not render Analyze rule menu item when assistant is not available', async () => {
+    mockUseAssistant.mockReturnValue({
+      isLoading: false,
+      isAvailable: false,
+      openAssistant: jest.fn(),
+      closeAssistant: jest.fn(),
+      toggleAssistant: jest.fn(),
+    });
+
+    setGrafanaPromRules([rulerGroupToPromGroup(grafanaRulerGroup)]);
+
+    const groupIdentifier = getGroupIdentifier(grafanaRulerGroup);
+
+    const { user } = render(
+      <GrafanaGroupLoader groupIdentifier={groupIdentifier} namespaceName={grafanaRulerNamespace.name} />
+    );
+
+    const [rule1] = grafanaRulerGroup.rules;
+    const ruleListItem = await ui.ruleItem(rule1.grafana_alert.title).find();
+
+    // Click the More button to open the menu
+    const moreButton = ui.moreButton().get(ruleListItem);
+    await user.click(moreButton);
+
+    // Check that Analyze rule menu item is NOT present
+    expect(ui.menuItems.analyzeRule().query()).not.toBeInTheDocument();
+
+    // Without assistant, there should be 6 menu items
     const menuItems = byRole('menuitem').getAll();
     expect(menuItems.length).toBe(6);
   });

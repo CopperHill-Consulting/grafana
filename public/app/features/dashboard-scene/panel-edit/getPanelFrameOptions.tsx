@@ -1,10 +1,9 @@
 import React from 'react';
 
-import { CoreApp } from '@grafana/data';
+import { CoreApp, type FieldConfigSource, type PanelPluginVisualizationSuggestion } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { t } from '@grafana/i18n';
-import { config } from '@grafana/runtime';
-import { SceneTimeRangeLike, VizPanel } from '@grafana/scenes';
+import { type VizPanel } from '@grafana/scenes';
 import { DataLinksInlineEditor, Input, TextArea, Switch } from '@grafana/ui';
 import { GenAIPanelDescriptionButton } from 'app/features/dashboard/components/GenAI/GenAIPanelDescriptionButton';
 import { GenAIPanelTitleButton } from 'app/features/dashboard/components/GenAI/GenAIPanelTitleButton';
@@ -12,14 +11,53 @@ import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components
 import { OptionsPaneItemDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
 import { getPanelLinksVariableSuggestions } from 'app/features/panel/panellinks/link_srv';
 
-import { dashboardEditActions } from '../edit-pane/shared';
-import { VizPanelLinks } from '../scene/PanelLinks';
-import { PanelTimeRange } from '../scene/PanelTimeRange';
-import { useEditPaneInputAutoFocus } from '../scene/layouts-shared/utils';
+import { edit } from '../actions/utils/edit';
+import { type VizPanelLinks } from '../scene/PanelLinks';
+import { useSidebarInputAutoFocus } from '../scene/layouts-shared/utils';
 import { isDashboardLayoutItem } from '../scene/types/DashboardLayoutItem';
 import { vizPanelToPanel, transformSceneToSaveModel } from '../serialization/transformSceneToSaveModel';
 import { dashboardSceneGraph } from '../utils/dashboardSceneGraph';
 import { getDashboardSceneFor } from '../utils/utils';
+
+import { PanelStylesSection } from './PanelStylesSection';
+
+export function createPresetApplyHandler(panel: VizPanel) {
+  return function onApplyPreset(preset: PanelPluginVisualizationSuggestion, prevFieldConfig: FieldConfigSource) {
+    const prevOptions = panel.state.options;
+    edit({
+      description: t('dashboard.edit-actions.panel-preset', 'Apply panel preset'),
+      source: panel,
+      perform: () => {
+        if (preset.fieldConfig) {
+          const { defaults, overrides } = panel.state.fieldConfig;
+          const presetDefaults = preset.fieldConfig.defaults;
+          panel.onFieldConfigChange(
+            {
+              defaults: {
+                ...defaults,
+                ...presetDefaults,
+                custom: { ...defaults.custom, ...presetDefaults?.custom },
+                ...(presetDefaults?.color && { color: presetDefaults.color }),
+                ...(presetDefaults?.thresholds && { thresholds: presetDefaults.thresholds }),
+              },
+              overrides,
+            },
+            true
+          );
+        }
+        if (preset.options) {
+          panel.onOptionsChange({ ...panel.state.options, ...preset.options }, true);
+        }
+      },
+      undo: () => {
+        panel.onFieldConfigChange(prevFieldConfig, true);
+        if (preset.options) {
+          panel.onOptionsChange(prevOptions, true);
+        }
+      },
+    });
+  };
+}
 
 export function getPanelFrameOptions(panel: VizPanel): OptionsPaneCategoryDescriptor {
   const descriptor = new OptionsPaneCategoryDescriptor({
@@ -43,7 +81,7 @@ export function getPanelFrameOptions(panel: VizPanel): OptionsPaneCategoryDescri
         render: function renderTitle(descriptor) {
           return <PanelFrameTitleInput id={descriptor.props.id} panel={panel} />;
         },
-        addon: config.featureToggles.dashgpt && (
+        addon: (
           <GenAIPanelTitleButton
             onGenerate={(title) => editPanelTitleAction(panel, title)}
             panel={vizPanelToPanel(panel)}
@@ -60,7 +98,7 @@ export function getPanelFrameOptions(panel: VizPanel): OptionsPaneCategoryDescri
         render: function renderDescription(descriptor) {
           return <PanelDescriptionTextArea id={descriptor.props.id} panel={panel} />;
         },
-        addon: config.featureToggles.dashgpt && (
+        addon: (
           <GenAIPanelDescriptionButton
             onGenerate={(description) => panel.setState({ description })}
             panel={vizPanelToPanel(panel)}
@@ -99,6 +137,17 @@ export function getPanelFrameOptions(panel: VizPanel): OptionsPaneCategoryDescri
   return descriptor;
 }
 
+export function getPanelStylesOptions(panel: VizPanel): OptionsPaneCategoryDescriptor | undefined {
+  return new OptionsPaneCategoryDescriptor({
+    title: t('dashboard-scene.get-panel-frame-options.title.panel-styles', 'Panel styles'),
+    id: 'panel-styles',
+    isOpenDefault: true,
+    customRender: () => (
+      <PanelStylesSection key="panel-styles" panel={panel} onApplyPreset={createPresetApplyHandler(panel)} />
+    ),
+  });
+}
+
 interface ScenePanelLinksEditorProps {
   panelLinks?: VizPanelLinks;
 }
@@ -129,7 +178,7 @@ export function PanelFrameTitleInput({
   const notInPanelEdit = panel.getPanelContext().app !== CoreApp.PanelEditor;
   const [prevTitle, setPrevTitle] = React.useState(panel.state.title);
 
-  let ref = useEditPaneInputAutoFocus({
+  let ref = useSidebarInputAutoFocus({
     autoFocus: notInPanelEdit && isNewElement,
   });
 
@@ -159,7 +208,7 @@ export function PanelDescriptionTextArea({ panel, id }: { panel: VizPanel; id?: 
       onChange={(evt) => panel.setState({ description: evt.currentTarget.value })}
       onFocus={() => setPrevDescription(panel.state.description)}
       onBlur={() => {
-        dashboardEditActions.edit({
+        edit({
           description: t('dashboard.edit-actions.panel-description', 'Change panel description'),
           source: panel,
           perform: () => panel.setState({ description: description }),
@@ -176,7 +225,7 @@ export function PanelBackgroundSwitch({ panel, id }: { panel: VizPanel; id?: str
   const onChange = () => {
     const newDisplayMode = displayMode === 'default' ? 'transparent' : 'default';
 
-    dashboardEditActions.edit({
+    edit({
       description: t('dashboard.edit-actions.panel-background', 'Change panel background'),
       source: panel,
       perform: () => panel.setState({ displayMode: newDisplayMode }),
@@ -188,7 +237,7 @@ export function PanelBackgroundSwitch({ panel, id }: { panel: VizPanel; id?: str
 }
 
 function updatePanelTitleState(panel: VizPanel, title: string) {
-  panel.setState({ title, hoverHeader: getUpdatedHoverHeader(title, panel.state.$timeRange) });
+  getDashboardSceneFor(panel).updatePanelTitle(panel, title);
 }
 
 export function editPanelTitleAction(panel: VizPanel, title: string, prevTitle: string = panel.state.title) {
@@ -196,24 +245,10 @@ export function editPanelTitleAction(panel: VizPanel, title: string, prevTitle: 
     return;
   }
 
-  dashboardEditActions.edit({
+  edit({
     description: t('dashboard.edit-actions.panel-title', 'Change panel title'),
     source: panel,
     perform: () => updatePanelTitleState(panel, title),
     undo: () => updatePanelTitleState(panel, prevTitle),
   });
-}
-
-export function getUpdatedHoverHeader(title: string, timeRange: SceneTimeRangeLike | undefined): boolean {
-  if (title !== '') {
-    return false;
-  }
-
-  if (timeRange instanceof PanelTimeRange && !timeRange.state.hideTimeOverride) {
-    if (timeRange.state.timeFrom || timeRange.state.timeShift) {
-      return false;
-    }
-  }
-
-  return true;
 }

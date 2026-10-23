@@ -3,8 +3,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Controller, useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom-v5-compat';
 
+import { AppEvents } from '@grafana/data';
 import { t } from '@grafana/i18n';
+import { getAppEvents, isFetchError, reportInteraction } from '@grafana/runtime';
 import {
+  Alert,
   Button,
   Checkbox,
   Combobox,
@@ -17,22 +20,29 @@ import {
   Switch,
 } from '@grafana/ui';
 import {
-  Repository,
+  type Repository,
   useGetFrontendSettingsQuery,
   useGetRepositoryRefsQuery,
 } from 'app/api/clients/provisioning/v0alpha1';
 import { FormPrompt } from 'app/core/components/FormPrompt/FormPrompt';
 
+import { DeleteRepositoryButton } from '../Repository/DeleteRepositoryButton';
 import { TokenPermissionsInfo } from '../Shared/TokenPermissionsInfo';
 import { getGitProviderFields, getLocalProviderFields } from '../Wizard/fields';
-import { InlineSecureValueWarning } from '../components/InlineSecureValueWarning';
+import { PROVISIONING_URL } from '../constants';
+import { useConnectionOptions } from '../hooks/useConnectionOptions';
 import { useCreateOrUpdateRepository } from '../hooks/useCreateOrUpdateRepository';
-import { RepositoryFormData } from '../types';
-import { dataToSpec } from '../utils/data';
+import { type RepositoryFormData } from '../types';
+import { dataToSpec, deriveSigningKeySecret } from '../utils/data';
+import { extractFormErrors, getConfigFormErrors } from '../utils/getFormErrors';
 import { getHasTokenInstructions } from '../utils/git';
-import { getRepositoryTypeConfig, isGitProvider } from '../utils/repositoryTypes';
+import { getRepositoryTypeConfig, isGitHubBased, isGitProvider, supportsWebhooks } from '../utils/repositoryTypes';
 
-import { ConfigFormGithubCollapse } from './ConfigFormGithubCollapse';
+import { BranchOptionsSection } from './BranchOptionsSection';
+import { CommitOptionsSection } from './CommitOptionsSection';
+import { EnablePushToConfiguredBranchOption } from './EnablePushToConfiguredBranchOption';
+import { PullRequestOptionsSection } from './PullRequestOptionsSection';
+import { WebhookSection } from './WebhookSection';
 import { getDefaultValues } from './defaults';
 
 // This needs to be a function for translations to work
@@ -40,6 +50,7 @@ const getTargetOptions = (allowedTargets: string[]) => {
   const allOptions = [
     { value: 'instance', label: t('provisioning.config-form.option-entire-instance', 'Entire instance') },
     { value: 'folder', label: t('provisioning.config-form.option-managed-folder', 'Managed folder') },
+    { value: 'folderless', label: t('provisioning.config-form.option-folderless', 'Folderless') },
   ];
 
   return allOptions.filter((option) => allowedTargets.includes(option.value));
@@ -52,6 +63,7 @@ export function ConfigForm({ data }: ConfigFormProps) {
   const repositoryName = data?.metadata?.name;
   const settings = useGetFrontendSettingsQuery();
   const [submitData, request] = useCreateOrUpdateRepository(repositoryName);
+  const navigate = useNavigate();
   const {
     register,
     handleSubmit,
@@ -62,18 +74,42 @@ export function ConfigForm({ data }: ConfigFormProps) {
     setError,
     watch,
     getValues,
-  } = useForm<RepositoryFormData>({ defaultValues: getDefaultValues(data?.spec) });
+  } = useForm<RepositoryFormData>({
+    defaultValues: getDefaultValues({
+      repository: data?.spec,
+      allowedTargets: settings.data?.allowedTargets,
+    }),
+  });
 
   const isEdit = Boolean(repositoryName);
   const [tokenConfigured, setTokenConfigured] = useState(isEdit);
   const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
-  const [type, readOnly] = watch(['type', 'readOnly']);
-  const targetOptions = useMemo(
-    () => getTargetOptions(settings.data?.allowedTargets || ['instance', 'folder']),
-    [settings.data]
-  );
+  const [submitError, setSubmitError] = useState<string | undefined>();
+  const [type, readOnly, watchedConnectionName] = watch(['type', 'readOnly', 'connectionName']);
+  const targetOptions = useMemo(() => getTargetOptions(settings.data?.allowedTargets || ['folder']), [settings.data]);
   const isGitBased = isGitProvider(type);
+
+  // Detect if repository uses GitHub App authentication
+  // Repositories using GitHub App have a connection reference in their spec,
+  // whereas PAT-based repositories store credentials directly
+  const connectionName = data?.spec?.connection?.name;
+  const usesGitHubApp = Boolean(connectionName && isGitHubBased(type));
+
+  const {
+    options: connectionOptions,
+    isLoading: connectionsLoading,
+    connections,
+  } = useConnectionOptions(usesGitHubApp, isGitHubBased(type) ? type : undefined);
+
+  const selectedConnection = connections.find((c) => c.metadata?.name === watchedConnectionName);
+  const connectionWebhookDisabled = Boolean(selectedConnection?.spec?.webhook?.disabled);
+  const emailWebhookDisabled = type === 'bitbucket' && !watch('email')?.trim();
+
+  useEffect(() => {
+    if (connectionWebhookDisabled) {
+      setValue('webhook.disabled', true);
+    }
+  }, [connectionWebhookDisabled, setValue]);
 
   const {
     data: refsData,
@@ -97,32 +133,50 @@ export function ConfigForm({ data }: ConfigFormProps) {
   const localFields = type === 'local' ? getLocalProviderFields(type) : null;
   const hasTokenInstructions = getHasTokenInstructions(type);
 
-  // TODO: this should be removed after 12.2 is released
-  useEffect(() => {
-    if (isGitBased && !data?.secure?.token) {
-      setTokenConfigured(false);
-      setError('token', {
-        type: 'manual',
-        message: `Enter your ${gitFields?.tokenConfig.label ?? 'access token'}`,
-      });
-    }
-  }, [data, gitFields, setTokenConfigured, setError, isGitBased]);
-
   useEffect(() => {
     if (request.isSuccess) {
       const formData = getValues();
+
+      reportInteraction('grafana_provisioning_repository_updated', {
+        repositoryName: repositoryName ?? 'unknown',
+        repositoryType: formData.type,
+        target: formData.sync?.target ?? 'unknown',
+      });
+
       reset(formData);
-      setTimeout(() => {
-        navigate('/admin/provisioning');
-      }, 300);
+      setTimeout(() => navigate(PROVISIONING_URL), 300);
     }
-  }, [request.isSuccess, reset, getValues, navigate]);
+  }, [request.isSuccess, reset, getValues, repositoryName, navigate]);
 
   const onSubmit = async (form: RepositoryFormData) => {
     setIsLoading(true);
+    setSubmitError(undefined);
     try {
       const spec = dataToSpec(form);
-      await submitData(spec, form.token);
+      const signingKeySecret = deriveSigningKeySecret(form, Boolean(data?.secure?.commitSigningKey?.name));
+      await submitData(spec, form.token, signingKeySecret);
+    } catch (err) {
+      if (isFetchError(err)) {
+        const fieldErrors = getConfigFormErrors(err.data);
+
+        if (fieldErrors.length > 0) {
+          for (const [field, errorMessage] of fieldErrors) {
+            setError(field, errorMessage);
+          }
+          return;
+        }
+
+        // Show unmapped error details as a top-level form error
+        const allErrors = extractFormErrors(err.data);
+        const detail = allErrors.find((e) => e.detail)?.detail;
+        if (detail) {
+          setSubmitError(detail);
+          return;
+        }
+      }
+
+      // fallback for non-fetch errors or errors without details
+      defaultAlert();
     } finally {
       setIsLoading(false);
     }
@@ -132,8 +186,16 @@ export function ConfigForm({ data }: ConfigFormProps) {
     <form onSubmit={handleSubmit(onSubmit)} style={{ maxWidth: 700 }}>
       <FormPrompt onDiscard={reset} confirmRedirect={isDirty} />
       <Stack direction="column" gap={2}>
+        {submitError && (
+          <Alert
+            severity="error"
+            title={t('provisioning.config-form.error-save-failed', 'Failed to save repository setting')}
+          >
+            {submitError}
+          </Alert>
+        )}
         <Field noMargin label={t('provisioning.config-form.label-repository-type', 'Repository type')}>
-          <Input value={getRepositoryTypeConfig(type)?.label || type} disabled />
+          <Input id="repository-type" value={getRepositoryTypeConfig(type)?.label || type} disabled />
         </Field>
         <Field
           noMargin
@@ -151,38 +213,69 @@ export function ConfigForm({ data }: ConfigFormProps) {
         </Field>
         {gitFields && (
           <>
-            <InlineSecureValueWarning repo={data} />
-            <Field
-              noMargin
-              label={gitFields.tokenConfig.label}
-              required={gitFields.tokenConfig.required}
-              error={errors?.token?.message}
-              invalid={!!errors.token}
-              description={gitFields.tokenConfig.description}
-            >
-              <Controller
-                name={'token'}
-                control={control}
-                rules={{
-                  required: isEdit ? false : gitFields.tokenConfig.validation?.required,
-                }}
-                render={({ field: { ref, ...field } }) => {
-                  return (
-                    <SecretInput
+            {usesGitHubApp ? (
+              <Field
+                noMargin
+                label={t('provisioning.config-form.label-connection', 'GitHub App connection')}
+                description={t(
+                  'provisioning.config-form.description-connection',
+                  'Select the GitHub App connection to use'
+                )}
+                error={errors?.connectionName?.message}
+                invalid={!!errors.connectionName}
+              >
+                <Controller
+                  name="connectionName"
+                  control={control}
+                  rules={{
+                    required: t('provisioning.config-form.error-connection-required', 'Connection is required'),
+                  }}
+                  render={({ field: { ref, onChange, ...field } }) => (
+                    <Combobox
+                      options={connectionOptions}
+                      onChange={(option) => onChange(option?.value ?? '')}
+                      loading={connectionsLoading}
+                      disabled={connectionsLoading}
+                      invalid={!!errors.connectionName}
                       {...field}
-                      invalid={!!errors.token}
-                      id={'token'}
-                      placeholder={gitFields.tokenConfig.placeholder}
-                      isConfigured={tokenConfigured}
-                      onReset={() => {
-                        setValue('token', '');
-                        setTokenConfigured(false);
-                      }}
                     />
-                  );
-                }}
-              />
-            </Field>
+                  )}
+                />
+              </Field>
+            ) : (
+              <Field
+                noMargin
+                label={gitFields.tokenConfig.label}
+                required={gitFields.tokenConfig.required}
+                error={errors?.token?.message}
+                invalid={!!errors.token}
+                description={gitFields.tokenConfig.description}
+              >
+                <Controller
+                  name={'token'}
+                  control={control}
+                  rules={{
+                    required: isEdit ? false : gitFields.tokenConfig.validation?.required,
+                  }}
+                  render={({ field: { ref, ...field } }) => {
+                    return (
+                      <SecretInput
+                        {...field}
+                        invalid={!!errors.token}
+                        id={'token'}
+                        placeholder={gitFields.tokenConfig.placeholder}
+                        isConfigured={tokenConfigured}
+                        revealable
+                        onReset={() => {
+                          setValue('token', '');
+                          setTokenConfigured(false);
+                        }}
+                      />
+                    );
+                  }}
+                />
+              </Field>
+            )}
             {gitFields.tokenUserConfig && (
               <Field
                 noMargin
@@ -200,7 +293,26 @@ export function ConfigForm({ data }: ConfigFormProps) {
                 />
               </Field>
             )}
-            {hasTokenInstructions && <TokenPermissionsInfo type={type} />}
+            {gitFields.emailConfig && (
+              <Field
+                noMargin
+                label={gitFields.emailConfig.label}
+                required={gitFields.emailConfig.required}
+                error={errors?.email?.message}
+                invalid={!!errors?.email}
+                description={gitFields.emailConfig.description}
+              >
+                <Input
+                  {...register('email', {
+                    required: gitFields.emailConfig.validation?.required,
+                    pattern: gitFields.emailConfig.validation?.pattern,
+                  })}
+                  type="email"
+                  placeholder={gitFields.emailConfig.placeholder}
+                />
+              </Field>
+            )}
+            {hasTokenInstructions && <TokenPermissionsInfo type={type} url={watch('url')} />}
             <Field
               noMargin
               label={gitFields.urlConfig.label}
@@ -213,6 +325,7 @@ export function ConfigForm({ data }: ConfigFormProps) {
                 {...register('url', {
                   required: gitFields.urlConfig.validation?.required,
                   pattern: gitFields.urlConfig.validation?.pattern,
+                  validate: gitFields.urlConfig.validation?.validate,
                 })}
                 placeholder={gitFields.urlConfig.placeholder}
               />
@@ -245,7 +358,7 @@ export function ConfigForm({ data }: ConfigFormProps) {
               />
             </Field>
             <Field noMargin label={gitFields.pathConfig.label} description={gitFields.pathConfig.description}>
-              <Input {...register('path')} />
+              <Input id="repository-path" {...register('path')} />
             </Field>
           </>
         )}
@@ -274,6 +387,7 @@ export function ConfigForm({ data }: ConfigFormProps) {
               onChange: (e) => {
                 if (e.target.checked) {
                   setValue('prWorkflow', false);
+                  setValue('enablePushToConfiguredBranch', false);
                 }
               },
             })}
@@ -295,7 +409,67 @@ export function ConfigForm({ data }: ConfigFormProps) {
             />
           </Field>
         )}
-        {type === 'github' && <ConfigFormGithubCollapse register={register} />}
+        {isGitBased && (
+          <EnablePushToConfiguredBranchOption<RepositoryFormData>
+            register={register}
+            registerName="enablePushToConfiguredBranch"
+            readOnly={readOnly}
+          />
+        )}
+        {isGitBased && (
+          <>
+            <BranchOptionsSection<RepositoryFormData>
+              register={register}
+              nameTemplateName="branchOptions.nameTemplate"
+              enforceTemplateName="branchOptions.enforceTemplate"
+            />
+            <CommitOptionsSection<RepositoryFormData>
+              register={register}
+              control={control}
+              setValue={setValue}
+              messageTemplateName="commit.singleResourceMessageTemplate"
+              enforceTemplateName="commit.enforceTemplate"
+              type={type}
+              signingMethodName="signingMethod"
+              signingKeyName="commitSigningKey"
+              smimeCertificateName="smimeCertificate"
+              authorNameName="commit.authorName"
+              authorEmailName="commit.authorEmail"
+              signerNameName="commit.signerName"
+              signerEmailName="commit.signerEmail"
+              signerIsAuthorName="commit.signerIsAuthor"
+              defaultSigningKeyConfigured={Boolean(data?.secure?.commitSigningKey?.name)}
+            />
+            {/* Pull requests are not supported by the pure git type. */}
+            {type !== 'git' && (
+              <PullRequestOptionsSection<RepositoryFormData>
+                register={register}
+                titleTemplateName="pullRequest.titleTemplate"
+                enforceTemplateName="pullRequest.enforceTemplate"
+                repoType={type}
+                dashboardPreviewName="generateDashboardPreviews"
+              />
+            )}
+          </>
+        )}
+        {supportsWebhooks(type) && (
+          <WebhookSection<RepositoryFormData>
+            register={register}
+            control={control}
+            name="webhook.baseUrl"
+            disabledName="webhook.disabled"
+            connectionWebhookDisabled={connectionWebhookDisabled}
+            disabledReason={
+              emailWebhookDisabled
+                ? t(
+                    'provisioning.webhook-section.description-webhook-disabled-email',
+                    'Webhook integration is disabled because the Atlassian account email is not set. Set it above to enable webhooks.'
+                  )
+                : undefined
+            }
+            disabledError={errors?.webhook?.disabled?.message}
+          />
+        )}
 
         {isGitBased && (
           <ControlledCollapse
@@ -308,7 +482,7 @@ export function ConfigForm({ data }: ConfigFormProps) {
                 label={t('provisioning.config-form.label-enabled', 'Enabled')}
                 description={t(
                   'provisioning.config-form.description-enabled',
-                  'Once automatic pulling is enabled, the target cannot be changed.'
+                  'Once automatic pulling is enabled, the target type below cannot be changed.'
                 )}
               >
                 <Switch {...register('sync.enabled')} id={'sync.enabled'} />
@@ -336,7 +510,12 @@ export function ConfigForm({ data }: ConfigFormProps) {
                   }}
                 />
               </Field>
-              <Field noMargin label={t('provisioning.config-form.label-interval-seconds', 'Interval (seconds)')}>
+              <Field
+                noMargin
+                label={t('provisioning.config-form.label-interval-seconds', 'Interval (seconds)')}
+                error={errors?.sync?.intervalSeconds?.message}
+                invalid={!!errors?.sync?.intervalSeconds}
+              >
                 <Input
                   {...register('sync.intervalSeconds', { valueAsNumber: true })}
                   type={'number'}
@@ -353,8 +532,18 @@ export function ConfigForm({ data }: ConfigFormProps) {
               ? t('provisioning.config-form.button-saving', 'Saving...')
               : t('provisioning.config-form.button-save', 'Save')}
           </Button>
+          {repositoryName && data && (
+            <DeleteRepositoryButton name={repositoryName} repository={data} redirectTo={PROVISIONING_URL} />
+          )}
         </Stack>
       </Stack>
     </form>
   );
 }
+
+const defaultAlert = () => {
+  getAppEvents().publish({
+    type: AppEvents.alertError.name,
+    payload: [t('provisioning.wizard-content.error-save-repository-setting', 'Failed to save repository setting')],
+  });
+};

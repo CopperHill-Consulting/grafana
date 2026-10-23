@@ -7,8 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	snapshot "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
 	common "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
-	dashboardsnapshot "github.com/grafana/grafana/pkg/apis/dashboardsnapshot/v0alpha1"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/dashboardsnapshots"
@@ -27,7 +27,7 @@ func TestMain(m *testing.M) {
 func TestIntegrationDashboardSnapshotsService(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	sqlStore := db.InitTestDB(t)
+	sqlStore := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	cfg := setting.NewCfg()
 	dsStore := dashsnapdb.ProvideStore(sqlStore, cfg)
 	fakeDashboardService := &dashboards.FakeDashboardService{}
@@ -53,7 +53,7 @@ func TestIntegrationDashboardSnapshotsService(t *testing.T) {
 		cmd := dashboardsnapshots.CreateDashboardSnapshotCommand{
 			Key:       dashboardKey,
 			DeleteKey: dashboardKey,
-			DashboardCreateCommand: dashboardsnapshot.DashboardCreateCommand{
+			DashboardCreateCommand: snapshot.DashboardCreateCommand{
 				Dashboard: dashboard,
 			},
 		}

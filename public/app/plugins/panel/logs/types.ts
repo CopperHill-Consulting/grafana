@@ -1,10 +1,8 @@
-import React, { ReactNode } from 'react';
+import type { Grammar } from 'prismjs';
 
-import { CoreApp, DataFrame, Field, LinkModel, ScopedVars } from '@grafana/data';
-import { LogLineMenuCustomItem } from 'app/features/logs/components/panel/LogLineMenu';
-import { LogListControlOptions } from 'app/features/logs/components/panel/LogList';
-
-export type { Options } from './panelcfg.gen';
+import { CoreApp, type DataFrame, type Field, type LinkModel, type ScopedVars } from '@grafana/data';
+import { type LogLineMenuCustomItem } from 'app/features/logs/components/panel/LogLineMenu';
+import { type LogListOptions } from 'app/features/logs/components/panel/LogList';
 
 type onClickFilterLabelType = (key: string, value: string, frame?: DataFrame) => void;
 type onClickFilterOutLabelType = (key: string, value: string, frame?: DataFrame) => void;
@@ -14,7 +12,7 @@ type filterLabelActiveType = (key: string, value: string, refId?: string) => Pro
 type onClickShowFieldType = (value: string) => void;
 type onClickHideFieldType = (value: string) => void;
 export type onNewLogsReceivedType = (allLogs: DataFrame[], newLogs: DataFrame[]) => void;
-type onLogOptionsChangeType = (option: LogListControlOptions, value: string | boolean | string[]) => void;
+type onLogOptionsChangeType = (option: LogListOptions, value: string | boolean | string[]) => void;
 type setDisplayedFieldsType = (fields: string[]) => void;
 
 export type GetFieldLinksFn = (
@@ -64,10 +62,6 @@ export function isOnLogOptionsChange(callback: unknown): callback is onLogOption
   return typeof callback === 'function';
 }
 
-export function isReactNodeArray(node: unknown): node is ReactNode[] {
-  return Array.isArray(node) && node.every(React.isValidElement);
-}
-
 export function isCoreApp(app: unknown): app is CoreApp {
   const apps = Object.values(CoreApp).map((coreApp) => coreApp.toString());
   return typeof app === 'string' && apps.includes(app);
@@ -75,4 +69,8 @@ export function isCoreApp(app: unknown): app is CoreApp {
 
 export function isLogLineMenuCustomItems(items: unknown): items is LogLineMenuCustomItem[] {
   return Array.isArray(items) && items.every((item) => 'divider' in item || ('onClick' in item && 'label' in item));
+}
+
+export function isGrammar(grammar: unknown): grammar is Grammar {
+  return grammar != null && typeof grammar === 'object' && !Array.isArray(grammar);
 }

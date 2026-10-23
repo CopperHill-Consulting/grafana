@@ -1,17 +1,19 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 
 import { selectors } from '@grafana/e2e-selectors';
 import { t, Trans } from '@grafana/i18n';
-import { QueryVariable } from '@grafana/scenes';
-import { Field, Stack, Switch } from '@grafana/ui';
+import { type QueryVariable, type VariableValueOption } from '@grafana/scenes';
+import { Field, FieldSet, Stack, Switch } from '@grafana/ui';
 import { VariableLegend } from 'app/features/dashboard-scene/settings/variables/components/VariableLegend';
-import { VariableOptionsInput } from 'app/features/dashboard-scene/settings/variables/components/VariableOptionsInput';
+import { VariableMultiPropStaticOptionsForm } from 'app/features/dashboard-scene/settings/variables/components/VariableMultiPropStaticOptionsForm';
 import { VariableSelectField } from 'app/features/dashboard-scene/settings/variables/components/VariableSelectField';
+import { useGetPropertiesFromOptions } from 'app/features/dashboard-scene/settings/variables/components/VariableValuesPreview';
 
 export type StaticOptionsType = QueryVariable['state']['staticOptions'];
 export type StaticOptionsOrderType = QueryVariable['state']['staticOptionsOrder'];
 
 interface QueryVariableStaticOptionsProps {
+  options: VariableValueOption[];
   staticOptions: StaticOptionsType;
   staticOptionsOrder: StaticOptionsOrderType;
   onStaticOptionsChange: (staticOptions: StaticOptionsType) => void;
@@ -25,19 +27,20 @@ const SORT_OPTIONS = [
 ];
 
 export function QueryVariableStaticOptions(props: QueryVariableStaticOptionsProps) {
-  const { staticOptions, onStaticOptionsChange, staticOptionsOrder, onStaticOptionsOrderChange } = props;
-
+  const { options, staticOptions, onStaticOptionsChange, staticOptionsOrder, onStaticOptionsOrderChange } = props;
   const value = SORT_OPTIONS.find((o) => o.value === staticOptionsOrder) ?? SORT_OPTIONS[0];
-
   const [areStaticOptionsEnabled, setAreStaticOptionsEnabled] = useState(!!staticOptions?.length);
+  const properties = useGetPropertiesFromOptions(options, staticOptions);
+  const useStaticOptionsId = useId();
 
   return (
-    <>
+    <FieldSet>
       <VariableLegend>
         <Trans i18nKey="dashboard-scene.query-variable-editor-form.static-options-legend">Static options</Trans>
       </VariableLegend>
       <Stack direction="column" gap={2}>
         <Field
+          htmlFor={useStaticOptionsId}
           noMargin
           label={t('dashboard-scene.query-variable-editor-form.label-use-static-options', 'Use static options')}
           description={t(
@@ -48,6 +51,7 @@ export function QueryVariableStaticOptions(props: QueryVariableStaticOptionsProp
           <>
             <Stack direction="column" gap={2}>
               <Switch
+                id={useStaticOptionsId}
                 data-testid={
                   selectors.pages.Dashboard.Settings.Variables.Edit.QueryVariable.queryOptionsStaticOptionsToggle
                 }
@@ -63,9 +67,13 @@ export function QueryVariableStaticOptions(props: QueryVariableStaticOptionsProp
                   }
                 }}
               />
-
               {areStaticOptionsEnabled && (
-                <VariableOptionsInput width={60} options={staticOptions ?? []} onChange={onStaticOptionsChange} />
+                <VariableMultiPropStaticOptionsForm
+                  options={staticOptions ?? []}
+                  properties={properties}
+                  onChange={onStaticOptionsChange}
+                  allowEmptyValue
+                />
               )}
             </Stack>
           </>
@@ -88,6 +96,6 @@ export function QueryVariableStaticOptions(props: QueryVariableStaticOptionsProp
           />
         )}
       </Stack>
-    </>
+    </FieldSet>
   );
 }

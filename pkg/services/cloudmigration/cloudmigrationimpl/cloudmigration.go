@@ -61,7 +61,6 @@ type Service struct {
 
 	isSyncSnapshotStatusFromGMSRunning int32
 
-	features      featuremgmt.FeatureToggles
 	gmsClient     gmsclient.Client
 	objectStorage objectstorage.ObjectStorage
 
@@ -73,7 +72,7 @@ type Service struct {
 	pluginStore            pluginstore.Store
 	accessControl          accesscontrol.AccessControl
 	pluginSettingsService  pluginsettings.Service
-	secretsService         secrets.Service
+	secretsService         secrets.Service //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
 	kvStore                *kvstore.NamespacedKVStore
 	libraryElementsService libraryelements.Service
 	ngAlert                *ngalert.AlertNG
@@ -105,7 +104,7 @@ func ProvideService(
 	db db.DB,
 	dsService datasources.DataSourceService,
 	secretsStore secretskv.SecretsKVStore,
-	secretsService secrets.Service,
+	secretsService secrets.Service, //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
 	routeRegister routing.RouteRegister,
 	prom prometheus.Registerer,
 	tracer tracing.Tracer,
@@ -119,7 +118,7 @@ func ProvideService(
 	libraryElementsService libraryelements.Service,
 	ngAlert *ngalert.AlertNG,
 ) (cloudmigration.Service, error) {
-	if !features.IsEnabledGlobally(featuremgmt.FlagOnPremToCloudMigrations) {
+	if !cfg.CloudMigration.Enabled {
 		return &NoopServiceImpl{}, nil
 	}
 
@@ -131,7 +130,6 @@ func ProvideService(
 		store:                  &sqlStore{db: db, secretsStore: secretsStore, secretsService: secretsService},
 		log:                    log.New(LogPrefix),
 		cfg:                    cfg,
-		features:               features,
 		dsService:              dsService,
 		tracer:                 tracer,
 		metrics:                newMetrics(),
@@ -145,7 +143,7 @@ func ProvideService(
 		libraryElementsService: libraryElementsService,
 		ngAlert:                ngAlert,
 	}
-	s.api = api.RegisterApi(routeRegister, s, tracer, accessControl, cloudmigration.ResourceDependency)
+	s.api = api.RegisterApi(routeRegister, s, tracer, accessControl, cloudmigration.ResourceDependency(cfg.UnifiedAlerting.IsEnabled()))
 
 	httpClientS3, err := httpClientProvider.New()
 	if err != nil {
@@ -493,7 +491,7 @@ func (s *Service) CreateSnapshot(ctx context.Context, signedInUser *user.SignedI
 	}
 
 	// query gms to establish new snapshot s.cfg.CloudMigration.StartSnapshotTimeout
-	initResp, err := s.gmsClient.StartSnapshot(ctx, *session)
+	initResp, err := s.gmsClient.StartSnapshot(ctx, *session, cloudmigration.EncryptionAlgo(s.cfg.CloudMigration.EncryptionAlgo))
 	if err != nil {
 		return nil, fmt.Errorf("initializing snapshot with GMS for session %s: %w", cmd.SessionUID, err)
 	}
@@ -544,7 +542,7 @@ func (s *Service) CreateSnapshot(ctx context.Context, signedInUser *user.SignedI
 
 		start := time.Now()
 
-		err := s.buildSnapshot(asyncCtx, signedInUser, initResp.MaxItemsPerPartition, initResp.Metadata, snapshot, cmd.ResourceTypes)
+		err := s.buildSnapshot(asyncCtx, signedInUser, initResp.MaxItemsPerPartition, initResp.Metadata, snapshot, cmd.ResourceTypes, initResp.Algo)
 		if err != nil {
 			asyncSpan.SetStatus(codes.Error, "error building snapshot")
 			asyncSpan.RecordError(err)

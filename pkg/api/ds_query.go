@@ -34,6 +34,7 @@ func (hs *HTTPServer) handleQueryMetricsError(err error) *response.NormalRespons
 
 // metrics.go
 func (hs *HTTPServer) getDSQueryEndpoint() web.Handler {
+	//nolint:staticcheck // not yet migrated to OpenFeature
 	if hs.Features.IsEnabledGlobally(featuremgmt.FlagQueryServiceRewrite) {
 		// rewrite requests from /ds/query to the new query service
 		namespaceMapper := request.GetNamespaceMapper(hs.Cfg)
@@ -43,7 +44,7 @@ func (hs *HTTPServer) getDSQueryEndpoint() web.Handler {
 				errhttp.Write(r.Context(), fmt.Errorf("no user"), w)
 				return
 			}
-			r.URL.Path = "/apis/query.grafana.app/v0alpha1/namespaces/" + namespaceMapper(user.GetOrgID()) + "/query"
+			r.URL.Path = "/apis/datasource.grafana.app/v0alpha1/namespaces/" + namespaceMapper(user.GetOrgID()) + "/query"
 			hs.clientConfigProvider.DirectlyServeHTTP(w, r)
 		}
 	}
@@ -75,6 +76,8 @@ func (hs *HTTPServer) QueryMetricsV2(c *contextmodel.ReqContext) response.Respon
 
 	var resp *backend.QueryDataResponse
 	var err error
+
+	hs.log.Debug("QueryMetricsV2: request received", "time_in_query", handleTimeInQuery)
 	if handleTimeInQuery {
 		resp, err = hs.queryDataService.QueryDataNew(c.Req.Context(), c.SignedInUser, c.SkipDSCache, reqDTO)
 	} else {

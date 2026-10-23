@@ -1,27 +1,9 @@
-import { AnnotationQuery, BusEventBase, BusEventWithPayload, eventFactory } from '@grafana/data';
-import { IconName, ButtonVariant } from '@grafana/ui';
-import { HistoryEntryView } from 'app/core/components/AppChrome/types';
+import { type AnnotationQuery, BusEventBase, BusEventWithPayload, eventFactory } from '@grafana/data';
+import { type ButtonVariant } from '@grafana/ui';
 
 /**
  * Event Payloads
  */
-
-export interface ShowDashSearchPayload {
-  query?: string;
-}
-
-export interface LocationChangePayload {
-  href: string;
-}
-
-export interface ShowModalPayload {
-  model?: any;
-  modalClass?: string;
-  src?: string;
-  templateHtml?: string;
-  backdrop?: any;
-  scope?: any;
-}
 
 export interface ShowModalReactPayload {
   component: React.ComponentType<any>;
@@ -29,6 +11,12 @@ export interface ShowModalReactPayload {
 }
 
 export interface OpenExtensionSidebarPayload {
+  props?: Record<string, unknown>;
+  pluginId: string;
+  componentTitle: string;
+}
+
+export interface ToggleExtensionSidebarPayload {
   props?: Record<string, unknown>;
   pluginId: string;
   componentTitle: string;
@@ -43,25 +31,12 @@ export interface ShowConfirmModalPayload {
   altActionText?: string;
   yesText?: string;
   noText?: string;
-  icon?: IconName;
   yesButtonVariant?: ButtonVariant;
 
   onDismiss?: () => void;
   onConfirm?: () => void;
   onAltAction?: () => void;
 }
-
-export interface ToggleKioskModePayload {
-  exit?: boolean;
-}
-
-export interface DashScrollPayload {
-  restore?: boolean;
-  animate?: boolean;
-  pos?: number;
-}
-
-export interface PanelChangeViewPayload {}
 
 /**
  * Events
@@ -101,10 +76,6 @@ export class DashboardPanelsChangedEvent extends BusEventBase {
 
 export class DashboardMetaChangedEvent extends BusEventBase {
   static type = 'dashboard-meta-changed';
-}
-
-export class PanelDirectiveReadyEvent extends BusEventBase {
-  static type = 'panel-directive-ready';
 }
 
 export class RenderEvent extends BusEventBase {
@@ -154,15 +125,12 @@ export class AbsoluteTimeEvent extends BusEventWithPayload<AbsoluteTimeEventPayl
   static type = 'absolute-time';
 }
 
-export class RemovePanelEvent extends BusEventWithPayload<number> {
-  static type = 'remove-panel';
+export class RunQueriesEvent extends BusEventBase {
+  static type = 'run-queries';
 }
 
-/**
- * @deprecated use ShowModalReactEvent instead that has this capability built in
- */
-export class ShowModalEvent extends BusEventWithPayload<ShowModalPayload> {
-  static type = 'show-modal';
+export class RemovePanelEvent extends BusEventWithPayload<number> {
+  static type = 'remove-panel';
 }
 
 export class ShowConfirmModalEvent extends BusEventWithPayload<ShowConfirmModalPayload> {
@@ -181,15 +149,16 @@ export class CloseExtensionSidebarEvent extends BusEventBase {
   static type = 'close-extension-sidebar';
 }
 
-/**
- * @deprecated use ShowModalReactEvent instead that has this capability built in
- */
-export class HideModalEvent extends BusEventBase {
-  static type = 'hide-modal';
+export class ToggleExtensionSidebarEvent extends BusEventWithPayload<ToggleExtensionSidebarPayload> {
+  static type = 'toggle-extension-sidebar';
 }
 
 export class DashboardSavedEvent extends BusEventBase {
   static type = 'dashboard-saved';
+}
+
+export class DashboardDiscardedEvent extends BusEventBase {
+  static type = 'dashboard-discarded';
 }
 
 export class AnnotationQueryStarted extends BusEventWithPayload<AnnotationQuery> {
@@ -208,6 +177,6 @@ export class PanelEditExitedEvent extends BusEventWithPayload<number> {
   static type = 'panel-edit-finished';
 }
 
-export class RecordHistoryEntryEvent extends BusEventWithPayload<HistoryEntryView> {
-  static type = 'record-history-entry';
+export class PanelEditNextFeedbackEvent extends BusEventBase {
+  static type = 'panel-edit-next-feedback';
 }

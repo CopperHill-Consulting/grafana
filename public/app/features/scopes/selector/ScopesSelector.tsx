@@ -1,26 +1,23 @@
 import { css } from '@emotion/css';
 import { useEffect } from 'react';
-import { useObservable } from 'react-use';
 import { Observable } from 'rxjs';
 
-import { GrafanaTheme2 } from '@grafana/data';
+import { type GrafanaTheme2 } from '@grafana/data';
+import { useObservable } from '@grafana/data/unstable';
 import { Trans, t } from '@grafana/i18n';
 import { useScopes } from '@grafana/runtime';
-import { Button, Drawer, ErrorBoundary, ErrorWithStack, IconButton, Spinner, Text, useStyles2 } from '@grafana/ui';
-import { useGrafana } from 'app/core/context/GrafanaContext';
+import { Button, Drawer, ErrorBoundary, ErrorWithStack, Spinner, Text, useStyles2 } from '@grafana/ui';
 import { getModKey } from 'app/core/utils/browser';
 
 import { useScopesServices } from '../ScopesContextProvider';
 
 import { ScopesInput } from './ScopesInput';
-import { ScopesSelectorServiceState } from './ScopesSelectorService';
+import { type ScopesSelectorServiceState } from './ScopesSelectorService';
 import { ScopesTree } from './ScopesTree';
+import { useRecentScopes } from './useRecentScopes';
 
 export const ScopesSelector = () => {
-  const { chrome } = useGrafana();
-  const chromeState = chrome.useState();
-  const menuDockedAndOpen = !chromeState.chromeless && chromeState.megaMenuDocked && chromeState.megaMenuOpen;
-  const styles = useStyles2(getStyles, menuDockedAndOpen);
+  const styles = useStyles2(getStyles);
   const scopes = useScopes();
 
   const services = useScopesServices();
@@ -29,6 +26,10 @@ export const ScopesSelector = () => {
     services?.scopesSelectorService.stateObservable ?? new Observable(),
     services?.scopesSelectorService.state
   );
+
+  // Must be called before any conditional returns (rules of hooks)
+  const appliedScopeIds = selectorServiceState?.appliedScopes.map((s) => s.scopeId) ?? [];
+  const recentScopes = useRecentScopes(appliedScopeIds);
 
   // Keyboard shortcut for closing and applying
   useEffect(() => {
@@ -58,39 +59,12 @@ export const ScopesSelector = () => {
     tree,
     scopes: scopesMap,
   } = selectorServiceState;
-  const { scopesService, scopesSelectorService, scopesDashboardsService } = services;
-  const { readOnly, drawerOpened, loading } = scopes.state;
-  const {
-    open,
-    removeAllScopes,
-    closeAndApply,
-    closeAndReset,
-    updateNode,
-    selectScope,
-    deselectScope,
-    getRecentScopes,
-  } = scopesSelectorService;
-
-  const recentScopes = getRecentScopes();
-
-  const dashboardsIconLabel = readOnly
-    ? t('scopes.dashboards.toggle.disabled', 'Suggested dashboards list is disabled due to read only mode')
-    : drawerOpened
-      ? t('scopes.dashboards.toggle.collapse', 'Collapse suggested dashboards list')
-      : t('scopes.dashboards.toggle.expand', 'Expand suggested dashboards list');
+  const { scopesService, scopesSelectorService } = services;
+  const { readOnly, loading } = scopes.state;
+  const { open, removeAllScopes, closeAndApply, closeAndReset } = scopesSelectorService;
 
   return (
-    <div className={styles.container}>
-      <IconButton
-        name="web-section-alt"
-        className={styles.dashboards}
-        aria-label={dashboardsIconLabel}
-        tooltip={dashboardsIconLabel}
-        data-testid="scopes-dashboards-expand"
-        disabled={readOnly}
-        onClick={scopesDashboardsService.toggleDrawer}
-      />
-
+    <>
       <ScopesInput
         nodes={nodes}
         scopes={scopesMap}
@@ -107,7 +81,7 @@ export const ScopesSelector = () => {
 
       {opened && (
         <Drawer title={t('scopes.selector.title', 'Select scopes')} size="sm" onClose={closeAndReset}>
-          <ErrorBoundary>
+          <ErrorBoundary boundaryName="scopes-selector">
             {({ error, errorInfo }) => {
               if (error) {
                 return (
@@ -128,14 +102,11 @@ export const ScopesSelector = () => {
                         <ScopesTree
                           tree={tree}
                           loadingNodeName={loadingNodeName}
-                          onNodeUpdate={updateNode}
                           recentScopes={recentScopes}
                           selectedScopes={selectedScopes}
                           scopeNodes={nodes}
-                          selectScope={selectScope}
-                          deselectScope={deselectScope}
-                          onRecentScopesSelect={(scopeIds: string[], parentNodeId?: string) => {
-                            scopesSelectorService.changeScopes(scopeIds, parentNodeId);
+                          onRecentScopesSelect={(scopeIds: string[], scopeNodeId?: string) => {
+                            scopesSelectorService.changeScopes(scopeIds, undefined, scopeNodeId);
                             scopesSelectorService.closeAndReset();
                           }}
                         />
@@ -158,20 +129,14 @@ export const ScopesSelector = () => {
           </ErrorBoundary>
         </Drawer>
       )}
-    </div>
+    </>
   );
 };
 
-const getStyles = (theme: GrafanaTheme2, menuDockedAndOpen: boolean) => {
+const getStyles = (theme: GrafanaTheme2) => {
   return {
-    container: css({
-      display: 'flex',
-      flexDirection: 'row',
-      paddingLeft: menuDockedAndOpen ? theme.spacing(2) : 'unset',
-    }),
     dashboards: css({
       color: theme.colors.text.secondary,
-      marginRight: theme.spacing(2),
 
       '&:hover': css({
         color: theme.colors.text.primary,

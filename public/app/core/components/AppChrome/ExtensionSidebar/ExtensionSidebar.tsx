@@ -1,14 +1,15 @@
 import { css } from '@emotion/css';
+import { css as cssReact, Global } from '@emotion/react';
 
-import { GrafanaTheme2, PluginExtensionPoints } from '@grafana/data';
+import { type GrafanaTheme2, PluginExtensionPoints } from '@grafana/data';
 import { usePluginComponents } from '@grafana/runtime';
 import { useTheme2 } from '@grafana/ui';
 
 import { getComponentMetaFromComponentId, useExtensionSidebarContext } from './ExtensionSidebarProvider';
 
-export const DEFAULT_EXTENSION_SIDEBAR_WIDTH = 300;
-export const MIN_EXTENSION_SIDEBAR_WIDTH = 100;
+export const MIN_EXTENSION_SIDEBAR_WIDTH = 460;
 export const MAX_EXTENSION_SIDEBAR_WIDTH = Math.floor(window.innerWidth * (2 / 3));
+export const DEFAULT_EXTENSION_SIDEBAR_WIDTH = MIN_EXTENSION_SIDEBAR_WIDTH;
 
 type ExtensionSidebarComponentProps = {
   props?: Record<string, unknown>;
@@ -41,6 +42,11 @@ export function ExtensionSidebar() {
   return (
     <div className={styles.sidebarWrapper}>
       <div className={styles.content}>
+        {/* When the sidebar is open, we don't want the body to scroll */}
+        {/* Need type assertion here due to the use of !important */}
+        {/* see https://github.com/frenic/csstype/issues/114#issuecomment-697201978 */}
+        {/* eslint-disable-next-line @typescript-eslint/consistent-type-assertions */}
+        <Global styles={[cssReact({ body: { overflowY: 'unset !important' as 'unset' } })]} />
         <ExtensionComponent {...props} />
       </div>
     </div>
@@ -48,18 +54,37 @@ export function ExtensionSidebar() {
 }
 
 const getStyles = (theme: GrafanaTheme2) => {
+  const visualRefreshEnabled = theme.flags.visualDesignRefresh;
   return {
-    sidebarWrapper: css({
-      backgroundColor: theme.colors.background.primary,
-      borderLeft: `1px solid ${theme.colors.border.weak}`,
-      display: 'flex',
-      flexDirection: 'column',
-      gap: theme.spacing(1),
-      padding: theme.spacing(1),
-      width: '100%',
-      height: '100%',
-      overflow: 'auto',
-    }),
+    sidebarWrapper: css(
+      {
+        backgroundColor: theme.colors.background.primary,
+        borderLeft: `1px solid ${theme.colors.border.weak}`,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: theme.spacing(1),
+        width: '100%',
+        height: '100%',
+        overflow: 'auto',
+        // Temp fix for AI assistant, remove in a 1-2 months
+        ' > div > div': {
+          margin: 0,
+        },
+      },
+      visualRefreshEnabled && {
+        backgroundColor: theme.colors.background.page,
+        border: `1px solid ${theme.colors.border.weak}`,
+        borderRadius: theme.shape.radius.lg,
+        height: `calc(100% - ${theme.spacing(0.5)})`,
+        width: `calc(100% - ${theme.spacing(0.5)})`,
+
+        [theme.breakpoints.down('sm')]: {
+          height: `calc(100% - ${theme.spacing(0.5)})`,
+          margin: theme.spacing(0, 0.5, 0.5, 0.5),
+          width: `calc(100% - ${theme.spacing(1)})`,
+        },
+      }
+    ),
     content: css({
       flex: 1,
       minHeight: 0,

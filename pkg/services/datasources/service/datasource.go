@@ -6,16 +6,22 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	authlib "github.com/grafana/authlib/types"
 	"github.com/grafana/grafana-plugin-sdk-go/backend"
 	sdkhttpclient "github.com/grafana/grafana-plugin-sdk-go/backend/httpclient"
 	sdkproxy "github.com/grafana/grafana-plugin-sdk-go/backend/proxy"
 
 	"github.com/grafana/grafana/pkg/apimachinery/errutil"
+	"github.com/grafana/grafana/pkg/apimachinery/identity"
+	queryV0 "github.com/grafana/grafana/pkg/apis/datasource/v0alpha1"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/httpclient"
@@ -23,6 +29,7 @@ import (
 	"github.com/grafana/grafana/pkg/plugins"
 	"github.com/grafana/grafana/pkg/services/accesscontrol"
 	"github.com/grafana/grafana/pkg/services/datasources"
+	"github.com/grafana/grafana/pkg/services/datasources/awsexternalid"
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/adapters"
 	"github.com/grafana/grafana/pkg/services/pluginsintegration/plugincontext"
@@ -38,10 +45,14 @@ const (
 	maxDatasourceUrlLen  = 255
 )
 
+var (
+	_ queryV0.DataSourceConnectionProvider = (*Service)(nil)
+)
+
 type Service struct {
 	SQLStore                  Store
 	SecretsStore              kvstore.SecretsKVStore
-	SecretsService            secrets.Service
+	SecretsService            secrets.Service //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
 	cfg                       *setting.Cfg
 	features                  featuremgmt.FeatureToggles
 	permissionsService        accesscontrol.DatasourcePermissionsService
@@ -51,10 +62,10 @@ type Service struct {
 	pluginStore               pluginstore.Store
 	pluginClient              plugins.Client
 	basePluginContextProvider plugincontext.BasePluginContextProvider
+	retriever                 DataSourceRetriever
 
 	ptc proxyTransportCache
 }
-
 type proxyTransportCache struct {
 	cache map[int64]cachedRoundTripper
 	sync.Mutex
@@ -66,10 +77,13 @@ type cachedRoundTripper struct {
 }
 
 func ProvideService(
-	db db.DB, secretsService secrets.Service, secretsStore kvstore.SecretsKVStore, cfg *setting.Cfg,
+	db db.DB,
+	secretsService secrets.Service, //nolint:staticcheck // SA1019: Legacy envelope encryption for single-tenant feature
+	secretsStore kvstore.SecretsKVStore, cfg *setting.Cfg,
 	features featuremgmt.FeatureToggles, ac accesscontrol.AccessControl, datasourcePermissionsService accesscontrol.DatasourcePermissionsService,
 	quotaService quota.Service, pluginStore pluginstore.Store, pluginClient plugins.Client,
 	basePluginContextProvider plugincontext.BasePluginContextProvider,
+	retriever DataSourceRetriever,
 ) (*Service, error) {
 	dslogger := log.New("datasources")
 	store := &SqlStore{db: db, logger: dslogger, features: features}
@@ -89,6 +103,7 @@ func ProvideService(
 		pluginStore:               pluginStore,
 		pluginClient:              pluginClient,
 		basePluginContextProvider: basePluginContextProvider,
+		retriever:                 retriever,
 	}
 
 	ac.RegisterScopeAttributeResolver(NewNameScopeResolver(store))
@@ -117,6 +132,8 @@ func (s *Service) Usage(ctx context.Context, scopeParams *quota.ScopeParameters)
 type DataSourceRetriever interface {
 	// GetDataSource gets a datasource.
 	GetDataSource(ctx context.Context, query *datasources.GetDataSourceQuery) (*datasources.DataSource, error)
+	// GetDataSourceInNamespace gets a datasource by namespace, name (datasource uid), and group (datasource type).
+	GetDataSourceInNamespace(ctx context.Context, namespace, name, group string) (*datasources.DataSource, error)
 }
 
 // NewNameScopeResolver provides an ScopeAttributeResolver able to
@@ -173,7 +190,11 @@ func NewIDScopeResolver(db DataSourceRetriever) (string, accesscontrol.ScopeAttr
 }
 
 func (s *Service) GetDataSource(ctx context.Context, query *datasources.GetDataSourceQuery) (*datasources.DataSource, error) {
-	return s.SQLStore.GetDataSource(ctx, query)
+	return s.retriever.GetDataSource(ctx, query)
+}
+
+func (s *Service) GetDataSourceInNamespace(ctx context.Context, namespace, name, group string) (*datasources.DataSource, error) {
+	return s.retriever.GetDataSourceInNamespace(ctx, namespace, name, group)
 }
 
 func (s *Service) GetDataSources(ctx context.Context, query *datasources.GetDataSourcesQuery) ([]*datasources.DataSource, error) {
@@ -197,7 +218,122 @@ func (s *Service) GetDataSourcesByType(ctx context.Context, query *datasources.G
 		}
 		query.AliasIDs = p.AliasIDs
 	}
-	return s.SQLStore.GetDataSourcesByType(ctx, query)
+
+	all, err := s.SQLStore.GetDataSourcesByType(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	// System/background callers have no requester in context — return all values.
+	user, err := identity.GetRequester(ctx)
+	if err != nil || user == nil {
+		return all, nil
+	}
+
+	filtered := make([]*datasources.DataSource, 0, len(all))
+	for _, ds := range all {
+		// Skip datasources they can not see
+		evaluator := accesscontrol.EvalPermission(datasources.ActionRead,
+			datasources.ScopeProvider.GetResourceScopeUID(ds.UID))
+		if ok, _ := s.ac.Evaluate(ctx, user, evaluator); !ok {
+			continue
+		}
+		filtered = append(filtered, ds)
+	}
+	return filtered, nil
+}
+
+// ListConnections implements v0alpha1.DataSourceConnectionProvider.
+func (s *Service) ListConnections(ctx context.Context, query queryV0.DataSourceConnectionQuery) (*queryV0.DataSourceConnectionList, error) {
+	user, err := identity.GetRequester(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	ns, err := authlib.ParseNamespace(query.Namespace)
+	if err != nil {
+		return nil, err
+	}
+	if ns.OrgID == 0 {
+		return nil, fmt.Errorf("missing valid namespace")
+	}
+	if ns.OrgID != user.GetOrgID() { // We may allow services to access other orgs in the future
+		return nil, fmt.Errorf("user must be in the requested namespace")
+	}
+
+	result := &queryV0.DataSourceConnectionList{
+		TypeMeta: v1.TypeMeta{
+			APIVersion: queryV0.SchemeGroupVersion.String(),
+			Kind:       "DataSourceConnectionList",
+		},
+		Items: []queryV0.DataSourceConnection{},
+	}
+
+	var dss []*datasources.DataSource
+	if query.Name != "" {
+		ds, err := s.GetDataSource(ctx, &datasources.GetDataSourceQuery{
+			OrgID: ns.OrgID,
+			UID:   query.Name,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if ds != nil {
+			// If both name+plugin exist, we need to verify the type
+			if query.Plugin != "" && ds.Type != query.Plugin {
+				p, _ := s.pluginStore.Plugin(ctx, ds.Type)
+				if !(slices.Contains(p.AliasIDs, query.Plugin)) {
+					return result, nil
+				}
+			}
+			dss = []*datasources.DataSource{ds} // will check authz before returning
+		}
+	} else if query.Plugin != "" {
+		q := &datasources.GetDataSourcesByTypeQuery{
+			OrgID: ns.OrgID,
+			Type:  query.Plugin,
+		}
+		p, found := s.pluginStore.Plugin(ctx, query.Plugin)
+		if !found {
+			return nil, fmt.Errorf("plugin %s not found", query.Plugin)
+		}
+		q.AliasIDs = p.AliasIDs
+		dss, err = s.SQLStore.GetDataSourcesByType(ctx, q) // Authz NOT applied
+	} else {
+		dss, err = s.GetDataSources(ctx, &datasources.GetDataSourcesQuery{
+			OrgID:           ns.OrgID,
+			DataSourceLimit: 10000, // Do a full query
+		})
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	for _, ds := range dss {
+		// Skip datasources they can not see
+		evaluator := accesscontrol.EvalPermission(datasources.ActionRead,
+			datasources.ScopeProvider.GetResourceScopeUID(ds.UID))
+		if ok, _ := s.ac.Evaluate(ctx, user, evaluator); !ok {
+			continue
+		}
+
+		v, err := s.asConnection(ds)
+		if err != nil {
+			return nil, err
+		}
+		result.Items = append(result.Items, *v)
+	}
+	return result, nil
+}
+
+func (s *Service) asConnection(ds *datasources.DataSource) (*queryV0.DataSourceConnection, error) {
+	return &queryV0.DataSourceConnection{
+		Title:      ds.Name,
+		APIGroup:   fmt.Sprintf("%s.datasource.grafana.app", ds.Type),
+		APIVersion: "v0alpha1", // TODO, get this from the plugin
+		Name:       ds.UID,
+		Plugin:     ds.Type,
+	}, nil
 }
 
 func (s *Service) AddDataSource(ctx context.Context, cmd *datasources.AddDataSourceCommand) (*datasources.DataSource, error) {
@@ -252,6 +388,13 @@ func (s *Service) AddDataSource(ctx context.Context, cmd *datasources.AddDataSou
 		if err != nil {
 			return nil, err
 		}
+	}
+	if cmd.JsonData == nil {
+		cmd.JsonData = simplejson.New()
+	}
+	// Run after the store assigns the final UID so the minted ID matches what is inserted.
+	cmd.BeforeSave = func(ctx context.Context, uid string, jsonData *simplejson.Json) {
+		awsexternalid.BeforeSave(ctx, uid, s.cfg, nil, jsonData)
 	}
 
 	var dataSource *datasources.DataSource
@@ -534,6 +677,13 @@ func (s *Service) UpdateDataSource(ctx context.Context, cmd *datasources.UpdateD
 				return err
 			}
 		}
+		if cmd.JsonData == nil {
+			cmd.JsonData = simplejson.New()
+		}
+		existingJSON := dataSource.JsonData
+		cmd.BeforeSave = func(ctx context.Context, uid string, jsonData *simplejson.Json) {
+			awsexternalid.BeforeSave(ctx, uid, s.cfg, existingJSON, jsonData)
+		}
 
 		// preserve existing lbac rules when updating datasource if we're not updating lbac rules
 		// TODO: Refactor to store lbac rules separate from a datasource
@@ -716,7 +866,7 @@ func (s *Service) httpClientOptions(ctx context.Context, ds *datasources.DataSou
 	}
 
 	if ds.JsonData != nil {
-		opts.CustomOptions = ds.JsonData.MustMap()
+		opts.CustomOptions = ds.JsonDataMap()
 		// allow the plugin sdk to get the json data in JSONDataFromHTTPClientOptions
 		deepJsonDataCopy := make(map[string]any, len(opts.CustomOptions))
 		for k, v := range opts.CustomOptions {

@@ -2,23 +2,30 @@ import { lowerCase } from 'lodash';
 import { useMemo } from 'react';
 
 import { t } from '@grafana/i18n';
-import { SceneComponentProps, sceneGraph, SceneObjectBase, SceneObjectState } from '@grafana/scenes';
-import { ConditionalRenderingGroupKind } from '@grafana/schema/dist/esm/schema/dashboard/v2';
+import {
+  type SceneComponentProps,
+  type SceneObject,
+  SceneObjectBase,
+  type SceneObjectRef,
+  type SceneObjectState,
+} from '@grafana/scenes';
+import { type ConditionalRenderingGroupKind } from '@grafana/schema/apis/dashboard.grafana.app/v2';
 import { Stack } from '@grafana/ui';
 
-import { ConditionalRenderingChangedEvent, dashboardEditActions } from '../../edit-pane/shared';
-import { getDashboardSceneFor } from '../../utils/utils';
+import { edit } from '../../actions/utils/edit';
+import { ConditionalRenderingChangedEvent } from '../../sidebar/events';
+import { getUserDefinedVariables, useUserDefinedVariables } from '../../utils/variables';
 import { ConditionalRenderingData } from '../conditions/ConditionalRenderingData';
 import { ConditionalRenderingTimeRangeSize } from '../conditions/ConditionalRenderingTimeRangeSize';
 import { ConditionalRenderingVariable } from '../conditions/ConditionalRenderingVariable';
 import { conditionalRenderingSerializerRegistry } from '../conditions/serializers';
-import { ConditionalRenderingConditions } from '../conditions/types';
+import { type ConditionalRenderingConditions } from '../conditions/types';
 import { extractObjectType, getTranslatedObjectType } from '../object';
 
 import { ConditionalRenderingGroupAdd } from './ConditionalRenderingGroupAdd';
 import { ConditionalRenderingGroupCondition } from './ConditionalRenderingGroupCondition';
 import { ConditionalRenderingGroupVisibility } from './ConditionalRenderingGroupVisibility';
-import { GroupConditionCondition, GroupConditionConditionType, GroupConditionVisibility } from './types';
+import { type GroupConditionCondition, type GroupConditionConditionType, type GroupConditionVisibility } from './types';
 
 export interface ConditionalRenderingGroupState extends SceneObjectState {
   conditions: ConditionalRenderingConditions[];
@@ -33,6 +40,7 @@ export class ConditionalRenderingGroup extends SceneObjectBase<ConditionalRender
 
   private _shouldShow: boolean;
   private _shouldMatchAll: boolean;
+  private _target?: SceneObjectRef<SceneObject>;
 
   public constructor(state: ConditionalRenderingGroupState) {
     super(state);
@@ -50,6 +58,19 @@ export class ConditionalRenderingGroup extends SceneObjectBase<ConditionalRender
     });
 
     this.check();
+  }
+
+  public setTarget(target: SceneObject | undefined) {
+    this._target = target ? target.getRef() : undefined;
+    this.forceCheck();
+  }
+
+  public getTarget(): SceneObject | undefined {
+    return this._target?.resolve();
+  }
+
+  public forceCheck() {
+    this.state.conditions.forEach((condition) => condition.forceCheck());
   }
 
   public check() {
@@ -100,9 +121,10 @@ export class ConditionalRenderingGroup extends SceneObjectBase<ConditionalRender
         return ConditionalRenderingTimeRangeSize.createEmpty();
 
       case 'variable':
-        return ConditionalRenderingVariable.createEmpty(
-          sceneGraph.getVariables(getDashboardSceneFor(this)).state.variables[0].state.name
-        );
+        const variables = getUserDefinedVariables(this);
+        // The code should not be hit when variables.length === 0 because we grey out the form if there are no variables
+        // but was added to avoid potential runtime errors if the UX changes and the section is not disabled.
+        return ConditionalRenderingVariable.createEmpty(variables.length ? variables[0].state.name : '');
     }
   }
 
@@ -186,7 +208,8 @@ export class ConditionalRenderingGroup extends SceneObjectBase<ConditionalRender
 
 function ConditionalRenderingGroupRenderer({ model }: SceneComponentProps<ConditionalRenderingGroup>) {
   const { condition, visibility, conditions } = model.useState();
-  const { variables } = sceneGraph.getVariables(model).useState();
+  const variables = useUserDefinedVariables(model);
+
   const objectType = useMemo(() => extractObjectType(model.parent), [model]);
 
   return (
@@ -195,7 +218,7 @@ function ConditionalRenderingGroupRenderer({ model }: SceneComponentProps<Condit
         objectType={objectType}
         value={visibility}
         onChange={(value) => {
-          dashboardEditActions.edit({
+          edit({
             description: t('dashboard.conditional-rendering.conditions.group.visibility.label', '{{type}} visibility', {
               type: getTranslatedObjectType(objectType),
             }),
@@ -209,7 +232,7 @@ function ConditionalRenderingGroupRenderer({ model }: SceneComponentProps<Condit
         <ConditionalRenderingGroupCondition
           value={condition}
           onChange={(value) => {
-            dashboardEditActions.edit({
+            edit({
               description: t('dashboard.conditional-rendering.conditions.group.condition.label', 'Match rules'),
               source: model,
               perform: () => model.changeCondition(value),
@@ -218,14 +241,14 @@ function ConditionalRenderingGroupRenderer({ model }: SceneComponentProps<Condit
           }}
         />
       )}
-      {conditions.map((currentCondition) => currentCondition.render())}
+      {conditions.map((currentCondition) => currentCondition.renderCmp())}
       <ConditionalRenderingGroupAdd
         objectType={objectType}
         hasVariables={variables.length > 0}
         onAdd={({ value, label }) => {
           const condition = model.createCondition(value!);
 
-          dashboardEditActions.edit({
+          edit({
             description: t('dashboard.edit-actions.add-conditional-rule', 'Add {{ruleDescription}} rule', {
               ruleDescription: lowerCase(label),
             }),

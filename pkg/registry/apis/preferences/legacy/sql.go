@@ -4,26 +4,17 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"slices"
 	"strconv"
 	"time"
 
 	authlib "github.com/grafana/authlib/types"
-	preferences "github.com/grafana/grafana/apps/preferences/pkg/apis/preferences/v1alpha1"
+	"github.com/grafana/grafana-app-sdk/logging"
+	preferences "github.com/grafana/grafana/apps/preferences/pkg/apis/preferences/v1"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	pref "github.com/grafana/grafana/pkg/services/preference"
 	"github.com/grafana/grafana/pkg/storage/legacysql"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate"
 )
-
-type dashboardStars struct {
-	OrgID   int64
-	UserUID string
-	First   int64
-	Last    int64
-
-	Dashboards []string
-}
 
 type preferenceModel struct {
 	ID               int64
@@ -48,92 +39,10 @@ func NewLegacySQL(db legacysql.LegacyDatabaseProvider) *LegacySQL {
 	return &LegacySQL{db: db, startup: time.Now()}
 }
 
-// NOTE: this does not support paging -- lets check if that will be a problem in cloud
-func (s *LegacySQL) GetStars(ctx context.Context, orgId int64, user string) ([]dashboardStars, int64, error) {
-	var max sql.NullString
-	sql, err := s.db(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
-
-	req := newStarQueryReq(sql, user, orgId)
-
-	q, err := sqltemplate.Execute(sqlStarsQuery, req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("execute template %q: %w", sqlStarsQuery.Name(), err)
-	}
-
-	sess := sql.DB.GetSqlxSession()
-	rows, err := sess.Query(ctx, q, req.GetArgs()...)
-	defer func() {
-		if rows != nil {
-			_ = rows.Close()
-		}
-	}()
-
-	stars := []dashboardStars{}
-	current := &dashboardStars{}
-	var orgID int64
-	var userUID string
-	var dashboardUID string
-	var updated time.Time
-
-	for rows.Next() {
-		err := rows.Scan(&orgID, &userUID, &dashboardUID, &updated)
-		if err != nil {
-			return nil, 0, err
-		}
-
-		if orgID != current.OrgID || userUID != current.UserUID {
-			if current.UserUID != "" {
-				stars = append(stars, *current)
-			}
-			current = &dashboardStars{
-				OrgID:   orgID,
-				UserUID: userUID,
-			}
-		}
-		ts := updated.UnixMilli()
-		if ts > current.Last {
-			current.Last = ts
-		}
-		if ts < current.First || current.First == 0 {
-			current.First = ts
-		}
-		current.Dashboards = append(current.Dashboards, dashboardUID)
-	}
-
-	// Add the last value
-	if current.UserUID != "" {
-		stars = append(stars, *current)
-	}
-
-	// Find the RV unless it is a user query
-	if userUID == "" {
-		req.Reset()
-		q, err = sqltemplate.Execute(sqlStarsRV, req)
-		if err != nil {
-			return nil, 0, fmt.Errorf("execute template %q: %w", sqlPreferencesRV.Name(), err)
-		}
-		err = sess.Get(ctx, &max, q)
-		if err != nil {
-			return nil, 0, fmt.Errorf("unable to get RV %w", err)
-		}
-		if max.Valid && max.String != "" {
-			fmt.Printf("max RV: %s\n", max.String)
-		} else {
-			updated = s.startup
-		}
-	}
-
-	return stars, updated.UnixMilli(), err
-}
-
 // List all defined preferences in an org (valid for admin users only)
 func (s *LegacySQL) listPreferences(ctx context.Context,
 	ns string, orgId int64,
 	cb func(req *preferencesQuery) (bool, error),
-	access func(p *preferenceModel) bool,
 ) ([]preferences.Preferences, int64, error) {
 	var results []preferences.Preferences
 	var rv sql.NullTime
@@ -157,23 +66,18 @@ func (s *LegacySQL) listPreferences(ctx context.Context,
 
 	sess := sql.DB.GetSqlxSession()
 	rows, err := sess.Query(ctx, q, req.GetArgs()...)
+	if err != nil {
+		return nil, 0, err
+	}
 	defer func() {
 		if rows != nil {
 			_ = rows.Close()
 		}
 	}()
 
-	for rows.Next() {
-		// SELECT p.id, p.org_id,
-		//   p.json_data,
-		//   p.timezone,
-		//   p.theme,
-		//   p.week_start,
-		//   p.home_dashboard_uid,
-		//   u.uid as user_uid,
-		//   t.uid as team_uid,
-		//   p.created, p.updated
+	var userID, teamID int64 // detect orphan users & teams
 
+	for rows.Next() {
 		pref := preferenceModel{}
 		err := rows.Scan(&pref.ID, &pref.OrgID,
 			&pref.JSONData,
@@ -181,22 +85,34 @@ func (s *LegacySQL) listPreferences(ctx context.Context,
 			&pref.Theme,
 			&pref.WeekStart,
 			&pref.HomeDashboardUID,
-			&pref.UserUID, &pref.TeamUID,
+			&userID, &pref.UserUID,
+			&teamID, &pref.TeamUID,
 			&pref.Created, &pref.Updated)
 		if err != nil {
 			return nil, 0, err
 		}
+
+		if userID > 0 && !pref.UserUID.Valid {
+			logging.FromContext(ctx).Warn("skipping orphan user", "userID", userID)
+			continue
+		}
+		if teamID > 0 && !pref.TeamUID.Valid {
+			logging.FromContext(ctx).Warn("skipping orphan team", "teamID", teamID)
+			continue
+		}
+
 		if pref.Updated.After(rv.Time) {
 			rv.Time = pref.Updated
 		}
-		if !access(&pref) {
-			continue // user does not have access
-		}
 		results = append(results, asPreferencesResource(ns, &pref))
+	}
+	if err = rows.Err(); err != nil {
+		return nil, 0, err
 	}
 
 	if needsRV {
 		req.Reset()
+		req.All = true // Avoid validation error
 		q, err = sqltemplate.Execute(sqlPreferencesRV, req)
 		if err != nil {
 			return nil, 0, fmt.Errorf("execute template %q: %w", sqlPreferencesRV.Name(), err)
@@ -206,7 +122,10 @@ func (s *LegacySQL) listPreferences(ctx context.Context,
 			return nil, 0, fmt.Errorf("unable to get RV %w", err)
 		}
 		if max.Valid && max.String != "" {
-			fmt.Printf("max RV: %s\n", max.String)
+			t, _ := time.Parse(time.RFC3339, max.String)
+			if !t.IsZero() {
+				rv.Time = t
+			}
 		} else {
 			rv.Time = s.startup
 		}
@@ -214,6 +133,7 @@ func (s *LegacySQL) listPreferences(ctx context.Context,
 	return results, rv.Time.UnixMilli(), err
 }
 
+// Note sending a null user will list all preferences in the namespace!
 func (s *LegacySQL) ListPreferences(ctx context.Context, ns string, user identity.Requester, needsRV bool) (*preferences.PreferencesList, error) {
 	if ns == "" {
 		return nil, fmt.Errorf("namespace is required")
@@ -224,28 +144,15 @@ func (s *LegacySQL) ListPreferences(ctx context.Context, ns string, user identit
 		return nil, err
 	}
 
-	// when the user is nil, it is actually admin and can see everything
-	var teams []string
 	found, rv, err := s.listPreferences(ctx, ns, info.OrgID,
 		func(req *preferencesQuery) (bool, error) {
 			if user != nil {
-				req.UserUID = user.GetRawIdentifier()
-				teams, err = s.GetTeams(ctx, info.OrgID, req.UserUID, false)
-				req.UserTeams = teams
+				req.UserUID = user.GetIdentifier()
+				req.UserTeams = user.GetGroups()
+			} else {
+				req.All = true
 			}
 			return needsRV, err
-		},
-		func(p *preferenceModel) bool {
-			if user == nil || user.GetIsGrafanaAdmin() {
-				return true
-			}
-			if p.UserUID.String != "" {
-				return user.GetRawIdentifier() == p.UserUID.String
-			}
-			if p.TeamUID.String != "" {
-				return slices.Contains(teams, p.TeamUID.String)
-			}
-			return true
 		},
 	)
 	if err != nil {
@@ -260,20 +167,14 @@ func (s *LegacySQL) ListPreferences(ctx context.Context, ns string, user identit
 	return list, nil
 }
 
-func (s *LegacySQL) GetTeams(ctx context.Context, orgId int64, user string, admin bool) ([]string, error) {
+func (s *LegacySQL) getLegacyTeamID(ctx context.Context, orgId int64, team string) (int64, error) {
 	sql, err := s.db(ctx)
 	if err != nil {
-		return nil, err
+		return 0, err
 	}
 
-	req := newTeamsQueryReq(sql, orgId, user, admin)
-
-	q, err := sqltemplate.Execute(sqlTeams, req)
-	if err != nil {
-		return nil, fmt.Errorf("execute template %q: %w", sqlTeams.Name(), err)
-	}
-	teams := []string{}
+	var id int64
 	sess := sql.DB.GetSqlxSession()
-	err = sess.Select(ctx, &teams, q, req.GetArgs()...)
-	return teams, err
+	err = sess.Get(ctx, &id, "SELECT id FROM team WHERE org_id=? AND uid=?", orgId, team)
+	return id, err
 }

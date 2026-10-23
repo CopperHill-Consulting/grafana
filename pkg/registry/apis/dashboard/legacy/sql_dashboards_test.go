@@ -4,23 +4,22 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	dashboardV0 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v0alpha1"
-	dashboardV1 "github.com/grafana/grafana/apps/dashboard/pkg/apis/dashboard/v1beta1"
 	common "github.com/grafana/grafana/pkg/apimachinery/apis/common/v0alpha1"
-	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/apimachinery/utils"
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/provisioning"
-	"github.com/grafana/grafana/pkg/services/user"
+	"github.com/grafana/grafana/pkg/storage/legacysql"
+	"github.com/grafana/grafana/pkg/storage/unified/migrations"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate/mocks"
 )
 
 func TestScanRow(t *testing.T) {
@@ -32,10 +31,9 @@ func TestScanRow(t *testing.T) {
 	provisioner := provisioning.NewProvisioningServiceMock(context.Background())
 	provisioner.GetDashboardProvisionerResolvedPathFunc = func(name string) string { return "provisioner" }
 	store := &dashboardSqlAccess{
-		namespacer:                           func(_ int64) string { return "default" },
-		provisioning:                         provisioner,
-		log:                                  log.New("test"),
-		invalidDashboardParseFallbackEnabled: false,
+		namespacer:   func(_ int64) string { return "default" },
+		provisioning: provisioner,
+		log:          log.New("test"),
 	}
 
 	columns := []string{"orgId", "dashboard_id", "name", "title", "folder_uid", "deleted", "plugin_id", "origin_name", "origin_path", "origin_hash", "origin_ts", "created", "createdBy", "createdByID", "updated", "updatedBy", "updatedByID", "version", "message", "data", "api_version"}
@@ -191,39 +189,25 @@ func TestScanRow(t *testing.T) {
 		require.Equal(t, "dashboard.grafana.app/"+migrationAPIVersion, row.Dash.APIVersion)
 	})
 
-	t.Run("should follow dashboard template when failing to unmarshal dashboard if feature flag X is enabled", func(t *testing.T) {
+	t.Run("should follow dashboard template when failing to unmarshal dashboard", func(t *testing.T) {
 		// row with bad data
 		badData := []byte(`{"rows":[{"panels":[{"targets":[{"refId":"A","target":"aliasSub(alias, '^(.{27}).+', '\1...')"}]}]}]}`)
 		rows := sqlmock.NewRows(columns).AddRow(1, id, uid, title, folderUID, nil, "", "", "", "", 0, timestamp, createdUser, 0, timestamp, updatedUser, 0, version, message, badData, "vXyz")
 		mock.ExpectQuery("SELECT *").WillReturnRows(rows)
 		resultRows, err := mockDB.Query("SELECT *")
 		require.NoError(t, err)
-		defer resultRows.Close() // nolint:errcheck
+		defer func() {
+			_ = resultRows.Close()
+		}()
 		resultRows.Next()
 
-		row, err := store.scanRow(resultRows, false)
-		require.Error(t, err, "JSON unmarshal error for: Test Dashboard // invalid character '1' in string escape code")
-		require.NotNil(t, row)
-		// correctly scans these
-		require.Equal(t, uid, row.Dash.Name)
-		require.Equal(t, version, row.RV)
-		require.Equal(t, "default", row.Dash.Namespace)
-		require.Equal(t, &continueToken{orgId: int64(1), id: id}, row.token)
-
-		// failure case: does NOT parse the dashboard itself
-		require.Equal(t, common.Unstructured{
-			Object: nil,
-		}, row.Dash.Spec)
-
-		// store with feature flag enabled
 		store = &dashboardSqlAccess{
-			namespacer:                           func(_ int64) string { return "default" },
-			provisioning:                         provisioner,
-			log:                                  log.New("test"),
-			invalidDashboardParseFallbackEnabled: true,
+			namespacer:   func(_ int64) string { return "default" },
+			provisioning: provisioner,
+			log:          log.New("test"),
 		}
 
-		row, err = store.scanRow(resultRows, false)
+		row, err := store.scanRow(resultRows, false)
 		require.NoError(t, err)
 		require.NotNil(t, row)
 		require.Equal(t, uid, row.Dash.Name)
@@ -256,100 +240,6 @@ func TestScanRow(t *testing.T) {
 		require.True(t, ok, "content should be a string")
 		require.Equal(t, string(badData), contentStr, "content should match bad json data")
 	})
-}
-
-func TestBuildSaveDashboardCommand(t *testing.T) {
-	testCases := []struct {
-		name          string
-		schemaVersion int
-		expectedAPI   string
-	}{
-		{
-			name:          "with schema version 36 should save as v0",
-			schemaVersion: 36,
-			expectedAPI:   dashboardV0.VERSION,
-		},
-		// {
-		// 	name:          "with schema version 41 should save as v1",
-		// 	schemaVersion: 41,
-		// 	expectedAPI:   dashboardV1.VERSION,
-		// },
-		// {
-		// 	name:          "with empty schema version should save as v0",
-		// 	schemaVersion: 0,
-		// 	expectedAPI:   dashboardV0.VERSION,
-		// },
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			mockStore := &dashboards.FakeDashboardStore{}
-			access := &dashboardSqlAccess{
-				dashStore: mockStore,
-				log:       log.New("test"),
-			}
-
-			dashSpec := map[string]interface{}{
-				"title": "Test Dashboard",
-				"id":    123,
-			}
-
-			if tc.schemaVersion > 0 {
-				dashSpec["schemaVersion"] = tc.schemaVersion
-			}
-
-			dash := &dashboardV1.Dashboard{
-				TypeMeta: metav1.TypeMeta{
-					APIVersion: dashboardV1.APIVERSION,
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "test-dash",
-				},
-				Spec: common.Unstructured{
-					Object: dashSpec,
-				},
-			}
-
-			// fail if no user in context
-			_, _, err := access.buildSaveDashboardCommand(context.Background(), 1, dash)
-			require.Error(t, err)
-
-			ctx := identity.WithRequester(context.Background(), &user.SignedInUser{
-				OrgID:   1,
-				OrgRole: "Admin",
-			})
-			// create new dashboard
-			mockStore.On("GetDashboard", mock.Anything, mock.Anything).Return(nil, nil).Once()
-			cmd, created, err := access.buildSaveDashboardCommand(ctx, 1, dash)
-			require.NoError(t, err)
-			require.Equal(t, true, created)
-			require.NotNil(t, cmd)
-			require.Equal(t, "test-dash", cmd.Dashboard.Get("uid").MustString())
-			_, exists := cmd.Dashboard.CheckGet("id")
-			require.False(t, exists) // id should be removed
-			require.Equal(t, cmd.OrgID, int64(1))
-			require.True(t, cmd.Overwrite)
-			require.Equal(t, tc.expectedAPI, cmd.APIVersion) // verify expected API version
-
-			// now update existing dashboard
-			mockStore.On("GetDashboard", mock.Anything, mock.Anything).Return(
-				&dashboards.Dashboard{
-					ID:         1234,
-					Version:    2,
-					APIVersion: dashboardV1.VERSION,
-				}, nil).Once()
-			cmd, created, err = access.buildSaveDashboardCommand(ctx, 1, dash)
-			require.NoError(t, err)
-			require.Equal(t, false, created)
-			require.NotNil(t, cmd)
-			require.Equal(t, "test-dash", cmd.Dashboard.Get("uid").MustString())
-			require.Equal(t, cmd.Dashboard.Get("id").MustInt64(), int64(1234))       // should set to existing ID
-			require.Equal(t, cmd.Dashboard.Get("version").MustFloat64(), float64(2)) // version must be set - otherwise seen as a new dashboard in NewDashboardFromJson
-			require.Equal(t, tc.expectedAPI, cmd.APIVersion)                         // verify expected API version
-			require.Equal(t, cmd.OrgID, int64(1))
-			require.True(t, cmd.Overwrite)
-		})
-	}
 }
 
 func TestParseLibraryPanelRow(t *testing.T) {
@@ -491,5 +381,252 @@ func TestParseLibraryPanelRow(t *testing.T) {
 		updatedTimestamp, err := meta.GetUpdatedTimestamp()
 		require.NoError(t, err)
 		require.Nil(t, updatedTimestamp)
+	})
+}
+
+func TestRowsWrapper_PropagatesRowsErr(t *testing.T) {
+	mockDB, smock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = mockDB.Close()
+	}()
+
+	provisioner := provisioning.NewProvisioningServiceMock(context.Background())
+	provisioner.GetDashboardProvisionerResolvedPathFunc = func(name string) string { return "provisioner" }
+	store := &dashboardSqlAccess{
+		namespacer:   func(_ int64) string { return "default" },
+		provisioning: provisioner,
+		log:          log.New("test"),
+	}
+
+	columns := []string{"orgId", "dashboard_id", "name", "title", "folder_uid", "deleted", "plugin_id", "origin_name", "origin_path", "origin_hash", "origin_ts", "created", "createdBy", "createdByID", "updated", "updatedBy", "updatedByID", "version", "message", "data", "api_version"}
+	timestamp := time.Now()
+
+	t.Run("rows.Err after partial iteration is surfaced via Error()", func(t *testing.T) {
+		// Simulate: first row succeeds, second row triggers a rows.Err()
+		simulatedErr := fmt.Errorf("connection reset by peer")
+		rows := sqlmock.NewRows(columns).
+			AddRow(1, int64(1), "uid1", "Dashboard 1", "folder1", nil, "", "", "", "", 0, timestamp, "creator", 0, timestamp, "updater", 0, int64(1), "msg", []byte(`{"key":"value"}`), "v0alpha1").
+			RowError(1, simulatedErr). // error on second row
+			AddRow(1, int64(2), "uid2", "Dashboard 2", "folder1", nil, "", "", "", "", 0, timestamp, "creator", 0, timestamp, "updater", 0, int64(1), "msg", []byte(`{"key":"value"}`), "v0alpha1")
+
+		smock.ExpectQuery("SELECT").WillReturnRows(rows)
+		sqlRows, err := mockDB.Query("SELECT")
+		require.NoError(t, err)
+
+		wrapper := &rowsWrapper{
+			rows:    sqlRows,
+			a:       store,
+			history: false,
+		}
+		defer func() {
+			_ = wrapper.Close()
+		}()
+
+		// First call should succeed
+		require.True(t, wrapper.Next())
+		require.NoError(t, wrapper.Error())
+		require.Equal(t, "uid1", wrapper.Name())
+
+		// Second call should return false and surface the rows.Err()
+		require.False(t, wrapper.Next())
+		require.Error(t, wrapper.Error())
+		require.ErrorContains(t, wrapper.Error(), "connection reset by peer")
+	})
+
+	t.Run("rows.Err on first row surfaces error and returns no rows", func(t *testing.T) {
+		// Simulate: error on the very first row — migration would see 0 rows
+		simulatedErr := fmt.Errorf("database is locked")
+		rows := sqlmock.NewRows(columns).
+			RowError(0, simulatedErr).
+			AddRow(1, int64(1), "uid1", "Dashboard 1", "folder1", nil, "", "", "", "", 0, timestamp, "creator", 0, timestamp, "updater", 0, int64(1), "msg", []byte(`{"key":"value"}`), "v0alpha1")
+
+		smock.ExpectQuery("SELECT").WillReturnRows(rows)
+		sqlRows, err := mockDB.Query("SELECT")
+		require.NoError(t, err)
+
+		wrapper := &rowsWrapper{
+			rows:    sqlRows,
+			a:       store,
+			history: false,
+		}
+		defer func() {
+			_ = wrapper.Close()
+		}()
+
+		// First call should return false (error on first row)
+		require.False(t, wrapper.Next())
+		// The error from rows.Err() must be surfaced
+		require.Error(t, wrapper.Error(), "rows.Err() must be propagated to wrapper.Error()")
+		require.ErrorContains(t, wrapper.Error(), "database is locked")
+	})
+
+	t.Run("no error when all rows are consumed successfully", func(t *testing.T) {
+		rows := sqlmock.NewRows(columns).
+			AddRow(1, int64(1), "uid1", "Dashboard 1", "folder1", nil, "", "", "", "", 0, timestamp, "creator", 0, timestamp, "updater", 0, int64(1), "msg", []byte(`{"key":"value"}`), "v0alpha1").
+			AddRow(1, int64(2), "uid2", "Dashboard 2", "folder1", nil, "", "", "", "", 0, timestamp, "creator", 0, timestamp, "updater", 0, int64(1), "msg", []byte(`{"key":"value"}`), "v0alpha1")
+
+		smock.ExpectQuery("SELECT").WillReturnRows(rows)
+		sqlRows, err := mockDB.Query("SELECT")
+		require.NoError(t, err)
+
+		wrapper := &rowsWrapper{
+			rows:    sqlRows,
+			a:       store,
+			history: false,
+		}
+		defer func() {
+			_ = wrapper.Close()
+		}()
+
+		require.True(t, wrapper.Next())
+		require.NoError(t, wrapper.Error())
+		require.True(t, wrapper.Next())
+		require.NoError(t, wrapper.Error())
+		require.False(t, wrapper.Next())
+		require.NoError(t, wrapper.Error(), "no error expected when all rows consumed successfully")
+	})
+}
+
+func TestDashboardMigrationQuery(t *testing.T) {
+	// Test that migration queries use AllowFallback flag correctly
+	nodb := &legacysql.LegacyDatabaseHelper{
+		Table: func(n string) string {
+			return "grafana." + n
+		},
+	}
+
+	t.Run("Migration query should enable AllowFallback flag", func(t *testing.T) {
+		// Create a migration query as would be used in actual migration
+		migrationQuery := &DashboardQuery{
+			OrgID:         1,
+			GetHistory:    true,  // Migration includes history
+			AllowFallback: true,  // This is the key flag for migration
+			Order:         "ASC", // Migration uses ascending order
+		}
+
+		// Verify UseHistoryTable returns true (requirement for COALESCE logic)
+		require.True(t, migrationQuery.UseHistoryTable(), "Migration query should use history table")
+
+		// Verify the flag is set correctly
+		require.True(t, migrationQuery.AllowFallback, "Migration query should allow fallback")
+		require.True(t, migrationQuery.GetHistory, "Migration query should get history")
+		require.Equal(t, "ASC", migrationQuery.Order, "Migration should use ascending order")
+	})
+
+	t.Run("Regular history query should not use AllowFallback", func(t *testing.T) {
+		// Regular history query without migration
+		historyQuery := &DashboardQuery{
+			OrgID:      1,
+			GetHistory: true,
+			Order:      "DESC",
+		}
+
+		require.True(t, historyQuery.UseHistoryTable(), "History query should use history table")
+		require.False(t, historyQuery.AllowFallback, "Regular history query should not allow fallback")
+		require.True(t, historyQuery.GetHistory, "History query should get history")
+	})
+
+	t.Run("Migration query template produces COALESCE SQL", func(t *testing.T) {
+		// Test that the SQL template produces COALESCE logic for migration queries
+		migrationQuery := &DashboardQuery{
+			OrgID:         1,
+			GetHistory:    true,
+			AllowFallback: true,
+			Order:         "ASC",
+		}
+
+		req := newQueryReq(nodb, migrationQuery)
+		req.SQLTemplate = mocks.NewTestingSQLTemplate()
+
+		// Execute the template to get the generated SQL
+		rawQuery, err := sqltemplate.Execute(sqlQueryDashboards, &req)
+		require.NoError(t, err)
+
+		sql := rawQuery
+
+		// Verify that COALESCE functions are present in the generated SQL
+		// These should be used when GetHistory=true AND AllowFallback=true
+		require.Contains(t, sql, "COALESCE(dashboard_version.created, dashboard.updated)",
+			"Migration SQL should contain COALESCE for updated timestamp")
+		require.Contains(t, sql, "COALESCE(dashboard_version.version, dashboard.version)",
+			"Migration SQL should contain COALESCE for version")
+		require.Contains(t, sql, "COALESCE(dashboard_version.data, dashboard.data)",
+			"Migration SQL should contain COALESCE for data")
+		require.Contains(t, sql, "COALESCE(dashboard_version.api_version, dashboard.api_version)",
+			"Migration SQL should contain COALESCE for api_version")
+		require.Contains(t, sql, "COALESCE(dashboard_version.message, '')",
+			"Migration SQL should contain COALESCE for message with empty string fallback")
+
+		// Verify ORDER BY uses COALESCE as well
+		require.Contains(t, sql, "COALESCE(dashboard_version.created, dashboard.updated) ASC",
+			"Migration SQL should ORDER BY COALESCED created timestamp")
+		require.Contains(t, sql, "COALESCE(dashboard_version.version, dashboard.version) ASC",
+			"Migration SQL should ORDER BY COALESCED version")
+
+		// Verify it doesn't have the strict history table filter that would exclude NULL version entries
+		require.NotContains(t, sql, "dashboard_version.id IS NOT NULL",
+			"Migration SQL should not exclude dashboards without version entries")
+	})
+
+	t.Run("Regular history query produces strict SQL", func(t *testing.T) {
+		// Test that regular history queries still use strict dashboard_version fields
+		historyQuery := &DashboardQuery{
+			OrgID:      1,
+			GetHistory: true,
+			Order:      "DESC",
+		}
+
+		req := newQueryReq(nodb, historyQuery)
+		req.SQLTemplate = mocks.NewTestingSQLTemplate()
+
+		rawQuery, err := sqltemplate.Execute(sqlQueryDashboards, &req)
+		require.NoError(t, err)
+
+		sql := rawQuery
+
+		// Verify that direct dashboard_version fields are used (no COALESCE)
+		require.Contains(t, sql, "dashboard_version.created as updated",
+			"Regular history SQL should use direct dashboard_version.created")
+		require.Contains(t, sql, "dashboard_version.version",
+			"Regular history SQL should use direct dashboard_version.version")
+		require.Contains(t, sql, "dashboard_version.data",
+			"Regular history SQL should use direct dashboard_version.data")
+
+		// NOTE: We intentionally do NOT add dashboard_version.id IS NOT NULL filter
+		// to allow for cases where dashboard_version entries might be missing
+
+		// Should not contain COALESCE functions
+		require.NotContains(t, sql, "COALESCE(dashboard_version.created, dashboard.updated)",
+			"Regular history SQL should not contain COALESCE for updated")
+	})
+}
+
+func TestMigrateDashboardsConfiguration(t *testing.T) {
+	// Test the actual migration function configuration
+
+	t.Run("Migration options should configure query correctly", func(t *testing.T) {
+		// Test the migration configuration as used in real migration
+		opts := migrations.MigrateOptions{
+			WithHistory: true, // Migration includes history
+		}
+
+		// This simulates what happens in migrateDashboards function
+		expectedQuery := &DashboardQuery{
+			OrgID:         1,
+			Limit:         100000000,
+			GetHistory:    opts.WithHistory, // Should be true
+			AllowFallback: true,             // Should be true for migration
+			Order:         "ASC",            // Should be ASC for migration
+		}
+
+		// Verify the configuration matches what migration sets up
+		require.True(t, expectedQuery.GetHistory, "Migration should enable GetHistory")
+		require.True(t, expectedQuery.AllowFallback, "Migration should enable AllowFallback")
+		require.Equal(t, "ASC", expectedQuery.Order, "Migration should use ascending order")
+		require.Equal(t, 100000000, expectedQuery.Limit, "Migration should use large limit")
+
+		// Verify UseHistoryTable logic
+		require.True(t, expectedQuery.UseHistoryTable(), "Migration query should use history table")
 	})
 }

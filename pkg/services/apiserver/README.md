@@ -2,11 +2,6 @@
 
 ## Basic Setup
 
-```ini
-[feature_toggles]
-kubernetesPlaylists = true
-```
-
 Start Grafana:
 
 ```bash
@@ -61,13 +56,11 @@ For kubectl to work, grafana needs to run over https.  To simplify development, 
 ```ini
 app_mode = development
 
-[feature_toggles]
-grafanaAPIServerEnsureKubectlAccess = true
-kubernetesPlaylists = true
+[grafana-apiserver]
+dev_mode_enabled = true
 
 [unified_storage.playlists.playlist.grafana.app]
 dualWriterMode = 2
-dualWriterPeriodicDataSyncJobEnabled = true
 ```
 
 This will create a development kubeconfig and start a parallel ssl listener.  It can be registered by

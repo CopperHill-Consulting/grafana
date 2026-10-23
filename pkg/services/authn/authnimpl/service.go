@@ -113,6 +113,7 @@ func (s *Service) Authenticate(ctx context.Context, r *authn.Request) (*authn.Id
 		return nil, err
 	}
 	r.OrgID = orgID
+	ctx = identity.WithOrgID(ctx, orgID)
 
 	var authErr error
 	for _, item := range s.clientQueue.items {
@@ -121,7 +122,8 @@ func (s *Service) Authenticate(ctx context.Context, r *authn.Request) (*authn.Id
 			if err != nil {
 				// Note: special case for token rotation
 				// We don't want to fallthrough in this case
-				if errors.Is(err, authn.ErrTokenNeedsRotation) {
+				var tokenRotationErr authn.TokenNeedsRotationError
+				if errors.As(err, &tokenRotationErr) {
 					return nil, err
 				}
 
@@ -167,12 +169,20 @@ func (s *Service) authenticate(ctx context.Context, c authn.Client, r *authn.Req
 		span.SetAttributes(attribute.StringSlice("identity.ClientParams.FetchPermissionsParams.RestrictedActions", identity.ClientParams.FetchPermissionsParams.RestrictedActions))
 	}
 
+	if len(identity.ClientParams.FetchPermissionsParams.K8sRestrictedActions) > 0 {
+		span.SetAttributes(attribute.StringSlice("identity.ClientParams.FetchPermissionsParams.K8sRestrictedActions", identity.ClientParams.FetchPermissionsParams.K8sRestrictedActions))
+	}
+
 	if len(identity.ClientParams.FetchPermissionsParams.Roles) > 0 {
 		span.SetAttributes(attribute.StringSlice("identity.ClientParams.FetchPermissionsParams.Roles", identity.ClientParams.FetchPermissionsParams.Roles))
 	}
 
 	if len(identity.ClientParams.FetchPermissionsParams.AllowedActions) > 0 {
 		span.SetAttributes(attribute.StringSlice("identity.ClientParams.FetchPermissionsParams.AllowedActions", identity.ClientParams.FetchPermissionsParams.AllowedActions))
+	}
+
+	if len(identity.ClientParams.FetchPermissionsParams.K8s) > 0 {
+		span.SetAttributes(attribute.StringSlice("identity.ClientParams.FetchPermissionsParams.K8sAllowedActions", identity.ClientParams.FetchPermissionsParams.K8s))
 	}
 
 	if err := s.runPostAuthHooks(ctx, identity, r); err != nil {
@@ -227,7 +237,7 @@ func (s *Service) Login(ctx context.Context, client string, r *authn.Request) (i
 
 	c, ok := s.clients[client]
 	if !ok {
-		s.metrics.failedLogin.WithLabelValues(client).Inc()
+		s.metrics.failedLogin.WithLabelValues("unknown").Inc()
 		return nil, authn.ErrClientNotConfigured.Errorf("client not configured: %s", client)
 	}
 
@@ -537,19 +547,26 @@ func parseNamespace(path string) string {
 	return parts[0]
 }
 
-// name of query string used to target specific org for request
-const orgIDTargetQuery = "targetOrgId"
+const (
+	orgIDQuery       = "orgId"       // sent by Grafana frontend (preferred)
+	orgIDTargetQuery = "targetOrgId" // legacy API caller param
+)
 
 func orgIDFromQuery(req *http.Request) int64 {
 	params := req.URL.Query()
-	if !params.Has(orgIDTargetQuery) {
-		return 0
+	// Prefer orgId (frontend) over targetOrgId (legacy). Fall through on
+	// parse failure so a malformed value doesn't mask a valid one.
+	for _, key := range []string{orgIDQuery, orgIDTargetQuery} {
+		if !params.Has(key) {
+			continue
+		}
+		id, err := strconv.ParseInt(params.Get(key), 10, 64)
+		if err != nil {
+			continue
+		}
+		return id
 	}
-	id, err := strconv.ParseInt(params.Get(orgIDTargetQuery), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return id
+	return 0
 }
 
 // name of header containing org id for request

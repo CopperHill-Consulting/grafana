@@ -1,6 +1,8 @@
 package utils
 
-import "strings"
+import (
+	"strings"
+)
 
 // +enum
 type ResourceOwner string
@@ -17,15 +19,15 @@ const (
 )
 
 type OwnerReference struct {
-	Owner ResourceOwner // the resource owner
-	Name  string        // the team|user name
+	Owner      ResourceOwner // the resource owner
+	Identifier string        // the team|user name
 }
 
 func (o OwnerReference) AsName() string {
-	if o.Name == "" || o.Owner == NamespaceResourceOwner {
+	if o.Identifier == "" || o.Owner == NamespaceResourceOwner {
 		return string(o.Owner)
 	}
-	return string(o.Owner) + "-" + o.Name
+	return string(o.Owner) + "-" + o.Identifier
 }
 
 func ParseOwnerFromName(name string) (OwnerReference, bool) {
@@ -33,12 +35,33 @@ func ParseOwnerFromName(name string) (OwnerReference, bool) {
 	if found && len(after) > 0 {
 		switch before {
 		case "user":
-			return OwnerReference{Owner: UserResourceOwner, Name: after}, true
+			return OwnerReference{Owner: UserResourceOwner, Identifier: after}, true
 		case "team":
-			return OwnerReference{Owner: TeamResourceOwner, Name: after}, true
+			return OwnerReference{Owner: TeamResourceOwner, Identifier: after}, true
 		}
 	} else if name == "namespace" {
 		return OwnerReference{Owner: NamespaceResourceOwner}, true
 	}
 	return OwnerReference{}, false
+}
+
+// UserOwner returns the resource owner reference for the signed-in user.
+func UserOwner(userUID string) OwnerReference {
+	return OwnerReference{
+		Owner:      UserResourceOwner,
+		Identifier: userUID,
+	}
+}
+
+// TeamOwner returns the resource owner reference for the given team UID.
+func TeamOwner(teamUID string) OwnerReference {
+	return OwnerReference{
+		Owner:      TeamResourceOwner,
+		Identifier: teamUID,
+	}
+}
+
+// NamespaceOwner returns the resource owner reference for org-wide preferences.
+func NamespaceOwner() OwnerReference {
+	return OwnerReference{Owner: NamespaceResourceOwner}
 }

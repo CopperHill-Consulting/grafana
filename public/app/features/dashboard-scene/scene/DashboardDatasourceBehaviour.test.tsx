@@ -1,14 +1,14 @@
 import { map, of } from 'rxjs';
 
 import {
-  DataQuery,
-  DataQueryRequest,
-  DataSourceApi,
-  DataSourceJsonData,
-  DataSourceRef,
+  type DataQuery,
+  type DataQueryRequest,
+  type DataSourceApi,
+  type DataSourceJsonData,
+  type DataSourceRef,
   getDefaultTimeRange,
   LoadingState,
-  PanelData,
+  type PanelData,
 } from '@grafana/data';
 import { getPanelPlugin } from '@grafana/data/test';
 import { setPluginImportUtils } from '@grafana/runtime';
@@ -198,10 +198,10 @@ describe('DashboardDatasourceBehaviour', () => {
 
       expect(spy).toHaveBeenCalledTimes(1);
       // since there is no previous request ID on dashboard load, the behaviour should not re-run queries
-      expect(behaviour['prevRequestId']).toBeUndefined();
+      expect(behaviour['prevRequestIds'].size).toBe(0);
     });
 
-    it('Should not re-run queries in behaviour on scene load', async () => {
+    it('Should re-run queries when source panel data arrives on scene load', async () => {
       const sourcePanel = new VizPanel({
         title: 'Panel A',
         pluginId: 'table',
@@ -240,9 +240,13 @@ describe('DashboardDatasourceBehaviour', () => {
 
       await new Promise((r) => setTimeout(r, 1));
 
-      expect(spy).toHaveBeenCalledTimes(1);
-      // since there is no previous request ID on dashboard load, the behaviour should not re-run queries
-      expect(behaviour['prevRequestId']).toBeUndefined();
+      // Called twice: once for the initial activation query, and once when the
+      // source panel's data arrives via the onSourceDataChange subscription.
+      // The second call ensures the dashboard DS panel picks up the source
+      // panel's completed data (prevents stale data when it activates first).
+      expect(spy).toHaveBeenCalledTimes(2);
+      // prevRequestIds should still be empty — no deactivate/reactivate cycle occurred
+      expect(behaviour['prevRequestIds'].size).toBe(0);
     });
 
     it('Should exit behaviour early if not in a dashboard scene', async () => {
@@ -593,6 +597,373 @@ describe('DashboardDatasourceBehaviour', () => {
 
       expect(spy).toHaveBeenCalled();
     });
+
+    it('Should re-run query when ANY source panel changes with multiple dashboardDS queries', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      // Create two source panels
+      const sourcePanel1 = new VizPanel({
+        title: 'Panel A',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const sourcePanel2 = new VizPanel({
+        title: 'Panel B',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      // Create a mixed DS panel that references BOTH source panels
+      const mixedDSPanel = new VizPanel({
+        title: 'Panel C - Mixed',
+        pluginId: 'table',
+        key: 'panel-3',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'A',
+                panelId: 1,
+              },
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 2,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel1, sourcePanel2, mixedDSPanel]),
+      });
+
+      const sceneDeactivate = activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(mixedDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      // deactivate scene
+      sceneDeactivate();
+
+      // Only change the SECOND source panel
+      (sourcePanel2.state.$data!.state.$data as SceneQueryRunner).runQueries();
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      // activate scene again
+      activateFullSceneTree(scene);
+
+      // Should re-run because the second panel changed
+      expect(spy).toHaveBeenCalled();
+    });
+
+    it('Should track multiple dashboardDS queries independently', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel1 = new VizPanel({
+        title: 'Panel A',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const sourcePanel2 = new VizPanel({
+        title: 'Panel B',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const mixedDSPanel = new VizPanel({
+        title: 'Panel C - Mixed',
+        pluginId: 'table',
+        key: 'panel-3',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'A',
+                panelId: 1,
+              },
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 2,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel1, sourcePanel2, mixedDSPanel]),
+      });
+
+      const sceneDeactivate = activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(mixedDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      // First cycle: change panel 1
+      sceneDeactivate();
+      (sourcePanel1.state.$data!.state.$data as SceneQueryRunner).runQueries();
+      await new Promise((r) => setTimeout(r, 1));
+      const deactivate2 = activateFullSceneTree(scene);
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Second cycle: change panel 2
+      deactivate2();
+      (sourcePanel2.state.$data!.state.$data as SceneQueryRunner).runQueries();
+      await new Promise((r) => setTimeout(r, 1));
+      activateFullSceneTree(scene);
+
+      // Should have been called again for panel 2
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('Should handle multiple dashboardDS queries with library panels', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const libPanelBehavior1 = new LibraryPanelBehavior({
+        isLoaded: false,
+        uid: 'lib-panel-1',
+        name: 'Library Panel 1',
+        _loadedPanel: undefined,
+      });
+
+      const libPanelBehavior2 = new LibraryPanelBehavior({
+        isLoaded: false,
+        uid: 'lib-panel-2',
+        name: 'Library Panel 2',
+        _loadedPanel: undefined,
+      });
+
+      const sourcePanel1 = new VizPanel({
+        title: 'Panel A',
+        pluginId: 'table',
+        key: 'panel-1',
+        $behaviors: [libPanelBehavior1],
+        $data: new SceneQueryRunner({
+          datasource: { uid: 'grafana' },
+          queries: [{ refId: 'A', queryType: 'randomWalk' }],
+        }),
+      });
+
+      const sourcePanel2 = new VizPanel({
+        title: 'Panel B',
+        pluginId: 'table',
+        key: 'panel-2',
+        $behaviors: [libPanelBehavior2],
+        $data: new SceneQueryRunner({
+          datasource: { uid: 'grafana' },
+          queries: [{ refId: 'A', queryType: 'randomWalk' }],
+        }),
+      });
+
+      const mixedDSPanel = new VizPanel({
+        title: 'Panel C - Mixed',
+        pluginId: 'table',
+        key: 'panel-3',
+        $data: new SceneQueryRunner({
+          datasource: { uid: MIXED_DATASOURCE_NAME },
+          queries: [
+            {
+              datasource: { uid: SHARED_DASHBOARD_QUERY },
+              refId: 'A',
+              panelId: 1,
+            },
+            {
+              datasource: { uid: SHARED_DASHBOARD_QUERY },
+              refId: 'B',
+              panelId: 2,
+            },
+          ],
+          $behaviors: [new DashboardDatasourceBehaviour({})],
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel1, sourcePanel2, mixedDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      const spy = jest.spyOn(mixedDSPanel.state.$data as SceneQueryRunner, 'runQueries');
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      // Should not run queries until library panels are loaded
+      expect(spy).not.toHaveBeenCalled();
+
+      // Load first library panel
+      libPanelBehavior1.setState({
+        isLoaded: true,
+        uid: 'lib-panel-1',
+        name: 'Library Panel 1',
+        _loadedPanel: undefined,
+      });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Load second library panel
+      libPanelBehavior2.setState({
+        isLoaded: true,
+        uid: 'lib-panel-2',
+        name: 'Library Panel 2',
+        _loadedPanel: undefined,
+      });
+
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    it('Should handle multiple queries with transformers on all source panels', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel1 = new VizPanel({
+        title: 'Panel A',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformA', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const sourcePanel2 = new VizPanel({
+        title: 'Panel B',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformB', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const mixedDSPanel = new VizPanel({
+        title: 'Panel C - Mixed',
+        pluginId: 'table',
+        key: 'panel-3',
+        $data: new SceneQueryRunner({
+          datasource: { uid: MIXED_DATASOURCE_NAME },
+          queries: [
+            {
+              datasource: { uid: SHARED_DASHBOARD_QUERY },
+              refId: 'A',
+              panelId: 1,
+            },
+            {
+              datasource: { uid: SHARED_DASHBOARD_QUERY },
+              refId: 'B',
+              panelId: 2,
+            },
+          ],
+          $behaviors: [new DashboardDatasourceBehaviour({})],
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel1, sourcePanel2, mixedDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest.spyOn(mixedDSPanel.state.$data as SceneQueryRunner, 'runQueries').mockImplementation();
+
+      // Trigger transformer reprocessing on panel 1
+      (sourcePanel1.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Done,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: 'new-request-id-1' } as DataQueryRequest,
+        },
+      });
+
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // Trigger transformer reprocessing on panel 2
+      (sourcePanel2.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Done,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: 'new-request-id-2' } as DataQueryRequest,
+        },
+      });
+
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('Should re-run query after transformations reprocess', async () => {
@@ -655,10 +1026,695 @@ describe('DashboardDatasourceBehaviour', () => {
     // we re-run the queries in the dashboardDS panel because we lose the subscription
     // in mixed DS scenario
     (sourcePanel.state.$data as SceneDataTransformer).setState({
-      data: { state: LoadingState.Done, series: [], timeRange: getDefaultTimeRange() },
+      data: {
+        state: LoadingState.Done,
+        series: [],
+        timeRange: getDefaultTimeRange(),
+        request: { requestId: 'new-request-id' } as DataQueryRequest,
+      },
     });
 
     expect(spy).toHaveBeenCalled();
+  });
+
+  describe('Cancel and streaming scenarios', () => {
+    it('Should NOT re-run query when source panel is cancelled (same requestId)', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel = new VizPanel({
+        title: 'Panel A',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformA', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const dashboardDSPanel = new VizPanel({
+        title: 'Panel B',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 1,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      const sameRequestId = 'SQR100';
+
+      // Set initial state with a requestId (simulating a running query)
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Loading,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      spy.mockClear();
+
+      // Simulate cancel: state changes to Done, but requestId stays the same
+      // This mimics cancelQuery() which does: { ...this.state.data, state: LoadingState.Done }
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Done,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      // Should NOT re-run because requestId didn't change (cancel scenario)
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('Should re-run query when source panel has new requestId (normal completion)', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel = new VizPanel({
+        title: 'Panel A',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformA', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const dashboardDSPanel = new VizPanel({
+        title: 'Panel B',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 1,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      // Set initial state with first requestId
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Done,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: 'SQR100' } as DataQueryRequest,
+        },
+      });
+
+      spy.mockClear();
+
+      // New query completes with different requestId
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Done,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: 'SQR101' } as DataQueryRequest,
+        },
+      });
+
+      // Should re-run because requestId changed
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('Should re-run query during streaming (same requestId but streaming state)', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel = new VizPanel({
+        title: 'Panel A',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformA', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: 'grafana' },
+            queries: [{ refId: 'A', queryType: 'randomWalk' }],
+          }),
+        }),
+      });
+
+      const dashboardDSPanel = new VizPanel({
+        title: 'Panel B',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 1,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      const streamingRequestId = 'SQR100';
+
+      // Set initial streaming state
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Streaming,
+          series: [{ fields: [], length: 10 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: streamingRequestId } as DataQueryRequest,
+        },
+      });
+
+      spy.mockClear();
+
+      // Streaming data update (same requestId, still Streaming)
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Streaming,
+          series: [{ fields: [], length: 20 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: streamingRequestId } as DataQueryRequest,
+        },
+      });
+
+      // Should re-run because isStreaming is true
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('Chained dashboard datasource', () => {
+    // A "chained" dashboard datasource is a dashboard-DS panel whose source is itself
+    // a dashboard-DS panel. The intermediate forwards fresh upstream data on its
+    // already-open subscription without re-running, so its requestId stays constant
+    // across the stale -> fresh change. The consumer must still re-run (unlike a
+    // cancel, which keeps the same requestId but brings no new data).
+    it('Should re-run consumer when a source panel emits new Done data under the same requestId', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      // Intermediate panel: a dashboard-DS panel pointing at a deeper query panel.
+      const sourcePanel = new VizPanel({
+        title: 'Intermediate dashboard-DS panel',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformA', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: SHARED_DASHBOARD_QUERY },
+            queries: [{ refId: 'A', panelId: 44 }],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      // Consumer panel: reads the intermediate panel via dashboard DS.
+      const dashboardDSPanel = new VizPanel({
+        title: 'Consumer panel',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 1,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      const sameRequestId = 'SQR100';
+
+      // The intermediate forwards a STALE Done from its upstream.
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 10 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      spy.mockClear();
+
+      // The intermediate's upstream finishes; the intermediate forwards FRESH data
+      // on its still-open subscription. It did NOT re-run, so the requestId is
+      // unchanged, but the series content is different and the state is still Done.
+      (sourcePanel.state.$data as SceneDataTransformer).setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 20 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      // The consumer must re-run to pick up the fresh forwarded data. The chained
+      // re-run is coalesced on a trailing window, so wait for it to fire.
+      await new Promise((r) => setTimeout(r, 150));
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('Should coalesce a burst of forwarded Done updates into a single consumer re-run', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel = new VizPanel({
+        title: 'Intermediate dashboard-DS panel',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformA', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: SHARED_DASHBOARD_QUERY },
+            queries: [{ refId: 'A', panelId: 44 }],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const dashboardDSPanel = new VizPanel({
+        title: 'Consumer panel',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [{ datasource: { uid: SHARED_DASHBOARD_QUERY }, refId: 'B', panelId: 1 }],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: { canEdit: true },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      const sameRequestId = 'SQR100';
+      const t = sourcePanel.state.$data as SceneDataTransformer;
+
+      // First (stale) Done, then a rapid burst of forwarded Done updates under the
+      // SAME requestId (as a slow chained upstream progressively forwards).
+      t.setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 0 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+      spy.mockClear();
+
+      for (let i = 1; i <= 4; i++) {
+        t.setState({
+          data: {
+            state: LoadingState.Done,
+            series: [{ fields: [], length: i * 10 }],
+            timeRange: getDefaultTimeRange(),
+            request: { requestId: sameRequestId } as DataQueryRequest,
+          },
+        });
+      }
+
+      // Not run synchronously — coalesced on the trailing window.
+      expect(spy).not.toHaveBeenCalled();
+
+      // After the window, exactly ONE re-run fires (not one per forward).
+      await new Promise((r) => setTimeout(r, 150));
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('Should cancel a pending coalesced re-run when a normal completion arrives', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel = new VizPanel({
+        title: 'Intermediate dashboard-DS panel',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [{ id: 'transformA', options: {} }],
+          $data: new SceneQueryRunner({
+            datasource: { uid: SHARED_DASHBOARD_QUERY },
+            queries: [{ refId: 'A', panelId: 44 }],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const dashboardDSPanel = new VizPanel({
+        title: 'Consumer panel',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [{ datasource: { uid: SHARED_DASHBOARD_QUERY }, refId: 'B', panelId: 1 }],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: { canEdit: true },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      const sameRequestId = 'SQR100';
+      const t = sourcePanel.state.$data as SceneDataTransformer;
+
+      t.setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 10 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+      spy.mockClear();
+
+      // Chained forward under the same requestId — schedules the coalesce timer.
+      t.setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 20 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+      expect(spy).not.toHaveBeenCalled();
+
+      // Genuine new completion within the coalesce window — must run immediately
+      // and cancel the pending coalesced re-run.
+      t.setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 30 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: 'SQR101' } as DataQueryRequest,
+        },
+      });
+      expect(spy).toHaveBeenCalledTimes(1);
+
+      // The stale coalesce timer must not fire a second re-run.
+      await new Promise((r) => setTimeout(r, 150));
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    // With no transformations the intermediate runs through the #118629 branch that
+    // subscribes to the source's SceneQueryRunner directly. The two tests below cover
+    // re-running on a fresh Done under the same requestId, and the #116767 cancel guard.
+    it('Should re-run consumer when a no-transformations source emits new Done data under the same requestId', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel = new VizPanel({
+        title: 'Intermediate dashboard-DS panel (no transformations)',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: SHARED_DASHBOARD_QUERY },
+            queries: [{ refId: 'A', panelId: 44 }],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const dashboardDSPanel = new VizPanel({
+        title: 'Consumer panel',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 1,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      const sameRequestId = 'SQR100';
+
+      // The no-transformations branch subscribes to the source's inner query
+      // runner, so drive state there.
+      const sourceRunner = sourcePanel.state.$data!.state.$data as SceneQueryRunner;
+
+      // Stale Done forwarded by the intermediate.
+      sourceRunner.setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 10 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      spy.mockClear();
+
+      // Fresh Done forwarded on the still-open subscription: same requestId, new content.
+      sourceRunner.setState({
+        data: {
+          state: LoadingState.Done,
+          series: [{ fields: [], length: 20 }],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      // The consumer must re-run to pick up the fresh forwarded data (coalesced,
+      // trailing), so wait for the window before asserting.
+      await new Promise((r) => setTimeout(r, 150));
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it('Should NOT re-run consumer on cancel when the source panel has no transformations', async () => {
+      jest.spyOn(console, 'error').mockImplementation();
+
+      const sourcePanel = new VizPanel({
+        title: 'Source panel (no transformations)',
+        pluginId: 'table',
+        key: 'panel-1',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: SHARED_DASHBOARD_QUERY },
+            queries: [{ refId: 'A', panelId: 44 }],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const dashboardDSPanel = new VizPanel({
+        title: 'Consumer panel',
+        pluginId: 'table',
+        key: 'panel-2',
+        $data: new SceneDataTransformer({
+          transformations: [],
+          $data: new SceneQueryRunner({
+            datasource: { uid: MIXED_DATASOURCE_NAME },
+            queries: [
+              {
+                datasource: { uid: SHARED_DASHBOARD_QUERY },
+                refId: 'B',
+                panelId: 1,
+              },
+            ],
+            $behaviors: [new DashboardDatasourceBehaviour({})],
+          }),
+        }),
+      });
+
+      const scene = new DashboardScene({
+        title: 'hello',
+        uid: 'dash-1',
+        meta: {
+          canEdit: true,
+        },
+        body: DefaultGridLayoutManager.fromVizPanels([sourcePanel, dashboardDSPanel]),
+      });
+
+      activateFullSceneTree(scene);
+
+      await new Promise((r) => setTimeout(r, 1));
+
+      const spy = jest
+        .spyOn(dashboardDSPanel.state.$data!.state.$data as SceneQueryRunner, 'runQueries')
+        .mockImplementation();
+
+      const sameRequestId = 'SQR100';
+      const sourceRunner = sourcePanel.state.$data!.state.$data as SceneQueryRunner;
+
+      // Query in flight.
+      sourceRunner.setState({
+        data: {
+          state: LoadingState.Loading,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      spy.mockClear();
+
+      // Cancel: state flips to Done with the same requestId and no new data.
+      sourceRunner.setState({
+        data: {
+          state: LoadingState.Done,
+          series: [],
+          timeRange: getDefaultTimeRange(),
+          request: { requestId: sameRequestId } as DataQueryRequest,
+        },
+      });
+
+      // Must NOT re-run on cancel (regression guard for #116767 on the #118629
+      // branch) — not synchronously, and not via a coalesced trailing re-run.
+      await new Promise((r) => setTimeout(r, 150));
+      expect(spy).not.toHaveBeenCalled();
+    });
   });
 });
 

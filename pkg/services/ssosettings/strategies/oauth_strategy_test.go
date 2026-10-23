@@ -39,6 +39,7 @@ var (
 	auth_style = inheader
 	auth_url = test_auth_url
 	token_url = test_token_url
+	token_exchange_timeout = 30
 	api_url = test_api_url
 	teams_url = test_teams_url
 	allowed_domains = domain1.com
@@ -83,6 +84,7 @@ var (
 		"team_ids_attribute_path":       "team_ids",
 		"auth_url":                      "test_auth_url",
 		"token_url":                     "test_token_url",
+		"token_exchange_timeout":        30,
 		"api_url":                       "test_api_url",
 		"teams_url":                     "test_teams_url",
 		"allowed_domains":               "domain1.com",
@@ -106,6 +108,8 @@ var (
 		"org_attribute_path":            "groups",
 		"org_mapping":                   "Group1:*:Editor",
 		"login_prompt":                  "select_account",
+		"jwk_set_url":                   "",
+		"validate_id_token":             false,
 	}
 )
 
@@ -201,6 +205,52 @@ func TestGetProviderConfig_ExtraFields(t *testing.T) {
 
 		require.Equal(t, true, result["validate_hd"])
 	})
+}
+
+func TestGetProviderConfig_TokenExchangeTimeout(t *testing.T) {
+	testCases := []struct {
+		name            string
+		iniValue        string
+		expectedTimeout int
+	}{
+		{
+			name:            "should default to 15 when not set",
+			iniValue:        "",
+			expectedTimeout: 15,
+		},
+		{
+			name:            "should parse integer seconds correctly",
+			iniValue:        "token_exchange_timeout = 30",
+			expectedTimeout: 30,
+		},
+		{
+			name:            "should parse large timeout value",
+			iniValue:        "token_exchange_timeout = 120",
+			expectedTimeout: 120,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			iniContent := `
+			[auth.generic_oauth]
+			enabled = true
+			` + tc.iniValue
+
+			iniFile, err := ini.Load([]byte(iniContent))
+			require.NoError(t, err)
+
+			cfg := setting.NewCfg()
+			cfg.Raw = iniFile
+
+			strategy := NewOAuthStrategy(cfg)
+
+			result, err := strategy.GetProviderConfig(context.Background(), "generic_oauth")
+			require.NoError(t, err)
+
+			require.Equal(t, tc.expectedTimeout, result["token_exchange_timeout"])
+		})
+	}
 }
 
 // TestGetProviderConfig_GrafanaComGrafanaNet tests that the connector is setup using the correct section and it supports

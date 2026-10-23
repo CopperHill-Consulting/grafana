@@ -3,12 +3,14 @@ package resources
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
+	"github.com/grafana/grafana-app-sdk/logging"
 	provisioning "github.com/grafana/grafana/apps/provisioning/pkg/apis/provisioning/v0alpha1"
 	provisioningv0alpha1 "github.com/grafana/grafana/apps/provisioning/pkg/generated/clientset/versioned/typed/provisioning/v0alpha1"
 	"github.com/grafana/grafana/apps/provisioning/pkg/repository"
@@ -18,33 +20,52 @@ import (
 
 //go:generate mockery --name RepositoryResourcesFactory --structname MockRepositoryResourcesFactory --inpackage --filename repository_resources_factory_mock.go --with-expecter
 type RepositoryResourcesFactory interface {
-	Client(ctx context.Context, repo repository.ReaderWriter) (RepositoryResources, error)
+	Client(ctx context.Context, repo repository.ReaderWriter, opts ...RepositoryResourcesOption) (RepositoryResources, error)
 }
 
 //go:generate mockery --name RepositoryResources --structname MockRepositoryResources --inpackage --filename repository_resources_mock.go --with-expecter
 type RepositoryResources interface {
 	// Folders
 	SetTree(tree FolderTree)
-	EnsureFolderPathExist(ctx context.Context, filePath string) (parent string, err error)
+	EnsureFolderPathExist(ctx context.Context, filePath, ref string, opts ...EnsurePathOption) (parent string, err error)
 	EnsureFolderExists(ctx context.Context, folder Folder, parentID string) error
-	EnsureFolderTreeExists(ctx context.Context, ref, path string, tree FolderTree, fn func(folder Folder, created bool, err error) error) error
+	EnsureFolderTreeExists(ctx context.Context, tree FolderTree, opts EnsureFolderTreeExistsOptions) error
+	RemoveFolderFromTree(folderID string)
+	RemoveFolder(ctx context.Context, folderName string) error
+	RenameFolderPath(ctx context.Context, previousPath, previousRef, newPath, newRef string, opts ...EnsurePathOption) (string, error)
 	// File from Resource
 	WriteResourceFileFromObject(ctx context.Context, obj *unstructured.Unstructured, options WriteOptions) (string, error)
 	// Resource from file
-	WriteResourceFromFile(ctx context.Context, path, ref string) (string, schema.GroupVersionKind, error)
-	RemoveResourceFromFile(ctx context.Context, path, ref string) (string, schema.GroupVersionKind, error)
+	WriteResourceFromFile(ctx context.Context, path, ref string, opts ...WriteResourceOption) (string, schema.GroupVersionKind, error)
+	ReplaceResourceFromFile(ctx context.Context, path, ref string, oldName string, oldGVR schema.GroupVersionResource, opts ...WriteResourceOption) (string, schema.GroupVersionKind, error)
+	ReplaceResourceFromFileByRef(ctx context.Context, path, ref, previousRef string, opts ...WriteResourceOption) (string, schema.GroupVersionKind, error)
+	RemoveResourceFromFile(ctx context.Context, path, ref string) (string, string, schema.GroupVersionKind, error)
 	FindResourcePath(ctx context.Context, name string, gvk schema.GroupVersionKind) (string, error)
-	RenameResourceFile(ctx context.Context, path, previousRef, newPath, newRef string) (string, schema.GroupVersionKind, error)
+	RenameResourceFile(ctx context.Context, path, previousRef, newPath, newRef string, folderOpts ...EnsurePathOption) (string, string, schema.GroupVersionKind, error)
 	// Stats
 	Stats(ctx context.Context) (*provisioning.ResourceStats, error)
 	List(ctx context.Context) (*provisioning.ResourceList, error)
 }
 
 type repositoryResourcesFactory struct {
-	parsers ParserFactory
-	clients ClientFactory
-	lister  ResourceLister
+	parsers               ParserFactory
+	clients               ClientFactory
+	lister                ResourceLister
+	folderMetadataEnabled bool
 }
+
+type RepositoryResourcesOption func(*repositoryResourcesOptions)
+
+type repositoryResourcesOptions struct {
+	folderManagerOptions []FolderManagerOption
+}
+
+func WithFolderManagerOptions(opts ...FolderManagerOption) RepositoryResourcesOption {
+	return func(cfg *repositoryResourcesOptions) {
+		cfg.folderManagerOptions = append(cfg.folderManagerOptions, opts...)
+	}
+}
+
 type repositoryResources struct {
 	*FolderManager
 	*ResourcesManager
@@ -73,19 +94,25 @@ func (r *repositoryResources) FindResourcePath(ctx context.Context, name string,
 	obj, err := client.Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			return "", fmt.Errorf("resource not found: %s/%s/%s", gvr.Group, gvr.Resource, name)
+			return "", &ResourceNotFoundError{Group: gvr.Group, Resource: gvr.Resource, Name: name}
 		}
 		return "", fmt.Errorf("failed to get resource %s/%s/%s: %w", gvr.Group, gvr.Resource, name, err)
 	}
 
-	// Extract the source path from annotations
-	annotations := obj.GetAnnotations()
-	if annotations == nil {
-		return "", fmt.Errorf("resource %s/%s/%s has no annotations", gvr.Group, gvr.Resource, name)
+	meta, err := utils.MetaAccessor(obj)
+	if err != nil {
+		return "", fmt.Errorf("create meta accessor for resource %s/%s/%s: %w", gvr.Group, gvr.Resource, name, err)
 	}
 
-	sourcePath, exists := annotations[utils.AnnoKeySourcePath]
-	if !exists || sourcePath == "" {
+	source, _ := meta.GetSourceProperties()
+	sourcePath := source.Path
+	if sourcePath == "" {
+		logging.FromContext(ctx).Error("resource has no source path annotation",
+			"group", gvr.Group,
+			"resource", gvr.Resource,
+			"name", name,
+			"annotation_keys", provisioningAnnotationKeys(obj.GetAnnotations()),
+		)
 		return "", fmt.Errorf("resource %s/%s/%s has no source path annotation", gvr.Group, gvr.Resource, name)
 	}
 
@@ -97,17 +124,47 @@ func (r *repositoryResources) FindResourcePath(ctx context.Context, name string,
 	return sourcePath, nil
 }
 
-func NewRepositoryResourcesFactory(parsers ParserFactory, clients ClientFactory, lister ResourceLister) RepositoryResourcesFactory {
-	return &repositoryResourcesFactory{parsers, clients, lister}
+func provisioningAnnotationKeys(annotations map[string]string) []string {
+	// Include legacy repository annotations in diagnostics because the shared metadata
+	// accessor still supports them, but their constants in apimachinery/utils are private.
+	const (
+		legacyAnnoKeyRepoName      = "grafana.app/repoName"
+		legacyAnnoKeyRepoPath      = "grafana.app/repoPath"
+		legacyAnnoKeyRepoHash      = "grafana.app/repoHash"
+		legacyAnnoKeyRepoTimestamp = "grafana.app/repoTimestamp"
+	)
+
+	annotationKeys := make([]string, 0, len(annotations))
+	// Custom annotation names can contain user data, so only log known provisioning keys.
+	for key := range annotations {
+		switch key {
+		case utils.AnnoKeyManagerKind, utils.AnnoKeyManagerIdentity,
+			utils.AnnoKeyManagerAllowsEdits, utils.AnnoKeyManagerSuspended,
+			utils.AnnoKeySourcePath, utils.AnnoKeySourceChecksum, utils.AnnoKeySourceTimestamp,
+			legacyAnnoKeyRepoName, legacyAnnoKeyRepoPath, legacyAnnoKeyRepoHash, legacyAnnoKeyRepoTimestamp:
+			annotationKeys = append(annotationKeys, key)
+		}
+	}
+	slices.Sort(annotationKeys)
+	return annotationKeys
 }
 
-func (r *repositoryResourcesFactory) Client(ctx context.Context, repo repository.ReaderWriter) (RepositoryResources, error) {
+func NewRepositoryResourcesFactory(parsers ParserFactory, clients ClientFactory, lister ResourceLister, folderMetadataEnabled bool) RepositoryResourcesFactory {
+	return &repositoryResourcesFactory{
+		parsers:               parsers,
+		clients:               clients,
+		lister:                lister,
+		folderMetadataEnabled: folderMetadataEnabled,
+	}
+}
+
+func (r *repositoryResourcesFactory) Client(ctx context.Context, repo repository.ReaderWriter, opts ...RepositoryResourcesOption) (RepositoryResources, error) {
 	clients, err := r.clients.Clients(ctx, repo.Config().Namespace)
 	if err != nil {
 		return nil, fmt.Errorf("create clients: %w", err)
 	}
 
-	folderClient, err := clients.Folder(ctx)
+	folderClient, folderGVK, err := clients.Folder(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("create folder client: %w", err)
 	}
@@ -116,7 +173,13 @@ func (r *repositoryResourcesFactory) Client(ctx context.Context, repo repository
 		return nil, fmt.Errorf("create parser: %w", err)
 	}
 
-	folders := NewFolderManager(repo, folderClient, NewEmptyFolderTree())
+	cfg := &repositoryResourcesOptions{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	folderManagerOpts := append(cfg.folderManagerOptions, WithFolderMetadataEnabled(r.folderMetadataEnabled))
+	folders := NewFolderManager(repo, folderClient, NewEmptyFolderTree(), folderGVK, folderManagerOpts...)
 	resources := NewResourcesManager(repo, folders, parser, clients)
 
 	return &repositoryResources{

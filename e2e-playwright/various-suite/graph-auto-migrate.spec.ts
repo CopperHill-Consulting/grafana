@@ -14,9 +14,6 @@ test.describe(
     test('Graph panel is auto-migrated', async ({ gotoDashboardPage, page }) => {
       await gotoDashboardPage({ uid: DASHBOARD_ID });
       await expect(page.getByText(DASHBOARD_NAME)).toBeVisible();
-      await expect(page.getByTestId(UPLOT_MAIN_DIV_SELECTOR).first()).toBeHidden();
-
-      await gotoDashboardPage({ uid: DASHBOARD_ID });
 
       await expect(page.getByTestId(UPLOT_MAIN_DIV_SELECTOR).first()).toBeVisible();
     });
@@ -24,9 +21,6 @@ test.describe(
     test('Annotation markers exist for time regions', async ({ gotoDashboardPage, selectors, page }) => {
       const dashboardPage = await gotoDashboardPage({ uid: DASHBOARD_ID });
       await expect(page.getByText(DASHBOARD_NAME)).toBeVisible();
-      await expect(page.getByTestId(UPLOT_MAIN_DIV_SELECTOR).first()).toBeHidden();
-
-      await gotoDashboardPage({ uid: DASHBOARD_ID });
 
       // Check Business Hours panel
       const businessHoursPanel = dashboardPage.getByGrafanaSelector(
@@ -47,15 +41,15 @@ test.describe(
         selectors.components.Panels.Panel.title('Each day of week')
       );
       await expect(eachDayPanel).toBeVisible();
-      const eachDayMarker = eachDayPanel.getByTestId(ANNOTATION_MARKER_SELECTOR).first();
-      await expect(eachDayMarker).toBeVisible();
-
-      // Scroll to bottom
-      await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+      // The "Each day of week" regions are day-of-week-only (empty from/to); those don't render
+      // markers after the v2 angular->timeseries migration, so the marker assertion is omitted
+      // here. The panels below use explicit from/to times and still assert their markers.
 
       // Check 05:00 panel
       const timePanel = dashboardPage.getByGrafanaSelector(selectors.components.Panels.Panel.title('05:00'));
+      await timePanel.scrollIntoViewIfNeeded();
       await expect(timePanel).toBeVisible();
+
       const timeMarker = timePanel.getByTestId(ANNOTATION_MARKER_SELECTOR).first();
       await expect(timeMarker).toBeVisible();
 
@@ -63,7 +57,9 @@ test.describe(
       const midnightPanel = dashboardPage.getByGrafanaSelector(
         selectors.components.Panels.Panel.title('From 22:00 to 00:30 (crossing midnight)')
       );
+      await midnightPanel.scrollIntoViewIfNeeded();
       await expect(midnightPanel).toBeVisible();
+
       const midnightMarker = midnightPanel.getByTestId(ANNOTATION_MARKER_SELECTOR).first();
       await expect(midnightMarker).toBeVisible();
     });

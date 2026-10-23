@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"text/template"
 
+	"github.com/grafana/grafana/pkg/registry/apis/secret/contracts"
 	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate"
 )
 
@@ -15,26 +16,30 @@ var (
 	sqlTemplates = template.Must(template.New("sql").ParseFS(sqlTemplatesFS, `data/*.sql`))
 
 	// The SQL Commands
-	sqlKeeperCreate = mustTemplate("keeper_create.sql")
-	sqlKeeperRead   = mustTemplate("keeper_read.sql")
-	sqlKeeperUpdate = mustTemplate("keeper_update.sql")
-	sqlKeeperList   = mustTemplate("keeper_list.sql")
-	sqlKeeperDelete = mustTemplate("keeper_delete.sql")
+	sqlKeeperCreate      = mustTemplate("keeper_create.sql")
+	sqlKeeperRead        = mustTemplate("keeper_read.sql")
+	sqlKeeperReadActive  = mustTemplate("keeper_read_active.sql")
+	sqlKeeperUpdate      = mustTemplate("keeper_update.sql")
+	sqlKeeperList        = mustTemplate("keeper_list.sql")
+	sqlKeeperDelete      = mustTemplate("keeper_delete.sql")
+	sqlKeeperSetAsActive = mustTemplate("keeper_set_as_active.sql")
 
-	sqlKeeperListByName      = mustTemplate("keeper_listByName.sql")
 	sqlSecureValueListByName = mustTemplate("secure_value_listByName.sql")
 
-	sqlSecureValueRead             = mustTemplate("secure_value_read.sql")
-	sqlSecureValueList             = mustTemplate("secure_value_list.sql")
-	sqlSecureValueCreate           = mustTemplate("secure_value_create.sql")
-	sqlSecureValueUpdateExternalId = mustTemplate("secure_value_updateExternalId.sql")
-	sqlSecureValueDelete           = mustTemplate("secure_value_delete.sql")
-	sqlSecureValueLeaseInactive    = mustTemplate("secure_value_lease_inactive.sql")
-	sqlSecureValueListByLeaseToken = mustTemplate("secure_value_list_by_lease_token.sql")
+	sqlSecureValueRead                    = mustTemplate("secure_value_read.sql")
+	sqlSecureValueList                    = mustTemplate("secure_value_list.sql")
+	sqlSecureValueListByIDs               = mustTemplate("secure_value_list_by_ids.sql")
+	sqlSecureValueCreate                  = mustTemplate("secure_value_create.sql")
+	sqlSecureValueUpdateExternalId        = mustTemplate("secure_value_updateExternalId.sql")
+	sqlSecureValueDelete                  = mustTemplate("secure_value_delete.sql")
+	sqlSecureValueLeaseInactive           = mustTemplate("secure_value_lease_inactive.sql")
+	sqlSecureValueListByLeaseToken        = mustTemplate("secure_value_list_by_lease_token.sql")
+	sqlSecureValueAddGCRetryCount         = mustTemplate("secure_value_add_gc_retry_count.sql")
+	sqlSecureValueSetInactiveAllFromGroup = mustTemplate("secure_value_set_inactive_all_from_group.sql")
 
-	sqlGetLatestSecureValueVersion     = mustTemplate("secure_value_get_latest_version.sql")
-	sqlSecureValueSetVersionToActive   = mustTemplate("secure_value_set_version_to_active.sql")
-	sqlSecureValueSetVersionToInactive = mustTemplate("secure_value_set_version_to_inactive.sql")
+	sqlGetLatestSecureValueVersionAndCreatedAt = mustTemplate("secure_value_get_latest_version_and_created_at.sql")
+	sqlSecureValueSetVersionToActive           = mustTemplate("secure_value_set_version_to_active.sql")
+	sqlSecureValueSetVersionToInactive         = mustTemplate("secure_value_set_version_to_inactive.sql")
 )
 
 func mustTemplate(filename string) *template.Template {
@@ -48,10 +53,25 @@ func mustTemplate(filename string) *template.Template {
 /**-- Keeper Queries --**/
 /************************/
 
+// Set as active
+type setKeeperAsActive struct {
+	sqltemplate.SQLTemplate
+	Namespace string
+	Name      string
+}
+
+// Validate is only used if we use `dbutil` from `unifiedstorage`
+func (r setKeeperAsActive) Validate() error {
+	return nil // TODO
+}
+
 // Create
 type createKeeper struct {
 	sqltemplate.SQLTemplate
 	Row *keeperDB
+	// Deduplicated list of secure value names refrenced by the keeper. Only commits if all references is active and uses the system keeper.
+	UsedSecureValues []string
+	SystemKeeperName string
 }
 
 // Validate is only used if we use `dbutil` from `unifiedstorage`
@@ -72,10 +92,24 @@ func (r readKeeper) Validate() error {
 	return nil // TODO
 }
 
+// Read active keeper
+type readActiveKeeper struct {
+	sqltemplate.SQLTemplate
+	Namespace string
+}
+
+// Validate is only used if we use `dbutil` from `unifiedstorage`
+func (r readActiveKeeper) Validate() error {
+	return nil // TODO
+}
+
 // Update
 type updateKeeper struct {
 	sqltemplate.SQLTemplate
 	Row *keeperDB
+	// Deduplicated list of secure value names refrenced by the keeper. Only commits if all references is active and uses the system keeper.
+	UsedSecureValues []string
+	SystemKeeperName string
 }
 
 // Validate is only used if we use `dbutil` from `unifiedstorage`
@@ -118,18 +152,6 @@ func (r listByNameSecureValue) Validate() error {
 	return nil // TODO
 }
 
-// This is used at keeper store to validate create & update operations
-type listByNameKeeper struct {
-	sqltemplate.SQLTemplate
-	Namespace   string
-	KeeperNames []string
-}
-
-// Validate is only used if we use `dbutil` from `unifiedstorage`
-func (r listByNameKeeper) Validate() error {
-	return nil // TODO
-}
-
 /******************************/
 /**-- Secure Value Queries --**/
 /******************************/
@@ -146,13 +168,13 @@ func (r readSecureValue) Validate() error {
 	return nil // TODO
 }
 
-type getLatestSecureValueVersion struct {
+type getLatestSecureValueVersionAndCreatedAt struct {
 	sqltemplate.SQLTemplate
 	Namespace string
 	Name      string
 }
 
-func (r getLatestSecureValueVersion) Validate() error {
+func (r getLatestSecureValueVersionAndCreatedAt) Validate() error {
 	return nil
 }
 
@@ -188,6 +210,16 @@ func (r listSecureValue) Validate() error {
 	return nil // TODO
 }
 
+type listSecureValuesByIDs struct {
+	sqltemplate.SQLTemplate
+	SecureValueIDs []string
+}
+
+// Validate is only used if we use `dbutil` from `unifiedstorage`
+func (r listSecureValuesByIDs) Validate() error {
+	return nil // TODO
+}
+
 type createSecureValue struct {
 	sqltemplate.SQLTemplate
 	Row *secureValueDB
@@ -214,13 +246,22 @@ func (r updateExternalIdSecureValue) Validate() error {
 
 type deleteSecureValue struct {
 	sqltemplate.SQLTemplate
-	Namespace string
-	Name      string
-	Version   int64
+	ToDelete []contracts.DeleteInput
 }
 
 // Validate is only used if we use `dbutil` from `unifiedstorage`
 func (r deleteSecureValue) Validate() error {
+	return nil // TODO
+}
+
+type setInactiveAllFromGroupSecureValue struct {
+	sqltemplate.SQLTemplate
+	Namespace              string
+	OwnerReferenceAPIGroup string
+}
+
+// Validate is only used if we use `dbutil` from `unifiedstorage`
+func (r setInactiveAllFromGroupSecureValue) Validate() error {
 	return nil // TODO
 }
 
@@ -245,5 +286,15 @@ type listSecureValuesByLeaseToken struct {
 
 // Validate is only used if we use `dbutil` from `unifiedstorage`
 func (r listSecureValuesByLeaseToken) Validate() error {
+	return nil // TODO
+}
+
+type addGCAttemptCountSecureValues struct {
+	sqltemplate.SQLTemplate
+	SecureValueIDs []string
+}
+
+// Validate is only used if we use `dbutil` from `unifiedstorage`
+func (r addGCAttemptCountSecureValues) Validate() error {
 	return nil // TODO
 }

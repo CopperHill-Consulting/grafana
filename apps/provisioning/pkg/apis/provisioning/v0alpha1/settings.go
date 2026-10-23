@@ -9,22 +9,47 @@ import (
 type RepositoryViewList struct {
 	metav1.TypeMeta `json:",inline"`
 
-	// The backend is using legacy storage
-	// FIXME: Not sure where this should be exposed... but we need it somewhere
-	// The UI should force the onboarding workflow when this is true
-	LegacyStorage bool `json:"legacyStorage,omitempty"`
-
 	// The valid targets (can disable instance or folder types)
 	AllowedTargets []SyncTargetType `json:"allowedTargets,omitempty"`
 
 	// Whether image rendering is allowed for dashboard previews
 	AllowImageRendering bool `json:"allowImageRendering"`
 
+	// MaxRepositories is the maximum number of repositories allowed per namespace (0 = unlimited)
+	MaxRepositories int64 `json:"maxRepositories"`
+
 	// AvailableRepositoryTypes is the list of repository types supported in this instance (e.g. git, bitbucket, github, etc)
 	AvailableRepositoryTypes []RepositoryType `json:"availableRepositoryTypes,omitempty"`
 
+	// AvailableResources is the list of resource types declared for provisioning in this
+	// instance, including disabled ones (see SupportedResource.Disabled).
+	AvailableResources []SupportedResource `json:"availableResources,omitempty"`
+
 	// +mapType=atomic
 	Items []RepositoryView `json:"items"`
+}
+
+// SupportedResource describes a resource type declared for provisioning. A resource is
+// identified by its group and kind; the API version and plural resource are resolved at
+// runtime via discovery, so they are not part of this descriptor.
+type SupportedResource struct {
+	// Group is the API group of the resource (e.g. "dashboard.grafana.app").
+	Group string `json:"group"`
+
+	// Kind is the kind of the resource (e.g. "Dashboard").
+	Kind string `json:"kind"`
+
+	// Disabled reports whether the resource is declared but not acted on by provisioning.
+	// Active resources omit this field.
+	Disabled bool `json:"disabled,omitempty"`
+}
+
+func (SupportedResource) OpenAPIModelName() string {
+	return OpenAPIPrefix + "SupportedResource"
+}
+
+func (RepositoryViewList) OpenAPIModelName() string {
+	return OpenAPIPrefix + "RepositoryViewList"
 }
 
 type RepositoryView struct {
@@ -43,6 +68,27 @@ type RepositoryView struct {
 	// For git, this is the target branch
 	Branch string `json:"branch,omitempty"`
 
+	// For git, this is the target URL
+	URL string `json:"url,omitempty"`
+
+	// For git, this is the target path
+	Path string `json:"path,omitempty"`
+
 	// The supported workflows
 	Workflows []Workflow `json:"workflows"`
+
+	// Commit message options. Mirrors the same-named field on the repository spec.
+	Commit *CommitOptions `json:"commit,omitempty"`
+
+	// Branch naming options. Mirrors spec.branch. Exposed under `branchOptions`
+	// rather than `branch` because the view already uses `branch` for the git
+	// target branch name.
+	BranchOptions *BranchOptions `json:"branchOptions,omitempty"`
+
+	// Pull request options. Mirrors the same-named field on the repository spec.
+	PullRequest *PullRequestOptions `json:"pullRequest,omitempty"`
+}
+
+func (RepositoryView) OpenAPIModelName() string {
+	return OpenAPIPrefix + "RepositoryView"
 }

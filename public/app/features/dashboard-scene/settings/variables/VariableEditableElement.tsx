@@ -1,31 +1,66 @@
-import { FormEvent, useId, useMemo, useRef, useState } from 'react';
+import { type FormEvent, useId, useMemo, useRef, useState } from 'react';
 
-import { VariableHide } from '@grafana/data';
+import { VariableHide, VariableRefresh } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { Trans, t } from '@grafana/i18n';
 import { locationService } from '@grafana/runtime';
-import { LocalValueVariable, MultiValueVariable, SceneVariable, SceneVariableSet } from '@grafana/scenes';
-import { Input, TextArea, Button, Field, Box, Stack } from '@grafana/ui';
+import { useFlagGrafanaQueryVarEditorRedesign } from '@grafana/runtime/internal';
+import {
+  LocalValueVariable,
+  MultiValueVariable,
+  QueryVariable,
+  type SceneObject,
+  type SceneVariable,
+  SceneVariableSet,
+  sceneUtils,
+  useSceneObjectState,
+} from '@grafana/scenes';
+import { Alert, Box, Button, Combobox, Field, Input, Stack, TextArea } from '@grafana/ui';
+import { appEvents } from 'app/core/app_events';
 import { OptionsPaneCategoryDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneCategoryDescriptor';
 import { OptionsPaneItemDescriptor } from 'app/features/dashboard/components/PanelEditor/OptionsPaneItemDescriptor';
+import { ShowConfirmModalEvent } from 'app/types/events';
 
-import { dashboardEditActions, undoRedoWasClicked } from '../../edit-pane/shared';
-import { useEditPaneInputAutoFocus } from '../../scene/layouts-shared/utils';
-import { BulkActionElement } from '../../scene/types/BulkActionElement';
-import { EditableDashboardElement, EditableDashboardElementInfo } from '../../scene/types/EditableDashboardElement';
-import { VariableHideSelect } from '../../settings/variables/components/VariableHideSelect';
-import { getEditableVariableDefinition, validateVariableName } from '../../settings/variables/utils';
+import { changeVariableDescription } from '../../actions/variable/changeVariableDescription';
+import { changeVariableHideValue } from '../../actions/variable/changeVariableHideValue';
+import { changeVariableLabel } from '../../actions/variable/changeVariableLabel';
+import { changeVariableName } from '../../actions/variable/changeVariableName';
+import { duplicateVariable } from '../../actions/variable/duplicateVariable';
+import { removeVariable } from '../../actions/variable/removeVariable';
+import { DashboardScene } from '../../scene/DashboardScene';
+import { useSidebarInputAutoFocus } from '../../scene/layouts-shared/utils';
+import { type BulkActionElement } from '../../scene/types/BulkActionElement';
+import {
+  type EditableDashboardElement,
+  type EditableDashboardElementInfo,
+  isEditableDashboardElement,
+} from '../../scene/types/EditableDashboardElement';
+import { VariableDisplaySelect } from '../../settings/variables/components/VariableDisplaySelect';
+import {
+  dropShadowedPredefinedVariables,
+  getEditableVariableDefinition,
+  restoreUnshadowedPredefinedVariables,
+  validateVariableName,
+} from '../../settings/variables/utils';
+import { dashboardSceneGraph } from '../../utils/dashboardSceneGraph';
+import { getTopPlacementLabel } from '../../utils/getTopPlacementLabel';
 
+import { openChangeVariableTypePane } from './VariableTypeSelectionPane';
 import { useVariableSelectionOptionsCategory } from './useVariableSelectionOptionsCategory';
 
 // TODO fix conditional hook usage here...
-function useEditPaneOptions(this: VariableEditableElement, isNewElement: boolean): OptionsPaneCategoryDescriptor[] {
+function useSidebarOptions(this: VariableEditableElement, isNewElement: boolean): OptionsPaneCategoryDescriptor[] {
   const variable = this.variable;
   const variableOptionsCategoryId = useId();
   const variableNameId = useId();
   const labelId = useId();
   const descriptionId = useId();
-  const variableHideId = useId();
+  const variableDisplayId = useId();
+
+  // Keep the variable activated while editing it in the side pane. The dashboard controls
+  // component may unmount (e.g. when changing display to "hidden"), which would deactivate
+  // the variable and destroy all state subscriptions used by the editors below.
+  useSceneObjectState(variable, { shouldActivateOrKeepAlive: true });
 
   if (variable instanceof LocalValueVariable) {
     return useLocalVariableOptions(variable);
@@ -38,20 +73,20 @@ function useEditPaneOptions(this: VariableEditableElement, isNewElement: boolean
           title: '',
           id: variableNameId,
           skipField: true,
-          render: () => <VariableNameInput variable={variable} isNewElement={isNewElement} />,
+          render: () => <VariableNameInput variable={variable} autoFocus={isNewElement} />,
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
-          title: t('dashboard.edit-pane.variable.label', 'Label'),
+          title: t('dashboard.sidebar.variable.label', 'Label'),
           id: labelId,
-          description: t('dashboard.edit-pane.variable.label-description', 'Optional display name'),
+          description: t('dashboard.sidebar.variable.label-description', 'Optional display name'),
           render: () => <VariableLabelInput variable={variable} />,
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
-          title: t('dashboard.edit-pane.variable.description', 'Description'),
+          title: t('dashboard.sidebar.variable.description', 'Description'),
           id: descriptionId,
           render: () => <VariableDescriptionTextArea variable={variable} />,
         })
@@ -59,12 +94,12 @@ function useEditPaneOptions(this: VariableEditableElement, isNewElement: boolean
       .addItem(
         new OptionsPaneItemDescriptor({
           title: '',
-          id: variableHideId,
+          id: variableDisplayId,
           skipField: true,
-          render: () => <VariableHideInput variable={variable} />,
+          render: () => <VariableDisplayInput variable={variable} />,
         })
       );
-  }, [variableOptionsCategoryId, variableNameId, labelId, descriptionId, variableHideId, variable, isNewElement]);
+  }, [variableOptionsCategoryId, variableNameId, labelId, descriptionId, variableDisplayId, variable, isNewElement]);
 
   const categories = [basicOptions];
   const typeCategory = useVariableTypeCategory(variable);
@@ -86,33 +121,74 @@ export class VariableEditableElement implements EditableDashboardElement, BulkAc
   public getEditableElementInfo(): EditableDashboardElementInfo {
     if (this.variable instanceof LocalValueVariable) {
       return {
-        typeName: t('dashboard.edit-pane.elements.local-variable', 'Local variable'),
-        icon: 'dollar-alt',
+        typeName: t('dashboard.sidebar.elements.local-variable', 'Local variable'),
+        icon: 'gf-variable',
         instanceName: this.variable.state.name,
         isHidden: true,
       };
     }
 
     const variableEditorDef = getEditableVariableDefinition(this.variable.state.type);
+    const { label, name } = this.variable.state;
+    const hasLabel = !!label && label.trim() !== '';
+    const instanceName = hasLabel ? label! : name;
+    const tooltip = hasLabel ? `$${name}` : undefined;
+
+    if (sceneUtils.isAdHocVariable(this.variable)) {
+      return {
+        typeName: t('dashboard.sidebar.elements.filter', 'Filter'),
+        icon: 'filter',
+        instanceName,
+        tooltip,
+        isHidden: this.variable.state.hide === VariableHide.hideVariable,
+      };
+    }
 
     return {
-      typeName: t('dashboard.edit-pane.elements.variable', '{{type}} variable', { type: variableEditorDef.name }),
-      icon: 'dollar-alt',
-      instanceName: this.variable.state.name,
+      typeName: t('dashboard.sidebar.elements.variable', '{{type}} variable', { type: variableEditorDef.name }),
+      icon: 'gf-variable',
+      instanceName,
+      tooltip,
       isHidden: this.variable.state.hide === VariableHide.hideVariable,
     };
   }
 
-  public useEditPaneOptions = useEditPaneOptions.bind(this);
+  public useSidebarOptions = useSidebarOptions.bind(this);
+
+  public renderActions() {
+    return <ChangeVariableTypeButton variable={this.variable} />;
+  }
+
+  public onDuplicate() {
+    duplicateVariable(this.variable);
+  }
+
+  public onConfirmDelete() {
+    const name = this.variable.state.name;
+    appEvents.publish(
+      new ShowConfirmModalEvent({
+        title: t('dashboard-scene.variable-editable-element.delete-title', 'Delete variable'),
+        text: t('dashboard-scene.variable-editable-element.delete-text', 'Are you sure you want to delete: {{name}}?', {
+          name,
+        }),
+        yesText: t('dashboard-scene.variable-editable-element.delete-confirm', 'Delete variable'),
+        onConfirm: () => {
+          this.onDelete();
+        },
+      })
+    );
+  }
 
   public onDelete() {
     const set = this.variable.parent!;
-    if (set instanceof SceneVariableSet) {
-      dashboardEditActions.removeVariable({
-        source: set,
-        removedObject: this.variable,
-      });
+    if (!(set instanceof SceneVariableSet)) {
+      return;
     }
+
+    removeVariable({
+      source: set,
+      removedObject: this.variable,
+    });
   }
 
   public onChangeName(name: string) {
@@ -123,7 +199,29 @@ export class VariableEditableElement implements EditableDashboardElement, BulkAc
       return result;
     }
 
+    // Do not drop predefined vars here — onChangeName runs per keystroke (outline rename).
+    // Drop happens on commit via onCommitName / changeVariableName.
     return;
+  }
+
+  /**
+   * Called when an outline rename commits (blur / Enter). Restores any predefined
+   * variable freed by the rename, then drops any shadowed by the committed name.
+   */
+  public onCommitName() {
+    restoreUnshadowedPredefinedVariables(this.variable);
+    dropShadowedPredefinedVariables(this.variable, this.variable.state.name);
+  }
+
+  public scrollIntoView() {
+    let current: SceneObject | undefined = this.variable.parent;
+    while (current) {
+      if (isEditableDashboardElement(current) && current.scrollIntoView) {
+        current.scrollIntoView();
+        return;
+      }
+      current = current.parent;
+    }
   }
 }
 
@@ -132,57 +230,93 @@ interface VariableInputProps {
   id?: string;
 }
 
-function VariableNameInput({ variable, isNewElement }: { variable: SceneVariable; isNewElement: boolean }) {
+function ChangeVariableTypeButton({ variable }: { variable: SceneVariable }) {
+  if (!(variable.parent instanceof SceneVariableSet)) {
+    return null;
+  }
+
+  return (
+    <Button
+      size="sm"
+      onClick={() => openChangeVariableTypePane(variable)}
+      data-testid={selectors.components.PanelEditor.ElementEditPane.changeVariableType}
+      aria-label={t('dashboard.sidebar.variable.change-type-aria-label', 'Change variable type')}
+      variant="secondary"
+    >
+      <Trans i18nKey="dashboard.sidebar.variable.change-type">Change type</Trans>
+    </Button>
+  );
+}
+
+function VariableNameInput({ variable, autoFocus }: { variable: SceneVariable; autoFocus: boolean }) {
   const { name } = variable.useState();
-  const ref = useEditPaneInputAutoFocus({ autoFocus: isNewElement });
+  const ref = useSidebarInputAutoFocus({ autoFocus });
   const [nameError, setNameError] = useState<string>();
+  const [nameWarning, setNameWarning] = useState<string>();
   const id = useId();
 
   const onChange = (e: FormEvent<HTMLInputElement>) => {
-    const result = validateVariableName(variable, e.currentTarget.value);
+    const nextName = e.currentTarget.value;
+    const result = validateVariableName(variable, nextName);
     if (result.errorMessage !== nameError) {
       setNameError(result.errorMessage);
     }
+    if (result.warningMessage !== nameWarning) {
+      setNameWarning(result.warningMessage);
+    }
 
-    variable.setState({ name: e.currentTarget.value });
+    // Update live state for the input; drop shadowed predefined vars only on blur
+    // commit (changeVariableName) so intermediate keystrokes cannot permanently remove them.
+    variable.setState({ name: nextName });
   };
 
   const oldName = useRef(name);
 
   return (
-    <Field label={t('dashboard.edit-pane.variable.name', 'Name')} invalid={!!nameError} error={nameError}>
-      <Input
-        id={id}
-        ref={ref}
-        value={name}
-        onFocus={() => {
-          oldName.current = name;
-        }}
-        onChange={onChange}
-        onBlur={(e) => {
-          const labelUnchanged = oldName.current === name;
-          const shouldSkip = labelUnchanged || undoRedoWasClicked(e);
+    <>
+      <Field
+        label={t('dashboard.sidebar.variable.name', 'Name')}
+        invalid={!!nameError}
+        error={nameError}
+        noMargin={false}
+      >
+        <Input
+          id={id}
+          ref={ref}
+          value={name}
+          onFocus={() => {
+            oldName.current = name;
+          }}
+          onChange={onChange}
+          onBlur={(e) => {
+            const labelUnchanged = oldName.current === name;
+            const shouldSkip = labelUnchanged;
 
-          if (nameError) {
-            setNameError(undefined);
-            variable.setState({ name: oldName.current });
-            return;
-          }
+            if (nameError) {
+              setNameError(undefined);
+              variable.setState({ name: oldName.current });
+              return;
+            }
 
-          if (shouldSkip) {
-            return;
-          }
+            if (shouldSkip) {
+              return;
+            }
 
-          dashboardEditActions.changeVariableName({
-            source: variable,
-            oldValue: oldName.current,
-            newValue: name,
-          });
-        }}
-        data-testid={selectors.components.PanelEditor.ElementEditPane.variableNameInput}
-        required
-      />
-    </Field>
+            changeVariableName({
+              source: variable,
+              oldValue: oldName.current,
+              newValue: name,
+            });
+          }}
+          data-testid={selectors.components.PanelEditor.ElementEditPane.variableNameInput}
+          required
+        />
+      </Field>
+      {/* Show warning message if the variable name is already used in the dashboard
+        Unfortunately <Field> component only supports error messages, not warning messages.
+      */}
+      {nameWarning && <Alert title={nameWarning} severity="warning" topSpacing={0} bottomSpacing={1} />}
+    </>
   );
 }
 
@@ -200,13 +334,13 @@ function VariableLabelInput({ variable, id }: VariableInputProps) {
       onChange={(e) => variable.setState({ label: e.currentTarget.value })}
       onBlur={(e) => {
         const labelUnchanged = oldLabel.current === e.currentTarget.value;
-        const shouldSkip = labelUnchanged || undoRedoWasClicked(e);
+        const shouldSkip = labelUnchanged;
 
         if (shouldSkip) {
           return;
         }
 
-        dashboardEditActions.changeVariableLabel({
+        changeVariableLabel({
           source: variable,
           oldValue: oldLabel.current,
           newValue: e.currentTarget.value,
@@ -225,20 +359,20 @@ function VariableDescriptionTextArea({ variable, id }: VariableInputProps) {
     <TextArea
       id={id}
       value={description ?? ''}
-      placeholder={t('dashboard.edit-pane.variable.description-placeholder', 'Descriptive text')}
+      placeholder={t('dashboard.sidebar.variable.description-placeholder', 'Descriptive text')}
       onFocus={() => {
         oldDescription.current = description ?? '';
       }}
       onChange={(e) => variable.setState({ description: e.currentTarget.value })}
       onBlur={(e) => {
         const labelUnchanged = oldDescription.current === e.currentTarget.value;
-        const shouldSkip = labelUnchanged || undoRedoWasClicked(e);
+        const shouldSkip = labelUnchanged;
 
         if (shouldSkip) {
           return;
         }
 
-        dashboardEditActions.changeVariableDescription({
+        changeVariableDescription({
           source: variable,
           oldValue: oldDescription.current,
           newValue: e.currentTarget.value,
@@ -248,30 +382,48 @@ function VariableDescriptionTextArea({ variable, id }: VariableInputProps) {
   );
 }
 
-function VariableHideInput({ variable }: VariableInputProps) {
-  const { hide = VariableHide.dontHide } = variable.useState();
+function VariableDisplayInput({ variable }: VariableInputProps) {
+  const { hide: display = VariableHide.dontHide } = variable.useState();
+  const sectionOwner = dashboardSceneGraph.findSectionOwner(variable);
+  const topPlacementLabel = sectionOwner ? getTopPlacementLabel(sectionOwner) : undefined;
 
   const onChange = (option: VariableHide) => {
-    dashboardEditActions.changeVariableHideValue({
+    changeVariableHideValue({
       source: variable,
-      oldValue: hide,
+      oldValue: display,
       newValue: option,
     });
   };
 
-  return <VariableHideSelect hide={hide} type={variable.state.type} onChange={onChange} />;
+  return (
+    <VariableDisplaySelect
+      display={display}
+      type={variable.state.type}
+      hideControlsMenuOption={shouldHideControlsMenuOption(variable)}
+      topPlacementLabel={topPlacementLabel}
+      onChange={onChange}
+    />
+  );
+}
+
+export function shouldHideControlsMenuOption(variable: SceneVariable): boolean {
+  const set = variable.parent;
+  const dashboardVariable = set instanceof SceneVariableSet && set.parent instanceof DashboardScene;
+  return !dashboardVariable;
 }
 
 function useVariableTypeCategory(variable: SceneVariable) {
   const oldVariableId = useId();
+  const refreshId = useId();
+  const newQueryVarEditorEnabled = useFlagGrafanaQueryVarEditorRedesign();
+
   return useMemo(() => {
     const variableEditorDef = getEditableVariableDefinition(variable.state.type);
-    const categoryName = t('dashboard.edit-pane.variable.type-category', '{{type}} options', {
-      type: variableEditorDef.name,
-    });
 
     const category = new OptionsPaneCategoryDescriptor({
-      title: categoryName,
+      title: t('dashboard.sidebar.variable.type-category', '{{type}} options', {
+        type: variableEditorDef.name,
+      }),
       id: 'variable-type',
       isOpenDefault: true,
     });
@@ -290,8 +442,48 @@ function useVariableTypeCategory(variable: SceneVariable) {
       );
     }
 
+    if (newQueryVarEditorEnabled && variable instanceof QueryVariable) {
+      category.addItem(
+        new OptionsPaneItemDescriptor({
+          id: refreshId,
+          title: t('variables.query-variable-refresh-select.label-refresh', 'Refresh'),
+          description: t(
+            'variables.query-variable-refresh-select.description-update-values-variable',
+            'When to update the values of this variable'
+          ),
+          render: () => <RefreshSelect variable={variable} />,
+        })
+      );
+    }
+
     return category;
-  }, [oldVariableId, variable]);
+  }, [oldVariableId, refreshId, newQueryVarEditorEnabled, variable]);
+}
+
+function RefreshSelect({ variable }: { variable: QueryVariable }) {
+  const { refresh } = variable.useState();
+  const options = useMemo(
+    () => [
+      {
+        label: t('dashboard-scene.refresh-select.options.label.on-dashboard-load', 'On dashboard load'),
+        value: VariableRefresh.onDashboardLoad,
+      },
+      {
+        label: t('dashboard-scene.refresh-select.options.label.on-time-range-change', 'On time range change'),
+        value: VariableRefresh.onTimeRangeChanged,
+      },
+    ],
+    []
+  );
+  return (
+    <Combobox
+      options={options}
+      value={refresh}
+      onChange={(o) => {
+        variable.setState({ refresh: o.value });
+      }}
+    />
+  );
 }
 
 function OpenOldVariableEditButton({ variable }: VariableInputProps) {
@@ -308,15 +500,12 @@ function OpenOldVariableEditButton({ variable }: VariableInputProps) {
   return (
     <Box display={'flex'} direction={'column'} paddingBottom={1}>
       <Button
-        tooltip={t(
-          'dashboard.edit-pane.variable.open-editor-tooltip',
-          'For more variable options open variable editor'
-        )}
+        tooltip={t('dashboard.sidebar.variable.open-editor-tooltip', 'For more variable options open variable editor')}
         onClick={onOpenVariableEdior}
         size="sm"
         fullWidth
       >
-        <Trans i18nKey="dashboard.edit-pane.variable.open-editor">Open variable editor</Trans>
+        <Trans i18nKey="dashboard.sidebar.variable.open-editor">Open variable editor</Trans>
       </Button>
     </Box>
   );

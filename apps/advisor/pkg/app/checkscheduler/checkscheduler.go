@@ -2,8 +2,9 @@ package checkscheduler
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
-	"math/rand"
+	"math/big"
 	"sort"
 	"strconv"
 	"time"
@@ -16,47 +17,52 @@ import (
 	advisorv0alpha1 "github.com/grafana/grafana/apps/advisor/pkg/apis/advisor/v0alpha1"
 	"github.com/grafana/grafana/apps/advisor/pkg/app/checkregistry"
 	"github.com/grafana/grafana/apps/advisor/pkg/app/checks"
+	"github.com/grafana/grafana/apps/advisor/pkg/app/checktyperegisterer"
+	"github.com/grafana/grafana/pkg/services/org"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/metadata"
 )
 
 const defaultEvaluationInterval = 7 * 24 * time.Hour // 7 days
 const defaultMaxHistory = 10
 
 var (
-	waitInterval   = 5 * time.Second
-	waitMaxRetries = 3
+	waitInterval                = 5 * time.Second
+	waitMaxRetries              = 3
+	evalIntervalRandomVariation = 1 * time.Hour
 )
 
 // Runner is a "runnable" app used to be able to expose and API endpoint
 // with the existing checks types. This does not need to be a CRUD resource, but it is
 // the only way existing at the moment to expose the check types.
 type Runner struct {
-	checkRegistry      checkregistry.CheckService
-	client             resource.Client
-	typesClient        resource.Client
-	evaluationInterval time.Duration
-	maxHistory         int
-	namespace          string
-	log                logging.Logger
+	checkRegistry       checkregistry.CheckService
+	checksClient        resource.Client
+	checksMetadata      metadata.Getter
+	typesClient         resource.Client
+	checkTypeSyncer     checktyperegisterer.CheckTypeSyncer
+	defaultEvalInterval time.Duration
+	maxHistory          int
+	log                 logging.Logger
+	orgService          org.Service
+	stackID             string
 }
 
 // NewRunner creates a new Runner.
-func New(cfg app.Config, log logging.Logger) (app.Runnable, error) {
+func New(cfg app.Config, log logging.Logger, checkTypeSyncer checktyperegisterer.CheckTypeSyncer) (app.Runnable, error) {
 	// Read config
 	specificConfig, ok := cfg.SpecificConfig.(checkregistry.AdvisorAppConfig)
 	if !ok {
 		return nil, fmt.Errorf("invalid config type")
 	}
 	checkRegistry := specificConfig.CheckRegistry
+	orgService := specificConfig.OrgService
 	evalInterval, err := getEvaluationInterval(specificConfig.PluginConfig)
 	if err != nil {
 		return nil, err
 	}
 	maxHistory, err := getMaxHistory(specificConfig.PluginConfig)
-	if err != nil {
-		return nil, err
-	}
-	namespace, err := checks.GetNamespace(specificConfig.StackID)
 	if err != nil {
 		return nil, err
 	}
@@ -71,75 +77,142 @@ func New(cfg app.Config, log logging.Logger) (app.Runnable, error) {
 	if err != nil {
 		return nil, err
 	}
+	metadataClient, err := metadata.NewForConfig(&cfg.KubeConfig)
+	if err != nil {
+		return nil, err
+	}
+	checkGVR := schema.GroupVersionResource{
+		Group:    advisorv0alpha1.CheckKind().Group(),
+		Version:  advisorv0alpha1.CheckKind().Version(),
+		Resource: advisorv0alpha1.CheckKind().Plural(),
+	}
+	checksMetadata := metadataClient.Resource(checkGVR)
 
 	return &Runner{
-		checkRegistry:      checkRegistry,
-		client:             client,
-		typesClient:        typesClient,
-		evaluationInterval: evalInterval,
-		maxHistory:         maxHistory,
-		namespace:          namespace,
-		log:                log.With("runner", "advisor.checkscheduler"),
+		checkRegistry:       checkRegistry,
+		checksClient:        client,
+		typesClient:         typesClient,
+		checksMetadata:      checksMetadata,
+		checkTypeSyncer:     checkTypeSyncer,
+		defaultEvalInterval: evalInterval,
+		maxHistory:          maxHistory,
+		log:                 log.With("runner", "advisor.checkscheduler"),
+		orgService:          orgService,
+		stackID:             specificConfig.StackID,
 	}, nil
+}
+
+// isMT reports whether the runner has neither a stack ID nor an org
+// service configured. In that mode the scheduler discovers namespaces from
+// the apiserver (see runMT in mtcheckscheduler.go) instead of resolving them
+// from local config.
+func (r *Runner) isMT() bool {
+	return r.stackID == "" && r.orgService == nil
 }
 
 func (r *Runner) Run(ctx context.Context) error {
 	logger := r.log.WithContext(ctx)
+	if r.isMT() {
+		return r.runMT(ctx, logger)
+	}
+	return r.runST(ctx, logger)
+}
+
+// runST runs the single-tenant scheduler loop, where namespaces are resolved
+// from the configured stack ID or org service and work is done serially.
+func (r *Runner) runST(ctx context.Context, logger logging.Logger) error {
 	// We still need the context to eventually be cancelled to exit this function
 	// but we don't want the requests to fail because of it
 	ctxWithoutCancel := context.WithoutCancel(ctx)
-	lastCreated, err := r.checkLastCreated(ctxWithoutCancel, logger)
+
+	// Determine namespaces based on StackID or OrgID
+	namespaces, err := checks.GetNamespaces(ctxWithoutCancel, r.stackID, r.orgService)
+	if err != nil {
+		return fmt.Errorf("failed to get namespaces: %w", err)
+	}
+
+	logger.Debug("Scheduling checks", "namespaces", len(namespaces))
+
+	// Get the last created time for this specific namespace
+	lastCreatedMap, err := r.checkLastCreated(ctx, logger, namespaces)
 	if err != nil {
 		logger.Error("Error getting last check creation time", "error", err)
-		// Wait for interval to create the next scheduled check
-		lastCreated = time.Now()
-	} else {
-		// do an initial creation if necessary
-		if lastCreated.IsZero() {
-			err = r.createChecks(ctxWithoutCancel, logger)
+		return err
+	}
+
+	// If there are checks already created, run an initial cleanup
+	for _, namespace := range namespaces {
+		nsLogger := logger.With("namespace", namespace)
+		lastCreated := lastCreatedMap[namespace]
+
+		if !lastCreated.IsZero() {
+			err = r.cleanupChecks(ctx, nsLogger, namespace)
 			if err != nil {
-				logger.Error("Error creating new check reports", "error", err)
-			} else {
-				lastCreated = time.Now()
+				nsLogger.Error("Error cleaning up old check reports", "error", err)
+				return err
 			}
-		} else {
-			// Run an initial cleanup to remove old checks
-			err = r.cleanupChecks(ctxWithoutCancel, logger)
+			err = r.markUnprocessedChecks(ctx, nsLogger, namespace)
 			if err != nil {
-				logger.Error("Error cleaning up old check reports", "error", err)
+				nsLogger.Error("Error marking unprocessed checks", "error", err)
+				return err
 			}
 		}
 	}
 
-	nextSendInterval := getNextSendInterval(lastCreated, r.evaluationInterval)
-	ticker := time.NewTicker(nextSendInterval)
+	nextEvalTime := r.getNextEvalTime(r.defaultEvalInterval, lastCreatedMap)
+	ticker := time.NewTicker(nextEvalTime)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ticker.C:
-			err = r.createChecks(ctxWithoutCancel, logger)
+			// Get the current last created time for this namespace
+			lastCreatedMap, err := r.checkLastCreated(ctx, logger, namespaces)
 			if err != nil {
-				logger.Error("Error creating new check reports", "error", err)
+				logger.Error("Error getting last check creation time", "error", err)
+				return err
 			}
 
-			err = r.cleanupChecks(ctxWithoutCancel, logger)
-			if err != nil {
-				logger.Error("Error cleaning up old check reports", "error", err)
+			for _, namespace := range namespaces {
+				nsLogger := logger.With("namespace", namespace)
+				lastCreated := lastCreatedMap[namespace]
+
+				// If there are checks already created and they are older than the evaluation interval
+				// then we can automatically create more
+				if !lastCreated.IsZero() && lastCreated.Before(time.Now().Add(-r.defaultEvalInterval)) {
+					if err := r.waitForCheckTypesRegistered(ctx, nsLogger, namespace, len(r.checkRegistry.Checks())); err != nil {
+						nsLogger.Error("Error waiting for check types to be registered", "error", err)
+						return err
+					}
+					err = r.createChecks(ctx, nsLogger, namespace)
+					if err != nil {
+						nsLogger.Error("Error creating new check reports", "error", err)
+						return err
+					}
+
+					// Clean up old checks to avoid going over the limit
+					err = r.cleanupChecks(ctx, nsLogger, namespace)
+					if err != nil {
+						nsLogger.Error("Error cleaning up old check reports", "error", err)
+						return err
+					}
+
+					// Update the last created time with the new created checks
+					lastCreatedMap[namespace] = time.Now()
+				}
 			}
 
-			if nextSendInterval != r.evaluationInterval {
-				nextSendInterval = r.evaluationInterval
-			}
-			ticker.Reset(nextSendInterval)
+			// Reset the ticker to the next send interval
+			nextEvalTime = r.getNextEvalTime(r.defaultEvalInterval, lastCreatedMap)
+			ticker.Reset(nextEvalTime)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
 	}
 }
 
-func (r *Runner) listChecks(ctx context.Context, logger logging.Logger) ([]resource.Object, error) {
-	list, err := r.client.List(ctx, r.namespace, resource.ListOptions{
+func (r *Runner) listChecks(ctx context.Context, logger logging.Logger, namespace string) ([]resource.Object, error) {
+	list, err := r.checksClient.List(ctx, namespace, resource.ListOptions{
 		Limit: 1000, // Avoid pagination for normal uses cases, which is a costly operation
 	})
 	if err != nil {
@@ -149,7 +222,7 @@ func (r *Runner) listChecks(ctx context.Context, logger logging.Logger) ([]resou
 	checks := list.GetItems()
 	for list.GetContinue() != "" {
 		logger.Debug("List has continue token, listing next page", "continue", list.GetContinue())
-		list, err = r.client.List(ctx, r.namespace, resource.ListOptions{Continue: list.GetContinue(), Limit: 1000})
+		list, err = r.checksClient.List(ctx, namespace, resource.ListOptions{Continue: list.GetContinue(), Limit: 1000})
 		if err != nil {
 			return nil, err
 		}
@@ -158,89 +231,123 @@ func (r *Runner) listChecks(ctx context.Context, logger logging.Logger) ([]resou
 	return checks, nil
 }
 
-// checkLastCreated returns the creation time of the last check created
-// regardless of its ID. This assumes that the checks are created in batches
-// so a batch will have a similar creation time.
-// In case it finds an unprocessed check from a previous run, it will set it to error.
-func (r *Runner) checkLastCreated(ctx context.Context, log logging.Logger) (time.Time, error) {
-	checkList, err := r.listChecks(ctx, log)
+// listChecksMetadata lists Check object metadata (PartialObjectMetadata) for a
+// namespace, paginating as needed. Passing metav1.NamespaceAll lists across all
+// namespaces (used by the MT scheduler for cluster-wide discovery). Only object
+// metadata is fetched (no spec/status), which keeps these list calls cheap when
+// callers just need fields like the creation timestamp.
+func (r *Runner) listChecksMetadata(ctx context.Context, logger logging.Logger, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	client := r.checksMetadata.Namespace(namespace)
+	list, err := client.List(ctx, metav1.ListOptions{
+		Limit: 1000, // Avoid pagination for normal use cases, which is a costly operation
+	})
 	if err != nil {
-		return time.Time{}, err
+		return nil, err
 	}
-	lastCreated := time.Time{}
-	for _, item := range checkList {
-		itemCreated := item.GetCreationTimestamp().Time
-		if itemCreated.After(lastCreated) {
-			lastCreated = itemCreated
+	items := list.Items
+	for list.GetContinue() != "" {
+		logger.Debug("List has continue token, listing next page", "continue", list.GetContinue())
+		list, err = client.List(ctx, metav1.ListOptions{Continue: list.GetContinue(), Limit: 1000})
+		if err != nil {
+			return nil, err
 		}
+		items = append(items, list.Items...)
+	}
+	return items, nil
+}
 
-		// If the check is unprocessed, set it to error
-		if checks.GetStatusAnnotation(item) == "" {
-			log.Info("Check is unprocessed, marking as error", "check", item.GetStaticMetadata().Identifier())
-			err := checks.SetStatusAnnotation(ctx, r.client, item, checks.StatusAnnotationError)
-			if err != nil {
-				log.Error("Error setting check status to error", "error", err)
+// checkLastCreated returns the creation time of the last check created for a specific namespace.
+// This assumes that the checks are created in batches so a batch will have a similar creation time.
+func (r *Runner) checkLastCreated(ctx context.Context, log logging.Logger, namespaces []string) (map[string]time.Time, error) {
+	lastCreated := map[string]time.Time{}
+	for _, namespace := range namespaces {
+		checkList, err := r.listChecksMetadata(ctx, log, namespace)
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range checkList {
+			itemCreated := item.GetCreationTimestamp().Time
+			if itemCreated.After(lastCreated[namespace]) {
+				lastCreated[namespace] = itemCreated
 			}
 		}
 	}
 	return lastCreated, nil
 }
 
-// createChecks creates a new check for each check type in the registry.
-func (r *Runner) createChecks(ctx context.Context, logger logging.Logger) error {
-	// List existing CheckType objects
-	list, err := r.typesClient.List(ctx, r.namespace, resource.ListOptions{})
+func (r *Runner) markUnprocessedChecks(ctx context.Context, log logging.Logger, namespace string) error {
+	checkList, err := r.listChecks(ctx, log, namespace)
 	if err != nil {
-		return fmt.Errorf("error listing check types: %w", err)
+		return err
 	}
-	// This may be run before the check types are registered, so we need to wait for them to be registered.
-	allChecksRegistered := len(list.GetItems()) == len(r.checkRegistry.Checks())
-	retryCount := 0
-	for !allChecksRegistered && retryCount < waitMaxRetries {
-		logger.Info("Waiting for all check types to be registered", "retryCount", retryCount, "waitInterval", waitInterval)
-		time.Sleep(waitInterval)
-		list, err = r.typesClient.List(ctx, r.namespace, resource.ListOptions{})
-		if err != nil {
-			return fmt.Errorf("error listing check types: %w", err)
+	for _, item := range checkList {
+		if checks.GetStatusAnnotation(item) == "" {
+			log.Info("Check is unprocessed, marking as error", "check", item.GetStaticMetadata().Identifier())
+			err := checks.SetStatusAnnotation(ctx, r.checksClient, item, checks.StatusAnnotationError)
+			if err != nil {
+				log.Error("Error setting check status to error", "error", err)
+				return err
+			}
 		}
-		allChecksRegistered = len(list.GetItems()) == len(r.checkRegistry.Checks())
-		retryCount++
 	}
+	return nil
+}
 
-	// Create checks for each CheckType
-	for _, item := range list.GetItems() {
-		checkType, ok := item.(*advisorv0alpha1.CheckType)
-		if !ok {
-			continue
-		}
-
+// createChecks creates a new check for each check type known to this
+// process's in-process registry. The registry is the source of truth for
+// what this process can run; CheckType resources in the apiserver can lag
+// behind, especially in MT where per-tenant CheckType registration is
+// asynchronous relative to the global registry.
+func (r *Runner) createChecks(ctx context.Context, logger logging.Logger, namespace string) error {
+	for _, check := range r.checkRegistry.Checks() {
 		obj := &advisorv0alpha1.Check{
 			ObjectMeta: metav1.ObjectMeta{
 				GenerateName: "check-",
-				Namespace:    r.namespace,
+				Namespace:    namespace,
 				Labels: map[string]string{
-					checks.TypeLabel: checkType.Spec.Name,
+					checks.TypeLabel: check.ID(),
 				},
 			},
 			Spec: advisorv0alpha1.CheckSpec{},
 		}
 		id := obj.GetStaticMetadata().Identifier()
-		_, err := r.client.Create(ctx, id, obj, resource.CreateOptions{})
-		if err != nil {
+		if _, err := r.checksClient.Create(ctx, id, obj, resource.CreateOptions{}); err != nil {
 			return fmt.Errorf("error creating check: %w", err)
 		}
 	}
 	return nil
 }
 
+// waitForCheckTypesRegistered polls the CheckType list in the given namespace
+// until it contains at least `expected` items or waitMaxRetries is exhausted.
+// At process startup the registerer can still be in-flight, so this gives
+// downstream consumers a chance to see consistent CheckType + Check
+// resources. Running out of retries is tolerated: a slow startup must not
+// permanently block check creation.
+func (r *Runner) waitForCheckTypesRegistered(ctx context.Context, logger logging.Logger, namespace string, expected int) error {
+	list, err := r.typesClient.List(ctx, namespace, resource.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("error listing check types: %w", err)
+	}
+	for retry := 0; len(list.GetItems()) < expected && retry < waitMaxRetries; retry++ {
+		logger.Info("Waiting for all check types to be registered", "retryCount", retry, "waitInterval", waitInterval)
+		time.Sleep(waitInterval)
+		list, err = r.typesClient.List(ctx, namespace, resource.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("error listing check types: %w", err)
+		}
+	}
+	return nil
+}
+
 // cleanupChecks deletes the olders checks if the number of checks exceeds the limit.
-func (r *Runner) cleanupChecks(ctx context.Context, logger logging.Logger) error {
-	checkList, err := r.listChecks(ctx, logger)
+func (r *Runner) cleanupChecks(ctx context.Context, logger logging.Logger, namespace string) error {
+	checkList, err := r.listChecks(ctx, logger, namespace)
 	if err != nil {
 		return err
 	}
 
-	logger.Debug("Cleaning up checks", "numChecks", len(checkList))
+	logger.Debug("Cleaning up checks", "namespace", namespace, "numChecks", len(checkList))
 
 	// organize checks by type
 	checksByType := map[string][]resource.Object{}
@@ -268,7 +375,7 @@ func (r *Runner) cleanupChecks(ctx context.Context, logger logging.Logger) error
 			for i := 0; i < len(checks)-r.maxHistory; i++ {
 				check := checks[i]
 				id := check.GetStaticMetadata().Identifier()
-				err := r.client.Delete(ctx, id, resource.DeleteOptions{})
+				err := r.checksClient.Delete(ctx, id, resource.DeleteOptions{})
 				if err != nil {
 					return fmt.Errorf("error deleting check: %w", err)
 				}
@@ -293,15 +400,42 @@ func getEvaluationInterval(pluginConfig map[string]string) (time.Duration, error
 	return evaluationInterval, nil
 }
 
-func getNextSendInterval(lastCreated time.Time, evaluationInterval time.Duration) time.Duration {
-	nextSendInterval := time.Until(lastCreated.Add(evaluationInterval))
-	// Add random variation of one hour
-	randomVariation := time.Duration(rand.Int63n(time.Hour.Nanoseconds()))
-	nextSendInterval += randomVariation
-	if nextSendInterval < time.Minute {
-		nextSendInterval = 1 * time.Minute
+func (r *Runner) getNextEvalTime(defaultEvaluationInterval time.Duration, lastCreated map[string]time.Time) time.Duration {
+	nextEvalTime := defaultEvaluationInterval
+
+	// Get the oldest last created time
+	baseTime := time.Now()
+	for _, lastNamespacedCreated := range lastCreated {
+		if !lastNamespacedCreated.IsZero() && lastNamespacedCreated.Before(baseTime) {
+			baseTime = lastNamespacedCreated
+		}
 	}
-	return nextSendInterval
+
+	// Calculate the next evaluation time and add random variation
+	nextEvalTime = time.Until(baseTime.Add(nextEvalTime))
+	nextEvalTime += randomJitter(evalIntervalRandomVariation)
+
+	// Ensure we always return a positive duration to avoid ticker panics
+	if nextEvalTime <= 0 {
+		nextEvalTime = 1 * time.Millisecond
+	}
+
+	return nextEvalTime
+}
+
+// randomJitter returns a uniformly distributed duration in [0, max) drawn from
+// crypto/rand. The value only spreads scheduler ticks so a CSPRNG isn't strictly
+// required, but using one keeps us off math/rand. On the effectively impossible
+// error path (or a non-positive max) it returns 0, i.e. no jitter.
+func randomJitter(max time.Duration) time.Duration {
+	if max <= 0 {
+		return 0
+	}
+	n, err := rand.Int(rand.Reader, big.NewInt(max.Nanoseconds()))
+	if err != nil {
+		return 0
+	}
+	return time.Duration(n.Int64())
 }
 
 func getMaxHistory(pluginConfig map[string]string) (int, error) {

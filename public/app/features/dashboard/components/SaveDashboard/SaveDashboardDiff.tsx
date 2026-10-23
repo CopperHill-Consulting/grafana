@@ -1,12 +1,12 @@
-import { ReactElement } from 'react';
+import { type ReactElement } from 'react';
 import { useAsync } from 'react-use';
 
 import { Trans, t } from '@grafana/i18n';
 import { Alert, Box, Spinner, Stack } from '@grafana/ui';
-import { Diffs } from 'app/features/dashboard-scene/settings/version-history/utils';
+import LazyDiffViewer from 'app/features/dashboard-scene/settings/version-history/LazyDiffViewer';
+import { type Diffs } from 'app/features/dashboard-scene/settings/version-history/utils';
 
 import { DiffGroup } from '../../../dashboard-scene/settings/version-history/DiffGroup';
-import { DiffViewer } from '../../../dashboard-scene/settings/version-history/DiffViewer';
 
 interface SaveDashboardDiffProps {
   oldValue?: unknown;
@@ -17,6 +17,10 @@ interface SaveDashboardDiffProps {
   hasFolderChanges?: boolean;
   oldFolder?: string;
   newFolder?: string;
+  /** Metadata-only denylist change (not part of Spec JSON). */
+  hasPredefinedVariablesChanges?: boolean;
+  oldPredefinedVariables?: string;
+  newPredefinedVariables?: string;
   hasMigratedToV2?: boolean;
 }
 
@@ -27,6 +31,9 @@ export const SaveDashboardDiff = ({
   hasFolderChanges,
   oldFolder,
   newFolder,
+  hasPredefinedVariablesChanges,
+  oldPredefinedVariables,
+  newPredefinedVariables,
   hasMigratedToV2,
 }: SaveDashboardDiffProps) => {
   const loader = useAsync(async () => {
@@ -56,7 +63,7 @@ export const SaveDashboardDiff = ({
       diffs,
       count,
       showDiffs: count < 15, // overwhelming if too many changes
-      jsonView: <DiffViewer oldValue={oldJSON} newValue={newJSON} />,
+      jsonView: <LazyDiffViewer oldValue={oldJSON} newValue={newJSON} />,
     };
   }, [diff, oldValue, newValue]);
 
@@ -89,6 +96,22 @@ export const SaveDashboardDiff = ({
           ]}
           key={'folder'}
           title={t('dashboard.save-dashboard-diff.title-folder', 'folder')}
+        />
+      )}
+      {hasPredefinedVariablesChanges && (
+        <DiffGroup
+          diffs={[
+            {
+              op: 'replace',
+              value: newPredefinedVariables,
+              originalValue: oldPredefinedVariables,
+              path: [],
+              startLineNumber: 0,
+              endLineNumber: 0,
+            },
+          ]}
+          key={'predefined-variables'}
+          title={t('dashboard.save-dashboard-diff.title-predefined-variables', 'predefined variables')}
         />
       )}
       {(!value || !oldValue) && <Spinner />}

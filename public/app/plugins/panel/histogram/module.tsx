@@ -5,6 +5,9 @@ import {
   identityOverrideProcessor,
   PanelPlugin,
   histogramFieldInfo,
+  buildHistogram,
+  VisualizationSuggestionScore,
+  DataFrameType,
 } from '@grafana/data';
 import { t } from '@grafana/i18n';
 import { commonOptionsBuilder, getGraphFieldOptions } from '@grafana/ui';
@@ -13,8 +16,10 @@ import { StackingEditor } from '@grafana/ui/internal';
 import { HistogramPanel } from './HistogramPanel';
 import { defaultHistogramConfig } from './config';
 import { changeToHistogramPanelMigrationHandler } from './migrations';
-import { FieldConfig, Options, defaultFieldConfig, defaultOptions } from './panelcfg.gen';
+import { type FieldConfig, type Options, defaultFieldConfig, defaultOptions } from './panelcfg.gen';
 import { originalDataHasHistogram } from './utils';
+
+const MAX_SUGGESTIONS_SERIES = 20;
 
 export const plugin = new PanelPlugin<Options, FieldConfig>(HistogramPanel)
   .setPanelChangeHandler(changeToHistogramPanelMigrationHandler)
@@ -74,7 +79,7 @@ export const plugin = new PanelPlugin<Options, FieldConfig>(HistogramPanel)
       });
 
     commonOptionsBuilder.addTooltipOptions(builder);
-    commonOptionsBuilder.addLegendOptions(builder);
+    commonOptionsBuilder.addLegendOptions(builder, true, true);
   })
   .useFieldConfig({
     standardOptions: {
@@ -149,4 +154,26 @@ export const plugin = new PanelPlugin<Options, FieldConfig>(HistogramPanel)
 
       commonOptionsBuilder.addHideFrom(builder);
     },
+  })
+  .setSuggestionsSupplier((ds) => {
+    if (ds.rawFrames && ds.hasData && buildHistogram(ds.rawFrames.slice(0, MAX_SUGGESTIONS_SERIES)) != null) {
+      return [
+        {
+          score: ds.hasDataFrameType(DataFrameType.Histogram)
+            ? VisualizationSuggestionScore.Best
+            : VisualizationSuggestionScore.OK,
+          cardOptions: {
+            maxSeries: MAX_SUGGESTIONS_SERIES,
+            previewModifier: (s) => {
+              s.options!.legend = {
+                calcs: [],
+                placement: 'bottom',
+                showLegend: false,
+              };
+            },
+          },
+        },
+      ];
+    }
+    return;
   });

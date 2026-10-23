@@ -1,32 +1,31 @@
-import { ChangeEvent, useEffect, useState } from 'react';
+import { type ChangeEvent, useEffect, useState } from 'react';
 import * as React from 'react';
-import { of, OperatorFunction } from 'rxjs';
-import { map } from 'rxjs/operators';
+import { from, of, type OperatorFunction } from 'rxjs';
+import { map, mergeMap } from 'rxjs/operators';
 
 import {
-  DataFrame,
+  type DataFrame,
   DataTransformerID,
   FieldType,
   getFieldDisplayName,
-  KeyValue,
-  SelectableValue,
-  standardTransformers,
-  TransformerRegistryItem,
-  TransformerUIProps,
+  type KeyValue,
+  type SelectableValue,
+  standardTransformersRegistry,
+  type TransformerRegistryItem,
+  type TransformerUIProps,
   TransformerCategory,
   FieldMatcherID,
 } from '@grafana/data';
 import {
   CalculateFieldMode,
-  CalculateFieldTransformerOptions,
+  type CalculateFieldTransformerOptions,
   getNameFromOptions,
   defaultWindowOptions,
 } from '@grafana/data/internal';
 import { t } from '@grafana/i18n';
-import { getTemplateSrv, config as cfg } from '@grafana/runtime';
+import { getTemplateSrv } from '@grafana/runtime';
 import { InlineField, InlineSwitch, Input, Select } from '@grafana/ui';
 
-import { getTransformationContent } from '../../docs/getTransformationContent';
 import darkImage from '../../images/dark/calculateField.svg';
 import lightImage from '../../images/light/calculateField.svg';
 
@@ -37,6 +36,7 @@ import { ReduceRowOptionsEditor } from './ReduceRowOptionsEditor';
 import { UnaryOperationEditor } from './UnaryOperationEditor';
 import { WindowOptionsEditor } from './WindowOptionsEditor';
 import { LABEL_WIDTH } from './constants';
+
 interface CalculateFieldTransformerEditorProps extends TransformerUIProps<CalculateFieldTransformerOptions> {}
 
 interface CalculateFieldTransformerEditorState {
@@ -74,29 +74,28 @@ export const CalculateFieldTransformerEditor = (props: CalculateFieldTransformer
       value: CalculateFieldMode.Index,
       label: t('transformers.calculate-field-transformer-editor.calculation-modes.label.row-index', 'Row index'),
     },
+    {
+      value: CalculateFieldMode.CumulativeFunctions,
+      label: t('transformers.calculate-field-transformer-editor.label.cumulative-functions', 'Cumulative functions'),
+    },
+    {
+      value: CalculateFieldMode.WindowFunctions,
+      label: t('transformers.calculate-field-transformer-editor.label.window-functions', 'Window functions'),
+    },
   ];
-
-  if (cfg.featureToggles.addFieldFromCalculationStatFunctions) {
-    calculationModes.push(
-      {
-        value: CalculateFieldMode.CumulativeFunctions,
-        label: t('transformers.calculate-field-transformer-editor.label.cumulative-functions', 'Cumulative functions'),
-      },
-      {
-        value: CalculateFieldMode.WindowFunctions,
-        label: t('transformers.calculate-field-transformer-editor.label.window-functions', 'Window functions'),
-      }
-    );
-  }
 
   useEffect(() => {
     const ctx = { interpolate: (v: string) => v };
-    const subscription = of(input)
+    const subscription = from(standardTransformersRegistry.get('ensureColumns').transformation())
       .pipe(
-        standardTransformers.ensureColumnsTransformer.operator(null, ctx),
-        extractAllNames(),
-        getVariableNames(),
-        extractNamesAndSelected(configuredOptions || [])
+        mergeMap((t) =>
+          of(input).pipe(
+            t.operator(null, ctx),
+            extractAllNames(),
+            getVariableNames(),
+            extractNamesAndSelected(configuredOptions || [])
+          )
+        )
       )
       .subscribe(({ selected, names }) => {
         setState({ names, selected });
@@ -270,7 +269,7 @@ export const getCalculateFieldTransformRegistryItem: () => TransformerRegistryIt
   () => ({
     id: DataTransformerID.calculateField,
     editor: CalculateFieldTransformerEditor,
-    transformation: standardTransformers.calculateFieldTransformer,
+    transformation: standardTransformersRegistry.get('calculateField').transformation,
     name: t(
       'transformers.get-calculate-field-transform-registry-item.name.add-field-from-calculation',
       'Add field from calculation'
@@ -280,7 +279,6 @@ export const getCalculateFieldTransformRegistryItem: () => TransformerRegistryIt
       'Use the row values to calculate a new field.'
     ),
     categories: new Set([TransformerCategory.CalculateNewFields]),
-    help: getTransformationContent(DataTransformerID.calculateField).helperDocs,
     imageDark: darkImage,
     imageLight: lightImage,
   });

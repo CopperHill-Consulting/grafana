@@ -1,34 +1,49 @@
 import { find } from 'lodash';
 
-import { DataSourceInstanceSettings, DataSourceRef, PanelPluginMeta, TypedVariableModel } from '@grafana/data';
-import { Dashboard, DashboardCursorSync, ThresholdsMode } from '@grafana/schema';
 import {
-  DatasourceVariableKind,
-  LibraryPanelKind,
-  PanelKind,
-  QueryVariableKind,
-} from '@grafana/schema/dist/esm/schema/dashboard/v2';
-import { handyTestingSchema } from '@grafana/schema/dist/esm/schema/dashboard/v2_examples';
+  type DataSourceInstanceSettings,
+  type DataSourceRef,
+  type PanelPluginMeta,
+  type TypedVariableModel,
+} from '@grafana/data';
+import { setPanelPluginMetas } from '@grafana/runtime/internal';
+import { type Dashboard, DashboardCursorSync, ThresholdsMode } from '@grafana/schema';
+import {
+  type DatasourceVariableKind,
+  type LibraryPanelKind,
+  type PanelKind,
+  type QueryVariableKind,
+  type GroupByVariableKind,
+  type AdhocVariableKind,
+} from '@grafana/schema/apis/dashboard.grafana.app/v2';
+import { handyTestingSchema } from '@grafana/schema/apis/dashboard.grafana.app/v2/examples';
 import config from 'app/core/config';
 import { DashboardModel } from 'app/features/dashboard/state/DashboardModel';
 import { createAdHocVariableAdapter } from 'app/features/variables/adhoc/adapter';
 
 import { LibraryElementKind } from '../../../library-panels/types';
-import { DashboardJson } from '../../../manage-dashboards/types';
+import { type DashboardJson } from '../../../manage-dashboards/types';
 import { variableAdapters } from '../../../variables/adapters';
 import { createConstantVariableAdapter } from '../../../variables/constant/adapter';
 import { createDataSourceVariableAdapter } from '../../../variables/datasource/adapter';
 import { createQueryVariableAdapter } from '../../../variables/query/adapter';
 
-import { makeExportableV1, makeExportableV2, LibraryElementExport } from './exporters';
+import {
+  makeExportableV1,
+  makeExportableV2,
+  type LibraryElementExport,
+  ExportLabel,
+  ExportDatasourceName,
+} from './exporters';
 
-jest.mock('app/core/store', () => {
-  return {
+jest.mock('@grafana/data', () => ({
+  ...jest.requireActual('@grafana/data'),
+  store: {
     getBool: jest.fn(),
     getObject: jest.fn((_a, b) => b),
     get: jest.fn(),
-  };
-});
+  },
+}));
 
 jest.mock('@grafana/runtime', () => ({
   ...jest.requireActual('@grafana/runtime'),
@@ -43,10 +58,12 @@ jest.mock('@grafana/runtime', () => ({
   },
   config: {
     buildInfo: {},
-    panels: {},
     apps: {},
     featureToggles: {
       newVariables: false,
+    },
+    unifiedAlerting: {
+      minInterval: '10s',
     },
   },
 }));
@@ -293,6 +310,65 @@ describe('dashboard exporter v1', () => {
     expect(exported.panels[0].targets[0].datasource).toEqual({ uid: '${DS_OTHER}', type: 'other' });
   });
 
+  it('should not attempt to templateize datasource variable ref if they have already been templateized', async () => {
+    const dashboard: Dashboard = {
+      title: 'My dashboard',
+      revision: 1,
+      editable: false,
+      graphTooltip: DashboardCursorSync.Off,
+      schemaVersion: 1,
+      timepicker: { hidden: true },
+      timezone: '',
+      panels: [
+        {
+          id: 1,
+          type: 'timeseries',
+          title: 'My panel title',
+          gridPos: { x: 0, y: 0, w: 1, h: 1 },
+          datasource: {
+            type: 'prometheus',
+            uid: '${ds_var}',
+          },
+        },
+      ],
+      templating: {
+        list: [
+          {
+            current: {
+              selected: false,
+              text: 'my-prometheus-datasource',
+              value: 'my-prometheus-datasource-uid',
+            },
+            hide: 0,
+            includeAll: false,
+            multi: false,
+            name: 'ds_var',
+            options: [],
+            query: 'prometheus',
+            refresh: 1,
+            regex: '',
+            skipUrlSync: false,
+            type: 'datasource',
+          },
+          // query variable here uses the datasource variable that has already been templateized
+          {
+            name: 'query_var',
+            datasource: { uid: '${ds_var}', type: 'prometheus' },
+            type: 'query',
+          },
+        ],
+      },
+    };
+    const dashboardModel = new DashboardModel(dashboard, undefined, {
+      getVariablesFromState: () => dashboard.templating!.list! as TypedVariableModel[],
+    });
+    const exported = (await makeExportableV1(dashboardModel)) as DashboardJson;
+
+    // @ts-ignore
+    const queryVarDatasource = exported.templating?.list[1].datasource;
+    expect(queryVarDatasource).toEqual({ uid: '${ds_var}', type: 'prometheus' });
+  });
+
   describe('given dashboard with repeated panels', () => {
     let dash: any, exported: any;
 
@@ -398,23 +474,23 @@ describe('dashboard exporter v1', () => {
 
       config.buildInfo.version = '3.0.2';
 
-      config.panels['graph'] = {
-        id: 'graph',
-        name: 'Graph',
-        info: { version: '1.1.0' },
-      } as PanelPluginMeta;
-
-      config.panels['table'] = {
-        id: 'table',
-        name: 'Table',
-        info: { version: '1.1.1' },
-      } as PanelPluginMeta;
-
-      config.panels['heatmap'] = {
-        id: 'heatmap',
-        name: 'Heatmap',
-        info: { version: '1.1.2' },
-      } as PanelPluginMeta;
+      setPanelPluginMetas({
+        graph: {
+          id: 'graph',
+          name: 'Graph',
+          info: { version: '1.1.0' },
+        } as PanelPluginMeta,
+        table: {
+          id: 'table',
+          name: 'Table',
+          info: { version: '1.1.1' },
+        } as PanelPluginMeta,
+        heatmap: {
+          id: 'heatmap',
+          name: 'Heatmap',
+          info: { version: '1.1.2' },
+        } as PanelPluginMeta,
+      });
 
       dash = new DashboardModel(
         dash,
@@ -439,6 +515,10 @@ describe('dashboard exporter v1', () => {
         exported = clean;
         done();
       });
+    });
+
+    afterEach(() => {
+      setPanelPluginMetas({});
     });
 
     it('should replace datasource refs', () => {
@@ -658,6 +738,72 @@ describe('dashboard exporter v2', () => {
     expect(annotationQuery.spec.query?.datasource?.name).toBeUndefined();
   });
 
+  it('should assign export labels to data queries during export', async () => {
+    const { dashboard } = await setup();
+
+    const panel = dashboard.elements['panel-1'];
+    if (panel.kind !== 'Panel') {
+      throw new Error('Panel should be a Panel');
+    }
+    const panelQuery = panel.spec.data.spec.queries[0];
+    expect(panelQuery.spec.query.labels?.[ExportLabel]).toBe('prometheus-1');
+
+    const queryVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'QueryVariable'
+    ) as QueryVariableKind;
+    expect(queryVariable.spec.query.labels?.[ExportLabel]).toBe('prometheus-1');
+
+    // panel-using-datasource-var keeps $datasourceVar but is also labeled (prometheus-2)
+    // when the variable's current UID differs from other prometheus datasources.
+    const dsVarPanel = dashboard.elements['panel-using-datasource-var'];
+    if (dsVarPanel.kind !== 'Panel') {
+      throw new Error('Panel should be a Panel');
+    }
+    expect(dsVarPanel.spec.data.spec.queries[0].spec.query.labels?.[ExportLabel]).toBe('prometheus-2');
+
+    const groupByVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'GroupByVariable'
+    ) as GroupByVariableKind;
+    expect(groupByVariable.labels?.[ExportLabel]).toBe('prometheus-3');
+
+    const adhocVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'AdhocVariable'
+    ) as AdhocVariableKind;
+    expect(adhocVariable.labels?.[ExportLabel]).toBe('prometheus-4');
+
+    const annotationQuery = dashboard.annotations[0];
+    expect(annotationQuery.spec.query.labels?.[ExportLabel]).toBe('prometheus-5');
+  });
+
+  it('should assign the original datasource name as an export label during export', async () => {
+    const { dashboard } = await setup();
+
+    const panel = dashboard.elements['panel-1'];
+    if (panel.kind !== 'Panel') {
+      throw new Error('Panel should be a Panel');
+    }
+    const panelQuery = panel.spec.data.spec.queries[0];
+    expect(panelQuery.spec.query.labels?.[ExportDatasourceName]).toBe('Production Prometheus');
+
+    const queryVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'QueryVariable'
+    ) as QueryVariableKind;
+    expect(queryVariable.spec.query.labels?.[ExportDatasourceName]).toBe('Production Prometheus');
+
+    const groupByVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'GroupByVariable'
+    ) as GroupByVariableKind;
+    expect(groupByVariable.labels?.[ExportDatasourceName]).toBe('Staging Prometheus');
+
+    const adhocVariable = dashboard.variables.find(
+      (variable) => variable.kind === 'AdhocVariable'
+    ) as AdhocVariableKind;
+    expect(adhocVariable.labels?.[ExportDatasourceName]).toBe('Dev Prometheus');
+
+    const annotationQuery = dashboard.annotations[0];
+    expect(annotationQuery.spec.query.labels?.[ExportDatasourceName]).toBe('Annotations Prometheus');
+  });
+
   it('should not remove datasource ref from panel that uses a datasource variable', async () => {
     const { dashboard } = await setup();
     const panel = dashboard.elements['panel-using-datasource-var'];
@@ -667,6 +813,7 @@ describe('dashboard exporter v2', () => {
     }
     expect(panel.spec.data.spec.queries[0].spec.query.datasource?.name).toBe('${datasourceVar}');
     expect(panel.spec.data.spec.queries[0].spec.query.group).toBe('prometheus');
+    expect(panel.spec.data.spec.queries[0].spec.query.labels?.[ExportLabel]).toBeDefined();
   });
 
   it('should convert library panels to inline panels when sharing externally', async () => {
@@ -784,6 +931,208 @@ describe('dashboard exporter v2', () => {
     // Restore console.error
     consoleSpy.mockRestore();
   });
+
+  describe('section variables', () => {
+    const makeSectionQueryVariable = (name: string, datasourceUid: string): QueryVariableKind => ({
+      kind: 'QueryVariable',
+      spec: {
+        name,
+        query: {
+          kind: 'DataQuery',
+          version: 'v0',
+          group: 'prometheus',
+          datasource: { name: datasourceUid },
+          spec: { expr: 'up' },
+        },
+        current: { text: 'a', value: 'a' },
+        options: [{ text: 'a', value: 'a' }],
+        hide: 'dontHide',
+        skipUrlSync: false,
+        multi: false,
+        includeAll: false,
+        allowCustomValue: false,
+        regex: '',
+        refresh: 'never',
+        sort: 'disabled',
+      },
+    });
+
+    const makeSectionDatasourceVariable = (name: string): DatasourceVariableKind => ({
+      kind: 'DatasourceVariable',
+      spec: {
+        name,
+        pluginId: 'prometheus',
+        current: { text: 'Production Prometheus', value: 'datasource1' },
+        options: [],
+        hide: 'dontHide',
+        skipUrlSync: false,
+        multi: false,
+        includeAll: false,
+        allowCustomValue: false,
+        refresh: 'never',
+        regex: '',
+      },
+    });
+
+    it('processes row QueryVariable and DatasourceVariable', async () => {
+      const schemaCopy = JSON.parse(JSON.stringify(handyTestingSchema));
+      schemaCopy.layout = {
+        kind: 'RowsLayout',
+        spec: {
+          rows: [
+            {
+              kind: 'RowsLayoutRow',
+              spec: {
+                title: 'Row 1',
+                layout: { kind: 'GridLayout', spec: { items: [] } },
+                variables: [
+                  makeSectionQueryVariable('rowQuery', 'datasource1'),
+                  makeSectionDatasourceVariable('rowDsVar'),
+                ],
+              },
+            },
+          ],
+        },
+      };
+
+      const dashboard = await makeExportableV2(schemaCopy);
+      if (typeof dashboard === 'object' && 'error' in dashboard) {
+        throw dashboard.error;
+      }
+
+      expect(dashboard.layout.kind).toBe('RowsLayout');
+      if (dashboard.layout.kind !== 'RowsLayout') {
+        return;
+      }
+      const sectionVars = dashboard.layout.spec.rows[0].spec.variables ?? [];
+      const queryVar = sectionVars.find((v) => v.kind === 'QueryVariable') as QueryVariableKind;
+      const dsVar = sectionVars.find((v) => v.kind === 'DatasourceVariable') as DatasourceVariableKind;
+
+      expect(queryVar.spec.query.datasource?.name).toBeUndefined();
+      expect(queryVar.spec.query.labels?.[ExportLabel]).toBeDefined();
+      expect(queryVar.spec.current).toEqual({ text: '', value: '' });
+      expect(queryVar.spec.options).toEqual([]);
+      expect(dsVar.spec.current).toEqual({ text: '', value: '' });
+    });
+
+    it('processes nested tab QueryVariable', async () => {
+      const schemaCopy = JSON.parse(JSON.stringify(handyTestingSchema));
+      schemaCopy.layout = {
+        kind: 'TabsLayout',
+        spec: {
+          tabs: [
+            {
+              kind: 'TabsLayoutTab',
+              spec: {
+                title: 'Tab 1',
+                layout: {
+                  kind: 'RowsLayout',
+                  spec: {
+                    rows: [
+                      {
+                        kind: 'RowsLayoutRow',
+                        spec: {
+                          title: 'Nested row',
+                          layout: { kind: 'GridLayout', spec: { items: [] } },
+                          variables: [makeSectionQueryVariable('nestedQuery', 'datasource2')],
+                        },
+                      },
+                    ],
+                  },
+                },
+                variables: [makeSectionQueryVariable('tabQuery', 'datasource1')],
+              },
+            },
+          ],
+        },
+      };
+
+      const dashboard = await makeExportableV2(schemaCopy);
+      if (typeof dashboard === 'object' && 'error' in dashboard) {
+        throw dashboard.error;
+      }
+
+      expect(dashboard.layout.kind).toBe('TabsLayout');
+      if (dashboard.layout.kind !== 'TabsLayout') {
+        return;
+      }
+      const tabVars = dashboard.layout.spec.tabs[0].spec.variables ?? [];
+      const tabQuery = tabVars[0] as QueryVariableKind;
+      expect(tabQuery.spec.query.datasource?.name).toBeUndefined();
+      expect(tabQuery.spec.query.labels?.[ExportLabel]).toBeDefined();
+
+      const nestedRows = dashboard.layout.spec.tabs[0].spec.layout;
+      expect(nestedRows.kind).toBe('RowsLayout');
+      if (nestedRows.kind !== 'RowsLayout') {
+        return;
+      }
+      const nestedQuery = nestedRows.spec.rows[0].spec.variables?.[0] as QueryVariableKind;
+      expect(nestedQuery.spec.query.datasource?.name).toBeUndefined();
+      expect(nestedQuery.spec.query.labels?.[ExportLabel]).toBeDefined();
+    });
+
+    it('keeps panel datasource ref when it uses a section DatasourceVariable', async () => {
+      const schemaCopy = JSON.parse(JSON.stringify(handyTestingSchema));
+      // Remove top-level datasourceVar so the panel only matches the section-scoped one
+      schemaCopy.variables = schemaCopy.variables.filter(
+        (v: { kind: string; spec: { name: string } }) =>
+          !(v.kind === 'DatasourceVariable' && v.spec.name === 'datasourceVar')
+      );
+      schemaCopy.layout = {
+        kind: 'RowsLayout',
+        spec: {
+          rows: [
+            {
+              kind: 'RowsLayoutRow',
+              spec: {
+                title: 'Row 1',
+                layout: { kind: 'GridLayout', spec: { items: [] } },
+                variables: [makeSectionDatasourceVariable('sectionDs')],
+              },
+            },
+          ],
+        },
+      };
+      schemaCopy.elements['panel-using-section-ds'] = {
+        kind: 'Panel',
+        spec: {
+          data: {
+            kind: 'QueryGroup',
+            spec: {
+              queries: [
+                {
+                  kind: 'PanelQuery',
+                  spec: {
+                    hidden: false,
+                    query: {
+                      datasource: { name: '${sectionDs}' },
+                      group: 'prometheus',
+                      spec: { expr: 'up' },
+                    },
+                    refId: 'A',
+                  },
+                },
+              ],
+            },
+          },
+        },
+      };
+
+      const dashboard = await makeExportableV2(schemaCopy);
+      if (typeof dashboard === 'object' && 'error' in dashboard) {
+        throw dashboard.error;
+      }
+
+      const panel = dashboard.elements['panel-using-section-ds'];
+      if (panel.kind !== 'Panel') {
+        throw new Error('Panel should be a Panel');
+      }
+      const query = panel.spec.data.spec.queries[0].spec.query;
+      // Keep $var ref, but attach export labels so external import can show a picker.
+      expect(query.datasource?.name).toBe('${sectionDs}');
+      expect(query.labels?.[ExportLabel]).toBeDefined();
+    });
+  });
 });
 
 function getStubInstanceSettings(v: string | DataSourceRef): DataSourceInstanceSettings {
@@ -826,4 +1175,26 @@ stubs['grafana'] = {
     name: 'grafana',
     builtIn: true,
   },
+} as DataSourceInstanceSettings;
+
+// Stubs used by v2 schema fixtures — each datasource UID maps to a distinct display name
+// so we can assert that the original name is preserved through export.
+stubs['datasource1'] = {
+  name: 'Production Prometheus',
+  meta: { id: 'prometheus', info: { version: '1.2.1' }, name: 'Prometheus' },
+} as DataSourceInstanceSettings;
+
+stubs['datasource2'] = {
+  name: 'Staging Prometheus',
+  meta: { id: 'prometheus', info: { version: '1.2.1' }, name: 'Prometheus' },
+} as DataSourceInstanceSettings;
+
+stubs['datasource3'] = {
+  name: 'Dev Prometheus',
+  meta: { id: 'prometheus', info: { version: '1.2.1' }, name: 'Prometheus' },
+} as DataSourceInstanceSettings;
+
+stubs['uid'] = {
+  name: 'Annotations Prometheus',
+  meta: { id: 'grafana-testdata-datasource', info: { version: '1.2.1' }, name: 'TestData' },
 } as DataSourceInstanceSettings;

@@ -1,11 +1,11 @@
 import { filter, isArray, isNumber, isString } from 'lodash';
 
+import { store } from '@grafana/data';
 import { getBackendSrv } from '@grafana/runtime';
-import store from 'app/core/store';
 
 import { contextSrv } from './context_srv';
 
-export class ImpressionSrv {
+class ImpressionSrv {
   constructor() {}
 
   addDashboardImpression(dashboardUID: string) {
@@ -58,6 +58,9 @@ export class ImpressionSrv {
     return result;
   }
 
+  clearImpressions() {
+    store.set(this.impressionKey(), JSON.stringify([]));
+  }
   impressionKey() {
     return 'dashboard_impressions-' + contextSrv.user.orgId;
   }

@@ -2,8 +2,8 @@ import { isNumber } from 'lodash';
 import uPlot from 'uplot';
 
 import {
-  DataFrame,
-  FieldConfig,
+  type DataFrame,
+  type FieldConfig,
   FieldType,
   formattedValueToString,
   getFieldColorModeForField,
@@ -11,14 +11,15 @@ import {
   getFieldDisplayName,
   getDisplayProcessor,
   FieldColorModeId,
-  DecimalCount,
+  type DecimalCount,
 } from '@grafana/data';
 // eslint-disable-next-line import/order
 import {
   AxisPlacement,
   GraphDrawStyle,
-  GraphFieldConfig,
+  type GraphFieldConfig,
   GraphThresholdsStyleMode,
+  type LineStyle,
   VisibilityMode,
   ScaleDirection,
   ScaleOrientation,
@@ -27,8 +28,35 @@ import {
   AxisColorMode,
   GraphGradientMode,
   VizOrientation,
-  ScaleDistributionConfig,
+  type ScaleDistributionConfig,
 } from '@grafana/schema';
+
+/**
+ * Distinct line styles cycled per series when the "accessible" line style is selected.
+ * 9 patterns to maximize distinguishable series before repeats.
+ */
+const ALTERNATING_PATTERN_LINE_STYLES: LineStyle[] = [
+  { fill: 'solid' },
+  { fill: 'dash', dash: [10, 10] },
+  { fill: 'dash', dash: [20, 10] },
+  { fill: 'dash', dash: [30, 3, 3] },
+  { fill: 'dash', dash: [10, 5, 3, 5] },
+  { fill: 'dash', dash: [5, 5] },
+  { fill: 'dash', dash: [20, 5, 5, 5] },
+  { fill: 'dash', dash: [15, 10, 5, 10] },
+  { fill: 'dash', dash: [30, 10] },
+];
+
+/**
+ * Resolves the "accessible" (alternating patterns) fill type into a concrete line style per series.
+ * Non accessible line styles pass through unchanged.
+ */
+function resolveLineStyle(lineStyle: LineStyle | undefined, seriesIndex: number): LineStyle | undefined {
+  if (!lineStyle || lineStyle.fill !== 'accessible') {
+    return lineStyle;
+  }
+  return ALTERNATING_PATTERN_LINE_STYLES[seriesIndex % ALTERNATING_PATTERN_LINE_STYLES.length];
+}
 
 // unit lookup needed to determine if we want power-of-2 or power-of-10 axis ticks
 // see categories.ts is @grafana/data
@@ -63,12 +91,19 @@ for (let i = 0; i < BIN_INCRS.length; i++) {
 import { DrawStyle } from '@grafana/ui';
 import {
   UPlotConfigBuilder,
-  UPlotConfigPrepFn,
+  type UPlotConfigPrepFn,
   getScaleGradientFn,
   buildScaleKey,
   getStackingGroups,
   preparePlotData2,
+  type AxisProps,
 } from '@grafana/ui/internal';
+
+import { ANNOTATION_LANE_SIZE } from '../../../plugins/panel/timeseries/plugins/utils';
+
+// See UPlotAxisBuilder.ts::calculateAxisSize for default axis size calculation
+const UPLOT_DEFAULT_AXIS_SIZE = 17;
+export const UPLOT_DEFAULT_AXIS_GAP = 5;
 
 const defaultFormatter = (v: any, decimals: DecimalCount = 1) => (v == null ? '-' : v.toFixed(decimals));
 
@@ -90,6 +125,7 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn = ({
   tweakAxis = (opts) => opts,
   hoverProximity,
   orientation = VizOrientation.Horizontal,
+  xAxisConfig,
 }) => {
   // we want the Auto and Horizontal orientation to default to Horizontal
   const isHorizontal = orientation !== VizOrientation.Vertical;
@@ -128,8 +164,28 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn = ({
       direction: isHorizontal ? ScaleDirection.Right : ScaleDirection.Up,
       isTime: true,
       range: () => {
-        const r = getTimeRange();
-        return [r.from.valueOf(), r.to.valueOf()];
+        const state = builder.getState();
+        if (state.isPanning) {
+          if (state.isTimeRangePending) {
+            const timeRange = getTimeRange();
+            const propsFrom = timeRange.from.valueOf();
+            const propsTo = timeRange.to.valueOf();
+
+            const MIN_TIMESPAN_MS = 1;
+            const fromMatches = Math.abs(propsFrom - state.min) <= MIN_TIMESPAN_MS;
+            const toMatches = Math.abs(propsTo - state.max) <= MIN_TIMESPAN_MS;
+            const timeRangeHasUpdated = fromMatches && toMatches;
+
+            if (timeRangeHasUpdated) {
+              builder.setState({ isPanning: false });
+              return [propsFrom, propsTo];
+            }
+          }
+
+          return [state.min, state.max];
+        }
+        const timeRange = getTimeRange();
+        return [timeRange.from.valueOf(), timeRange.to.valueOf()];
       },
     });
 
@@ -156,6 +212,10 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn = ({
         theme,
         grid: { show: i === 0 && xField.config.custom?.axisGridShow },
         filter: filterTicks,
+        formatValue: xField.config.unit?.startsWith('time:')
+          ? (v, decimals) => xField.display!(v, decimals).text
+          : undefined,
+        ...xAxisConfig,
       });
     }
 
@@ -209,6 +269,7 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn = ({
       theme,
       grid: { show: custom?.axisGridShow },
       formatValue: (v, decimals) => formattedValueToString(xField.display!(v, decimals)),
+      decimals: xField.config.decimals,
     });
   }
 
@@ -216,6 +277,7 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn = ({
     renderers?.flatMap((r) => Object.values(r.fieldMap).filter((name) => r.indicesOnly.indexOf(name) === -1)) ?? [];
 
   let indexByName: Map<string, number> | undefined;
+  let seriesIdx = 0;
 
   for (let i = 1; i < frame.fields.length; i++) {
     const field = frame.fields[i];
@@ -530,7 +592,7 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn = ({
       lineColor: customConfig.lineColor ?? seriesColor,
       lineWidth: customConfig.lineWidth,
       lineInterpolation: customConfig.lineInterpolation,
-      lineStyle: customConfig.lineStyle,
+      lineStyle: resolveLineStyle(customConfig.lineStyle, seriesIdx),
       barAlignment: customConfig.barAlignment,
       barWidthFactor: customConfig.barWidthFactor,
       barMaxWidth: customConfig.barMaxWidth,
@@ -547,6 +609,8 @@ export const preparePlotConfigBuilder: UPlotConfigPrepFn = ({
       dataFrameFieldIndex: field.state?.origin,
       showValues: customConfig.showValues,
     });
+
+    seriesIdx++;
 
     // Render thresholds in graph
     if (customConfig.thresholdsStyle && config.thresholds) {
@@ -705,4 +769,26 @@ function getNamesToFieldIndex(frame: DataFrame, allFrames: DataFrame[]): Map<str
     }
   });
   return originNames;
+}
+
+export function getXAxisConfig(lanes = 1): Pick<AxisProps, 'size' | 'gap' | 'ticks'> | undefined {
+  if (lanes > 1) {
+    const annotationLanesSize = lanes * ANNOTATION_LANE_SIZE;
+    // Add an extra lane's worth of height below the annotation lanes in order to show the gridlines through the annotation lanes
+    const axisSize = annotationLanesSize + UPLOT_DEFAULT_AXIS_GAP;
+    // Consistent gap between gridlines and x-axis labels
+    const gap = UPLOT_DEFAULT_AXIS_GAP;
+    // Axis size is: default size + gap size + annotationLaneSize
+    const size = UPLOT_DEFAULT_AXIS_SIZE + gap + annotationLanesSize;
+
+    return {
+      size,
+      gap,
+      ticks: {
+        size: axisSize,
+      },
+    };
+  }
+
+  return undefined;
 }

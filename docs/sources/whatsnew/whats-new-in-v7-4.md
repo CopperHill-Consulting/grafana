@@ -211,7 +211,7 @@ For more information, refer to [Export logs of usage insights](../../setup-grafa
 
 ### New audit log events
 
-New log out events are logged based on when a token expires or is revoked, as well as [SAML Single Logout](../../setup-grafana/configure-security/configure-authentication/saml/#single-logout). A `tokenId` field was added to all audit logs to help understand which session was logged out of.
+New log out events are logged based on when a token expires or is revoked, as well as [SAML Single Logout](../../setup-grafana/configure-access/configure-authentication/saml/#single-logout). A `tokenId` field was added to all audit logs to help understand which session was logged out of.
 
 Also, a counter for audit log writing actions with status (success / failure) and logger (loki / file / console) labels was added.
 
@@ -221,7 +221,7 @@ Also, a counter for audit log writing actions with status (success / failure) an
 
 You can now select a font, other than the default, for Unicode-based scripts. As a result, an automatically generated PDF of a dashboard, which contains for example Chinese or Cyrillic text, can display them. Because the size of a report increases as additional fonts are added, this feature is not on by default.
 
-[Reporting](../../dashboards/share-dashboards-panels/#rendering-configuration) was updated as a result of this change.
+[Reporting](https://grafana.com/docs/grafana/<GRAFANA_VERSION>/visualizations/dashboards/create-reports/#rendering-configuration) was updated as a result of this change.
 
 ### Request security
 

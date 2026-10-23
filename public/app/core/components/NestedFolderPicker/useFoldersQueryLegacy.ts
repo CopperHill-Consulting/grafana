@@ -1,16 +1,17 @@
 import { createSelector } from '@reduxjs/toolkit';
-import { QueryDefinition, BaseQueryFn, QueryActionCreatorResult } from '@reduxjs/toolkit/query';
-import { RequestOptions } from 'http';
+import { type QueryDefinition, type BaseQueryFn, type QueryActionCreatorResult } from '@reduxjs/toolkit/query';
+import { type RequestOptions } from 'http';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ListFolderQueryArgs, browseDashboardsAPI } from 'app/features/browse-dashboards/api/browseDashboardsAPI';
-import { PAGE_SIZE } from 'app/features/browse-dashboards/api/services';
+import { getMessageFromError } from 'app/core/utils/errors';
+import { type ListFolderQueryArgs, browseDashboardsAPI } from 'app/features/browse-dashboards/api/browseDashboardsAPI';
+import { PAGE_SIZE } from 'app/features/browse-dashboards/api/constants';
 import { getPaginationPlaceholders } from 'app/features/browse-dashboards/state/utils';
-import { DashboardViewItemWithUIItems, DashboardsTreeItem } from 'app/features/browse-dashboards/types';
-import { FolderListItemDTO } from 'app/types/folders';
+import { type DashboardViewItemWithUIItems, type DashboardsTreeItem } from 'app/features/browse-dashboards/types';
+import { type FolderListItemDTO } from 'app/types/folders';
 import { useDispatch, useSelector } from 'app/types/store';
 
-import { UseFoldersQueryProps } from './useFoldersQuery';
+import { type UseFoldersQueryProps } from './useFoldersQuery';
 import { getRootFolderItem } from './utils';
 
 type ListFoldersQuery = ReturnType<ReturnType<typeof browseDashboardsAPI.endpoints.listFolders.select>>;
@@ -58,6 +59,9 @@ export function useFoldersQueryLegacy({
   // Keep a list of all request subscriptions so we can unsubscribe from them when the component is unmounted
   const requestsRef = useRef<ListFoldersRequest[]>([]);
 
+  // Set of UIDs for which children were requested but were empty.
+  const [emptyFolders, setEmptyFolders] = useState<Set<string>>(new Set());
+
   // Keep a list of selectors for dynamic state selection
   const [selectors, setSelectors] = useState<
     Array<ReturnType<typeof browseDashboardsAPI.endpoints.listFolders.select>>
@@ -66,12 +70,17 @@ export function useFoldersQueryLegacy({
   const listAllFoldersSelector = useMemo(() => {
     return createSelector(selectors, (...pages) => {
       let isLoading = false;
+      let error: unknown = undefined;
       const rootPages: ListFoldersQuery[] = [];
       const pagesByParent: Record<string, ListFoldersQuery[]> = {};
 
       for (const page of pages) {
         if (page.status === PENDING_STATUS) {
           isLoading = true;
+        }
+
+        if (!error && page.error) {
+          error = page.error;
         }
 
         const parentUid = page.originalArgs?.parentUid;
@@ -88,6 +97,7 @@ export function useFoldersQueryLegacy({
 
       return {
         isLoading,
+        error,
         rootPages,
         pagesByParent,
       };
@@ -165,8 +175,15 @@ export function useFoldersQueryLegacy({
           };
 
           const childPages = folderIsOpen && state.pagesByParent[item.uid];
+
           if (childPages) {
             const childFlatItems = createFlatList(item.uid, childPages, level + 1);
+
+            // If we finished loading and there are no children add to empty list
+            if (childPages[0] && childPages[0].status !== PENDING_STATUS && childFlatItems.length === 0) {
+              setEmptyFolders((prev) => new Set(prev).add(item.uid));
+            }
+
             return [flatItem, ...childFlatItems];
           }
 
@@ -191,8 +208,10 @@ export function useFoldersQueryLegacy({
   }, [state, isBrowsing, openFolders, rootFolderUID, rootFolderItem]);
 
   return {
+    emptyFolders,
     items: treeList,
     isLoading: state.isLoading,
+    error: state.error ? new Error(getMessageFromError(state.error)) : undefined,
     requestNextPage,
   };
 }

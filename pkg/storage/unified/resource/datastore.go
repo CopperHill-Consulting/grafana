@@ -2,35 +2,82 @@ package resource
 
 import (
 	"context"
+	"embed"
+	"errors"
 	"fmt"
 	"io"
 	"iter"
 	"math"
-	"regexp"
-	"strconv"
 	"strings"
+	"text/template"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
+	"github.com/grafana/grafana/pkg/apimachinery/validation"
+	kvpkg "github.com/grafana/grafana/pkg/storage/unified/resource/kv"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/db"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/dbutil"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/rvmanager"
+	"github.com/grafana/grafana/pkg/storage/unified/sql/sqltemplate"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/lib/pq"
 	gocache "github.com/patrickmn/go-cache"
+
+	"github.com/grafana/grafana/pkg/util/sqlite"
 )
 
+// Templates setup for backward-compatibility queries
+var (
+	//go:embed data/*.sql
+	sqlTemplatesFS embed.FS
+
+	sqlTemplates = template.Must(template.New("sql").ParseFS(sqlTemplatesFS, `data/*.sql`))
+)
+
+func mustTemplate(filename string) *template.Template {
+	if t := sqlTemplates.Lookup(filename); t != nil {
+		return t
+	}
+	panic(fmt.Sprintf("template file not found: %s", filename))
+}
+
 const (
-	dataSection = "unified/data"
+	dataSection = kvpkg.DataSection
 	// cache
 	groupResourcesCacheKey = "group-resources"
+	// batch operations
+	dataBatchSize = 50 // default batch size for BatchGet operations
+	// keyPageSize is the number of raw keys fetched per key-scan page.
+	keyPageSize = 500
 )
 
 // dataStore is a data store that uses a KV store to store data.
 type dataStore struct {
-	kv    KV
-	cache *gocache.Cache
+	kv            KV
+	cache         *gocache.Cache
+	legacyDialect sqltemplate.Dialect // TODO: remove when backwards compatibility is no longer needed.
+	metrics       *kvBackendMetrics
 }
 
-func newDataStore(kv KV) *dataStore {
-	return &dataStore{
-		kv:    kv,
-		cache: gocache.New(time.Hour, 10*time.Minute), // 1 hour expiration, 10 minute cleanup
+type dataImportBatchWriter interface {
+	InsertDataImportBatch(ctx context.Context, rows []kvpkg.DataImportRow) error
+}
+
+func newDataStore(kv KV, metrics *kvBackendMetrics) *dataStore {
+	ds := &dataStore{
+		kv:      kv,
+		cache:   gocache.New(time.Hour, 10*time.Minute), // 1 hour expiration, 10 minute cleanup
+		metrics: metrics,
 	}
+
+	if sqlkv, ok := kv.(*kvpkg.SqlKV); ok {
+		ds.legacyDialect = sqltemplate.DialectForDriver(sqlkv.DriverName)
+	}
+
+	return ds
 }
 
 type DataObj struct {
@@ -38,15 +85,8 @@ type DataObj struct {
 	Value io.ReadCloser
 }
 
-type DataKey struct {
-	Namespace       string
-	Group           string
-	Resource        string
-	Name            string
-	ResourceVersion int64
-	Action          DataAction
-	Folder          string
-}
+// TODO: pull DataKey from kv/sqlkv into here once we don't need sql/backend backwards compatibility
+type DataKey = kvpkg.DataKey
 
 // GroupResource represents a unique group/resource combination
 type GroupResource struct {
@@ -54,65 +94,44 @@ type GroupResource struct {
 	Resource string
 }
 
-var (
-	// validNameRegex validates that a name contains only lowercase alphanumeric characters, '-' or '.'
-	// and starts and ends with an alphanumeric character
-	validNameRegex = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$`)
-)
-
-func (k DataKey) String() string {
-	return fmt.Sprintf("%s/%s/%s/%s/%d~%s~%s", k.Group, k.Resource, k.Namespace, k.Name, k.ResourceVersion, k.Action, k.Folder)
-}
-
-func (k DataKey) Equals(other DataKey) bool {
-	return k.Group == other.Group && k.Resource == other.Resource && k.Namespace == other.Namespace && k.Name == other.Name && k.ResourceVersion == other.ResourceVersion && k.Action == other.Action && k.Folder == other.Folder
-}
-
-func (k DataKey) Validate() error {
-	if k.Group == "" {
-		return fmt.Errorf("group is required")
+// TODO transform this into Validate() method on DataKey once we pull that struct back here
+func validateDataKey(dataKey DataKey) error {
+	if dataKey.ResourceVersion <= 0 {
+		return NewValidationError("resourceVersion", fmt.Sprintf("%d", dataKey.ResourceVersion), ErrResourceVersionInvalid)
 	}
-	if k.Resource == "" {
-		return fmt.Errorf("resource is required")
-	}
-	if k.Namespace == "" {
-		return fmt.Errorf("namespace is required")
-	}
-	if k.Name == "" {
-		return fmt.Errorf("name is required")
-	}
-	if k.ResourceVersion <= 0 {
-		return fmt.Errorf("resource version must be positive")
-	}
-	if k.Action == "" {
-		return fmt.Errorf("action is required")
+	if dataKey.Action == "" {
+		return NewValidationError("action", string(dataKey.Action), ErrActionRequired)
 	}
 
 	// Validate naming conventions for all required fields
-	if !validNameRegex.MatchString(k.Namespace) {
-		return fmt.Errorf("namespace '%s' is invalid", k.Namespace)
+	if dataKey.Namespace != "" {
+		if err := validation.IsValidNamespace(dataKey.Namespace); err != nil {
+			return NewValidationError("namespace", dataKey.Namespace, err[0])
+		}
 	}
-	if !validNameRegex.MatchString(k.Group) {
-		return fmt.Errorf("group '%s' is invalid", k.Group)
+	if err := validation.IsValidGroup(dataKey.Group); err != nil {
+		return NewValidationError("group", dataKey.Group, err[0])
 	}
-	if !validNameRegex.MatchString(k.Resource) {
-		return fmt.Errorf("resource '%s' is invalid", k.Resource)
+	if err := validation.IsValidResource(dataKey.Resource); err != nil {
+		return NewValidationError("resource", dataKey.Resource, err[0])
 	}
-	if !validNameRegex.MatchString(k.Name) {
-		return fmt.Errorf("name '%s' is invalid", k.Name)
+	if err := validation.IsValidGrafanaName(dataKey.Name); err != nil {
+		return NewValidationError("name", dataKey.Name, err[0])
 	}
 
 	// Validate folder field if provided (optional field)
-	if k.Folder != "" && !validNameRegex.MatchString(k.Folder) {
-		return fmt.Errorf("folder '%s' is invalid", k.Folder)
+	if dataKey.Folder != "" {
+		if err := validation.IsValidGrafanaName(dataKey.Folder); err != nil {
+			return NewValidationError("folder", dataKey.Folder, err[0])
+		}
 	}
 
 	// Validate action is one of the valid values
-	switch k.Action {
+	switch dataKey.Action {
 	case DataActionCreated, DataActionUpdated, DataActionDeleted:
 		return nil
 	default:
-		return fmt.Errorf("action '%s' is invalid: must be one of 'created', 'updated', or 'deleted'", k.Action)
+		return fmt.Errorf("action '%s' is invalid: must be one of 'created', 'updated', or 'deleted'", dataKey.Action)
 	}
 }
 
@@ -124,33 +143,27 @@ type ListRequestKey struct {
 }
 
 func (k ListRequestKey) Validate() error {
-	if k.Group == "" {
-		return fmt.Errorf("group is required")
+	if k.Namespace != "" {
+		if err := validation.IsValidNamespace(k.Namespace); err != nil {
+			return NewValidationError("namespace", k.Namespace, err[0])
+		}
 	}
-	if k.Resource == "" {
-		return fmt.Errorf("resource is required")
+	if err := validation.IsValidGroup(k.Group); err != nil {
+		return NewValidationError("group", k.Group, err[0])
 	}
-	if k.Namespace == "" && k.Name != "" {
-		return fmt.Errorf("name must be empty when namespace is empty")
+	if err := validation.IsValidResource(k.Resource); err != nil {
+		return NewValidationError("resource", k.Resource, err[0])
 	}
-	if k.Namespace != "" && !validNameRegex.MatchString(k.Namespace) {
-		return fmt.Errorf("namespace '%s' is invalid", k.Namespace)
-	}
-	if !validNameRegex.MatchString(k.Group) {
-		return fmt.Errorf("group '%s' is invalid", k.Group)
-	}
-	if !validNameRegex.MatchString(k.Resource) {
-		return fmt.Errorf("resource '%s' is invalid", k.Resource)
-	}
-	if k.Name != "" && !validNameRegex.MatchString(k.Name) {
-		return fmt.Errorf("name '%s' is invalid", k.Name)
-	}
+
 	return nil
 }
 
 func (k ListRequestKey) Prefix() string {
 	if k.Namespace == "" {
-		return fmt.Sprintf("%s/%s/", k.Group, k.Resource)
+		if k.Name == "" {
+			return fmt.Sprintf("%s/%s/", k.Group, k.Resource)
+		}
+		return fmt.Sprintf("%s/%s/%s/", k.Group, k.Resource, k.Name)
 	}
 	if k.Name == "" {
 		return fmt.Sprintf("%s/%s/%s/", k.Group, k.Resource, k.Namespace)
@@ -168,31 +181,19 @@ type GetRequestKey struct {
 
 // Validate validates the get request key
 func (k GetRequestKey) Validate() error {
-	if k.Group == "" {
-		return fmt.Errorf("group is required")
+	if k.Namespace != "" {
+		if err := validation.IsValidNamespace(k.Namespace); err != nil {
+			return NewValidationError("namespace", k.Namespace, err[0])
+		}
 	}
-	if k.Resource == "" {
-		return fmt.Errorf("resource is required")
+	if err := validation.IsValidGroup(k.Group); err != nil {
+		return NewValidationError("group", k.Group, err[0])
 	}
-	if k.Namespace == "" {
-		return fmt.Errorf("namespace is required")
+	if err := validation.IsValidResource(k.Resource); err != nil {
+		return NewValidationError("resource", k.Resource, err[0])
 	}
-	if k.Name == "" {
-		return fmt.Errorf("name is required")
-	}
-
-	// Validate naming conventions
-	if !validNameRegex.MatchString(k.Namespace) {
-		return fmt.Errorf("namespace '%s' is invalid", k.Namespace)
-	}
-	if !validNameRegex.MatchString(k.Group) {
-		return fmt.Errorf("group '%s' is invalid", k.Group)
-	}
-	if !validNameRegex.MatchString(k.Resource) {
-		return fmt.Errorf("resource '%s' is invalid", k.Resource)
-	}
-	if !validNameRegex.MatchString(k.Name) {
-		return fmt.Errorf("name '%s' is invalid", k.Name)
+	if err := validation.IsValidGrafanaName(k.Name); err != nil {
+		return NewValidationError("name", k.Name, err[0])
 	}
 
 	return nil
@@ -200,15 +201,16 @@ func (k GetRequestKey) Validate() error {
 
 // Prefix returns the prefix for getting a specific data object
 func (k GetRequestKey) Prefix() string {
+	if k.Namespace == "" {
+		return fmt.Sprintf("%s/%s/%s/", k.Group, k.Resource, k.Name)
+	}
 	return fmt.Sprintf("%s/%s/%s/%s/", k.Group, k.Resource, k.Namespace, k.Name)
 }
 
-type DataAction string
-
 const (
-	DataActionCreated DataAction = "created"
-	DataActionUpdated DataAction = "updated"
-	DataActionDeleted DataAction = "deleted"
+	DataActionCreated = kvpkg.DataActionCreated
+	DataActionUpdated = kvpkg.DataActionUpdated
+	DataActionDeleted = kvpkg.DataActionDeleted
 )
 
 // Keys returns all keys for a given key by iterating through the KV store
@@ -218,8 +220,10 @@ func (d *dataStore) Keys(ctx context.Context, key ListRequestKey, sort SortOrder
 			yield(DataKey{}, err)
 		}
 	}
+	ctx, span := tracer.Start(ctx, "resource.dataStore.Keys")
 	prefix := key.Prefix()
 	return func(yield func(DataKey, error) bool) {
+		defer span.End()
 		for k, err := range d.kv.Keys(ctx, dataSection, ListOptions{
 			StartKey: prefix,
 			EndKey:   PrefixRangeEnd(prefix),
@@ -246,9 +250,13 @@ func (d *dataStore) LastResourceVersion(ctx context.Context, key ListRequestKey)
 	if err := key.Validate(); err != nil {
 		return DataKey{}, fmt.Errorf("invalid data key: %w", err)
 	}
-	if key.Group == "" || key.Resource == "" || key.Namespace == "" || key.Name == "" {
-		return DataKey{}, fmt.Errorf("group, resource, namespace or name is empty")
+	if key.Group == "" || key.Resource == "" || key.Name == "" {
+		return DataKey{}, fmt.Errorf("group, resource or name is empty")
 	}
+
+	ctx, span := tracer.Start(ctx, "resource.dataStore.LastResourceVersion")
+	defer span.End()
+
 	prefix := key.Prefix()
 	for key, err := range d.kv.Keys(ctx, dataSection, ListOptions{
 		StartKey: prefix,
@@ -264,6 +272,53 @@ func (d *dataStore) LastResourceVersion(ctx context.Context, key ListRequestKey)
 	return DataKey{}, ErrNotFound
 }
 
+// GetLatestAndPredecessor returns the latest resource version and its immediate predecessor
+// in a single atomic operation. Returns (latest, predecessor, error).
+// If there's only one version, predecessor will be an empty DataKey (ResourceVersion == 0).
+func (d *dataStore) GetLatestAndPredecessor(ctx context.Context, key ListRequestKey) (DataKey, DataKey, error) {
+	if err := key.Validate(); err != nil {
+		return DataKey{}, DataKey{}, fmt.Errorf("invalid data key: %w", err)
+	}
+	if key.Group == "" || key.Resource == "" || key.Name == "" {
+		return DataKey{}, DataKey{}, fmt.Errorf("group, resource or name is empty")
+	}
+
+	ctx, span := tracer.Start(ctx, "resource.dataStore.GetLatestAndPredecessor")
+	defer span.End()
+
+	prefix := key.Prefix()
+	var latest, predecessor DataKey
+	count := 0
+	for k, err := range d.kv.Keys(ctx, dataSection, ListOptions{
+		StartKey: prefix,
+		EndKey:   PrefixRangeEnd(prefix),
+		Limit:    2, // Get latest and predecessor
+		Sort:     SortOrderDesc,
+	}) {
+		if err != nil {
+			return DataKey{}, DataKey{}, err
+		}
+		parsedKey, err := ParseKey(k)
+		if err != nil {
+			return DataKey{}, DataKey{}, err
+		}
+		switch count {
+		case 0:
+			latest = parsedKey
+		case 1:
+			predecessor = parsedKey
+		}
+		count++
+	}
+	if count == 0 {
+		return DataKey{}, DataKey{}, ErrNotFound
+	}
+	if count == 1 {
+		return latest, DataKey{}, nil
+	}
+	return latest, predecessor, nil
+}
+
 // GetLatestResourceKey retrieves the data key for the latest version of a resource.
 // Returns the key with the highest resource version that is not deleted.
 func (d *dataStore) GetLatestResourceKey(ctx context.Context, key GetRequestKey) (DataKey, error) {
@@ -277,13 +332,14 @@ func (d *dataStore) GetResourceKeyAtRevision(ctx context.Context, key GetRequest
 		return DataKey{}, fmt.Errorf("invalid get request key: %w", err)
 	}
 
-	if rv == 0 {
-		rv = math.MaxInt64
-	}
+	ctx, span := tracer.Start(ctx, "resource.dataStore.GetResourceKeyAtRevision", trace.WithAttributes(
+		attribute.Int64("resourceVersion", rv),
+	))
+	defer span.End()
 
 	listKey := ListRequestKey(key)
 
-	iter := d.ListResourceKeysAtRevision(ctx, listKey, rv)
+	iter := d.ListResourceKeysAtRevision(ctx, ListRequestOptions{Key: listKey, ResourceVersion: rv})
 	for dataKey, err := range iter {
 		if err != nil {
 			return DataKey{}, err
@@ -293,34 +349,125 @@ func (d *dataStore) GetResourceKeyAtRevision(ctx context.Context, key GetRequest
 	return DataKey{}, ErrNotFound
 }
 
+type ListRequestOptions struct {
+	// Key defines the range to query (Group/Resource/Namespace/Name prefix).
+	Key ListRequestKey
+	// ContinueNamespace is the namespace to continue from.
+	// Only used when Key.Namespace is empty (cross-namespace query).
+	ContinueNamespace string
+	// ContinueName is the name to continue from.
+	ContinueName    string
+	ResourceVersion int64
+}
+
+// Validate checks that the ListRequestOptions are valid.
+func (o ListRequestOptions) Validate() error {
+	if err := o.Key.Validate(); err != nil {
+		return fmt.Errorf("invalid list request key: %w", err)
+	}
+	// ContinueNamespace is only valid for cross-namespace queries
+	if o.ContinueNamespace != "" && o.Key.Namespace != "" {
+		return fmt.Errorf("continue namespace %q not allowed when request namespace is set to %q", o.ContinueNamespace, o.Key.Namespace)
+	}
+	return nil
+}
+
 // ListLatestResourceKeys returns an iterator over the data keys for the latest versions of resources.
 // Only returns keys for resources that are not deleted.
 func (d *dataStore) ListLatestResourceKeys(ctx context.Context, key ListRequestKey) iter.Seq2[DataKey, error] {
-	return d.ListResourceKeysAtRevision(ctx, key, 0)
+	return d.ListResourceKeysAtRevision(ctx, ListRequestOptions{
+		Key: key,
+	})
+}
+
+// pagedKeys scans keys in the given range one bounded page at a time. Each page
+// is read fully into memory (which lets the underlying KV close its cursor)
+// before its keys are yielded, so no cursor is held open while the consumer
+// reads. It yields the same lexical key sequence as a single unbounded scan.
+func pagedKeys(ctx context.Context, kv KV, section string, base ListOptions, pageSize int) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		opts := base
+		opts.Limit = int64(pageSize)
+
+		for {
+			page := make([]string, 0, pageSize)
+			var scanErr error
+			for key, err := range kv.Keys(ctx, section, opts) {
+				if err != nil {
+					scanErr = err
+					break
+				}
+				page = append(page, key)
+			}
+			// The KV cursor for this page is now closed.
+			if scanErr != nil {
+				yield("", scanErr)
+				return
+			}
+
+			for _, key := range page {
+				if !yield(key, nil) {
+					return
+				}
+			}
+
+			// A short page means we reached the end of the range.
+			if len(page) < pageSize {
+				return
+			}
+
+			// StartKey is inclusive, so advance past the last key we saw.
+			opts.StartKey = PrefixRangeEnd(page[len(page)-1])
+		}
+	}
 }
 
 // ListResourceKeysAtRevision returns an iterator over data keys for resources at a specific revision.
 // If rv is 0, it returns the latest versions. Only returns keys for resources that are not deleted at the given revision.
-func (d *dataStore) ListResourceKeysAtRevision(ctx context.Context, key ListRequestKey, rv int64) iter.Seq2[DataKey, error] {
-	if err := key.Validate(); err != nil {
+func (d *dataStore) ListResourceKeysAtRevision(ctx context.Context, options ListRequestOptions) iter.Seq2[DataKey, error] {
+	if err := options.Validate(); err != nil {
 		return func(yield func(DataKey, error) bool) {
-			yield(DataKey{}, fmt.Errorf("invalid list request key: %w", err))
+			yield(DataKey{}, err)
 		}
+	}
+
+	rv := options.ResourceVersion
+	prefix := options.Key.Prefix()
+
+	startKey := prefix
+	if options.ContinueName != "" {
+		// Build the start key from the continue position
+		continueKey := ListRequestKey{
+			Group:     options.Key.Group,
+			Resource:  options.Key.Resource,
+			Namespace: options.Key.Namespace,
+			Name:      options.ContinueName,
+		}
+		// For cross-namespace queries, use the continue namespace
+		if options.Key.Namespace == "" && options.ContinueNamespace != "" {
+			continueKey.Namespace = options.ContinueNamespace
+		}
+		startKey = continueKey.Prefix()
+	}
+
+	listOptions := ListOptions{
+		StartKey: startKey,
+		EndKey:   PrefixRangeEnd(prefix),
+		Sort:     SortOrderAsc,
 	}
 
 	if rv == 0 {
 		rv = math.MaxInt64
 	}
 
-	prefix := key.Prefix()
-	// List all keys in the prefix.
-	iter := d.kv.Keys(ctx, dataSection, ListOptions{
-		StartKey: prefix,
-		EndKey:   PrefixRangeEnd(prefix),
-		Sort:     SortOrderAsc,
-	})
+	ctx, span := tracer.Start(ctx, "resource.dataStore.ListResourceKeysAtRevision", trace.WithAttributes(
+		attribute.Int64("resourceVersion", rv),
+	))
+
+	iter := pagedKeys(ctx, d.kv, dataSection, listOptions, keyPageSize)
 
 	return func(yield func(DataKey, error) bool) {
+		defer span.End()
 		var candidateKey *DataKey // The current candidate key we are iterating over
 
 		// yieldCandidate is a helper function to yield results.
@@ -382,19 +529,94 @@ func (d *dataStore) ListResourceKeysAtRevision(ctx context.Context, key ListRequ
 }
 
 func (d *dataStore) Get(ctx context.Context, key DataKey) (io.ReadCloser, error) {
-	if err := key.Validate(); err != nil {
+	if err := validateDataKey(key); err != nil {
 		return nil, fmt.Errorf("invalid data key: %w", err)
 	}
+
+	ctx, span := tracer.Start(ctx, "resource.dataStore.Get")
+	defer span.End()
 
 	return d.kv.Get(ctx, dataSection, key.String())
 }
 
+// BatchGet retrieves multiple data objects in batches.
+// It returns an iterator that yields DataObj results for the given keys.
+// Keys are processed in batches (default 50).
+// Non-existent entries will not appear in the result.
+func (d *dataStore) BatchGet(ctx context.Context, keys []DataKey) iter.Seq2[DataObj, error] {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.BatchGet", trace.WithAttributes(
+		attribute.Int("batchSize", len(keys)),
+	))
+	return func(yield func(DataObj, error) bool) {
+		defer span.End()
+		// Validate all keys first
+		for _, key := range keys {
+			if err := validateDataKey(key); err != nil {
+				yield(DataObj{}, fmt.Errorf("invalid data key %s: %w", key.String(), err))
+				return
+			}
+		}
+
+		// Process keys in batches
+		for i := 0; i < len(keys); i += dataBatchSize {
+			end := i + dataBatchSize
+			if end > len(keys) {
+				end = len(keys)
+			}
+			batch := keys[i:end]
+
+			// Convert DataKeys to string keys and create a mapping
+			stringKeys := make([]string, len(batch))
+			keyMap := make(map[string]DataKey) // map string key back to DataKey
+			for j, key := range batch {
+				strKey := key.String()
+				stringKeys[j] = strKey
+				keyMap[strKey] = key
+			}
+
+			// Call kv.BatchGet for this batch
+			for kv, err := range d.kv.BatchGet(ctx, dataSection, stringKeys) {
+				if err != nil {
+					yield(DataObj{}, err)
+					return
+				}
+
+				// Look up the original DataKey
+				dataKey, ok := keyMap[kv.Key]
+				if !ok {
+					yield(DataObj{}, fmt.Errorf("unexpected key in batch response: %s", kv.Key))
+					return
+				}
+
+				// Yield the DataObj
+				if !yield(DataObj{
+					Key:   dataKey,
+					Value: kv.Value,
+				}, nil) {
+					return
+				}
+			}
+		}
+	}
+}
+
 func (d *dataStore) Save(ctx context.Context, key DataKey, value io.Reader) error {
-	if err := key.Validate(); err != nil {
+	if err := validateDataKey(key); err != nil {
 		return fmt.Errorf("invalid data key: %w", err)
 	}
 
-	writer, err := d.kv.Save(ctx, dataSection, key.String())
+	ctx, span := tracer.Start(ctx, "resource.dataStore.Save", trace.WithAttributes(
+		attribute.String("action", string(key.Action)),
+	))
+	defer span.End()
+
+	var writer io.WriteCloser
+	var err error
+	if key.GUID != "" {
+		writer, err = d.kv.Save(ctx, dataSection, key.StringWithGUID())
+	} else {
+		writer, err = d.kv.Save(ctx, dataSection, key.String())
+	}
 	if err != nil {
 		return err
 	}
@@ -407,151 +629,287 @@ func (d *dataStore) Save(ctx context.Context, key DataKey, value io.Reader) erro
 	return writer.Close()
 }
 
+func (d *dataStore) insertDataImportBatch(ctx context.Context, rows []kvpkg.DataImportRow) (bool, error) {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.insertDataImportBatch", trace.WithAttributes(
+		attribute.Int("batchSize", len(rows)),
+	))
+	defer span.End()
+
+	writer, ok := d.kv.(dataImportBatchWriter)
+	if !ok {
+		return false, nil
+	}
+
+	return true, writer.InsertDataImportBatch(ctx, rows)
+}
+
 func (d *dataStore) Delete(ctx context.Context, key DataKey) error {
-	if err := key.Validate(); err != nil {
+	if err := validateDataKey(key); err != nil {
 		return fmt.Errorf("invalid data key: %w", err)
 	}
 
+	ctx, span := tracer.Start(ctx, "resource.dataStore.Delete")
+	defer span.End()
+
 	return d.kv.Delete(ctx, dataSection, key.String())
+}
+
+func (n *dataStore) batchDelete(ctx context.Context, keys []DataKey) error {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.batchDelete", trace.WithAttributes(
+		attribute.Int("batchSize", len(keys)),
+	))
+	defer span.End()
+
+	for len(keys) > 0 {
+		batch := keys
+		if len(batch) > dataBatchSize {
+			batch = batch[:dataBatchSize]
+		}
+
+		keys = keys[len(batch):]
+		stringKeys := make([]string, 0, len(batch))
+		for _, dataKey := range batch {
+			stringKeys = append(stringKeys, dataKey.String())
+		}
+
+		if err := n.kv.BatchDelete(ctx, dataSection, stringKeys); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // ParseKey parses a string key into a DataKey struct
 func ParseKey(key string) (DataKey, error) {
 	parts := strings.Split(key, "/")
-	if len(parts) != 5 {
-		return DataKey{}, fmt.Errorf("invalid key: %s", key)
-	}
-	rvActionFolderParts := strings.Split(parts[4], "~")
-	if len(rvActionFolderParts) != 3 {
-		return DataKey{}, fmt.Errorf("invalid key: %s", key)
-	}
-	rv, err := strconv.ParseInt(rvActionFolderParts[0], 10, 64)
+	dk, _, err := kvpkg.ParseDataKeyParts(parts)
 	if err != nil {
-		return DataKey{}, fmt.Errorf("invalid resource version '%s' in key %s: %w", rvActionFolderParts[0], key, err)
+		return DataKey{}, fmt.Errorf("invalid key: %s: %w", key, err)
 	}
-	return DataKey{
-		Group:           parts[0],
-		Resource:        parts[1],
-		Namespace:       parts[2],
-		Name:            parts[3],
-		ResourceVersion: rv,
-		Action:          DataAction(rvActionFolderParts[1]),
-		Folder:          rvActionFolderParts[2],
-	}, nil
-}
-
-// SameResource checks if this key represents the same resource as another key.
-// It compares the identifying fields: Group, Resource, Namespace, and Name.
-// ResourceVersion, Action, and Folder are ignored as they don't identify the resource itself.
-func (k DataKey) SameResource(other DataKey) bool {
-	return k.Group == other.Group &&
-		k.Resource == other.Resource &&
-		k.Namespace == other.Namespace &&
-		k.Name == other.Name
+	return dk, nil
 }
 
 // GetResourceStats returns resource stats within the data store by first discovering
 // all group/resource combinations, then issuing targeted list operations for each one.
 // If namespace is provided, only keys matching that namespace are considered.
-func (d *dataStore) GetResourceStats(ctx context.Context, namespace string, minCount int) ([]ResourceStats, error) {
-	// First, get all unique group/resource combinations in the store
+func (d *dataStore) GetResourceStats(ctx context.Context, nsr NamespacedResource, minCount int) ([]ResourceStats, error) {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.GetResourceStats", trace.WithAttributes(
+		attribute.Int("minCount", minCount),
+	))
+	defer span.End()
+
+	return d.resourceStats(ctx, nsr, minCount, 0)
+}
+
+// ListStoredResources implements StorageBackend for the KV backend.
+//
+// A namespace is required; discovering across all namespaces would need a full
+// scan and no caller needs it. Existence matches any key under the
+// group/resource/namespace prefix, including delete tombstones, so results may
+// contain false positives.
+func (d *dataStore) ListStoredResources(ctx context.Context, filter NamespacedResource) ([]NamespacedResource, error) {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.ListStoredResources")
+	defer span.End()
+
+	if filter.Namespace == "" {
+		return nil, fmt.Errorf("namespace is required")
+	}
+
+	groupResources, err := d.getGroupResources(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group resources: %w", err)
+	}
+
+	var result []NamespacedResource
+	for _, gr := range groupResources {
+		if filter.Group != "" && gr.Group != filter.Group {
+			continue
+		}
+		if filter.Resource != "" && gr.Resource != filter.Resource {
+			continue
+		}
+
+		exists, err := d.groupResourceExistsInNamespace(ctx, gr, filter.Namespace)
+		if err != nil {
+			return nil, err
+		}
+		if exists {
+			result = append(result, NamespacedResource{
+				Namespace: filter.Namespace,
+				Group:     gr.Group,
+				Resource:  gr.Resource,
+			})
+		}
+	}
+
+	return result, nil
+}
+
+// groupResourceExistsInNamespace reports whether any key exists under the
+// group/resource/namespace prefix.
+func (d *dataStore) groupResourceExistsInNamespace(ctx context.Context, gr GroupResource, namespace string) (bool, error) {
+	// No namespace validation: for a discovery existence check an absent or
+	// malformed namespace simply has no keys, so it should return "not found"
+	// rather than an error (matching the SQL backend).
+	prefix := ListRequestKey{Group: gr.Group, Resource: gr.Resource, Namespace: namespace}.Prefix()
+	for _, err := range d.kv.Keys(ctx, dataSection, ListOptions{
+		StartKey: prefix,
+		EndKey:   PrefixRangeEnd(prefix),
+		Limit:    1,
+		Sort:     SortOrderAsc,
+	}) {
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// GetResourceStatsWithLimit implements StorageBackend. See the interface docs.
+func (d *dataStore) GetResourceStatsWithLimit(ctx context.Context, nsr NamespacedResource, minCount, countLimit int) ([]ResourceStats, error) {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.GetResourceStatsWithLimit", trace.WithAttributes(
+		attribute.Int("minCount", minCount),
+		attribute.Int("countLimit", countLimit),
+	))
+	defer span.End()
+
+	return d.resourceStats(ctx, nsr, minCount, countLimit)
+}
+
+// resourceStats enumerates the stored group/resources and counts each one per
+// namespace. countLimit is forwarded to processGroupResourceStats (0 = exact).
+func (d *dataStore) resourceStats(ctx context.Context, nsr NamespacedResource, minCount, countLimit int) ([]ResourceStats, error) {
 	groupResources, err := d.getGroupResources(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get group resources: %w", err)
 	}
 
 	var stats []ResourceStats
-
-	// Process each group/resource combination
-	for _, groupResource := range groupResources {
-		groupStats, err := d.processGroupResourceStats(ctx, groupResource, namespace, minCount)
-		if err != nil {
-			return nil, fmt.Errorf("failed to process stats for %s/%s: %w", groupResource.Group, groupResource.Resource, err)
+	for _, gr := range groupResources {
+		if nsr.Group != "" && gr.Group != nsr.Group {
+			continue
 		}
-		stats = append(stats, groupStats...)
+		if nsr.Resource != "" && gr.Resource != nsr.Resource {
+			continue
+		}
+		grStats, err := d.processGroupResourceStats(ctx, gr, nsr.Namespace, minCount, countLimit)
+		if err != nil {
+			return nil, fmt.Errorf("failed to process stats for %s/%s: %w", gr.Group, gr.Resource, err)
+		}
+		stats = append(stats, grStats...)
 	}
-
 	return stats, nil
 }
 
-// processGroupResourceStats processes stats for a specific group/resource combination
-func (d *dataStore) processGroupResourceStats(ctx context.Context, groupResource GroupResource, namespace string, minCount int) ([]ResourceStats, error) {
-	// Use ListRequestKey to construct the appropriate prefix
-	listKey := ListRequestKey{
-		Group:     groupResource.Group,
-		Resource:  groupResource.Resource,
-		Namespace: namespace, // Empty string if not specified, which will list all namespaces
+// processGroupResourceStats counts live resources per namespace for one
+// group/resource. When countLimit > 0 it stops counting a namespace once it
+// reaches countLimit and seeks past the rest of that namespace's keys instead of
+// scanning them, which is cheaper than an exact count on large history; the
+// reported Count is then at least countLimit and ResourceVersion is 0 (the scan
+// may stop before the newest key). countLimit <= 0 produces exact counts.
+func (d *dataStore) processGroupResourceStats(ctx context.Context, gr GroupResource, namespace string, minCount, countLimit int) ([]ResourceStats, error) {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.processGroupResourceStats")
+	defer span.End()
+
+	// An empty namespace scans every namespace for this group/resource; the
+	// startup index prebuild relies on this to discover stats across all
+	// namespaces in one pass.
+	basePrefix := gr.Group + "/" + gr.Resource + "/"
+	if namespace != "" {
+		basePrefix += namespace + "/"
 	}
 
-	// Maps to track counts per namespace for this group/resource
-	namespaceCounts := make(map[string]int64)   // namespace -> count of existing resources
-	namespaceVersions := make(map[string]int64) // namespace -> latest resource version
+	var stats []ResourceStats
 
-	// Track current resource being processed
-	var currentResourceKey string
-	var lastDataKey *DataKey
+	// Iterate ascending: a forward index scan is cheap on every backend, while a
+	// backward scan of a large range is much slower on some. Ascending puts a
+	// name's oldest version first, so its latest (last-seen) version decides
+	// liveness. open tells a not-yet-started scan apart from a cluster-scoped
+	// resource, whose namespace is empty.
+	open := false
+	haveName := false
+	curNS := ""
+	curName := ""
+	var curNameLive bool
+	var curNameRV, liveCount, maxRV int64
 
-	// Helper function to process the last seen resource
-	processLastResource := func() {
-		if lastDataKey != nil {
-			// Initialize namespace version if not exists
-			if _, exists := namespaceVersions[lastDataKey.Namespace]; !exists {
-				namespaceVersions[lastDataKey.Namespace] = 0
+	flushName := func() {
+		if !haveName {
+			return
+		}
+		if curNameLive {
+			liveCount++
+		}
+		// maxRV is the namespace's latest version, reported as ResourceVersion in
+		// exact mode only; a capped count has no meaningful latest version.
+		if countLimit == 0 && curNameRV > maxRV {
+			maxRV = curNameRV
+		}
+		haveName, curName, curNameLive, curNameRV = false, "", false, 0
+	}
+
+	emit := func() {
+		flushName()
+		if open && liveCount > int64(minCount) {
+			stats = append(stats, ResourceStats{
+				NamespacedResource: NamespacedResource{Namespace: curNS, Group: gr.Group, Resource: gr.Resource},
+				Count:              liveCount,
+				ResourceVersion:    maxRV,
+			})
+		}
+		open, curNS, liveCount, maxRV = false, "", 0, 0
+	}
+
+	// startKey is the inclusive lower bound; it advances past capped namespaces,
+	// moving the scan forward to the next namespace.
+	startKey := basePrefix
+	endKey := PrefixRangeEnd(basePrefix)
+	for {
+		seeked := false
+		for key, err := range d.kv.Keys(ctx, dataSection, ListOptions{StartKey: startKey, EndKey: endKey, Sort: SortOrderAsc}) {
+			if err != nil {
+				return nil, err
+			}
+			dk, err := ParseKey(key)
+			if err != nil {
+				return nil, fmt.Errorf("failed to parse key %s: %w", key, err)
 			}
 
-			// If resource exists (not deleted), increment the count for this namespace
-			if lastDataKey.Action != DataActionDeleted {
-				namespaceCounts[lastDataKey.Namespace]++
+			if !open {
+				open, curNS = true, dk.Namespace
+			} else if dk.Namespace != curNS {
+				emit()
+				open, curNS = true, dk.Namespace
 			}
+			if !haveName || dk.Name != curName {
+				flushName()
+				haveName, curName = true, dk.Name
+			}
+			curNameLive = dk.Action != DataActionDeleted
+			curNameRV = dk.ResourceVersion
 
-			// Update to latest resource version seen
-			if lastDataKey.ResourceVersion > namespaceVersions[lastDataKey.Namespace] {
-				namespaceVersions[lastDataKey.Namespace] = lastDataKey.ResourceVersion
+			if countLimit > 0 && liveCount >= int64(countLimit) {
+				ns := curNS
+				emit()
+				// Skip the rest of this namespace by advancing the lower bound past it.
+				// A cluster-scoped resource is one partition under group/resource, so
+				// jump to the end.
+				if ns == "" {
+					startKey = endKey
+				} else {
+					startKey = PrefixRangeEnd(gr.Group + "/" + gr.Resource + "/" + ns + "/")
+				}
+				seeked = true
+				break
 			}
 		}
-	}
-
-	// List all keys using the existing Keys method
-	for dataKey, err := range d.Keys(ctx, listKey, SortOrderAsc) {
-		if err != nil {
-			return nil, err
+		if !seeked {
+			emit()
+			break
 		}
-
-		// Create unique resource identifier (namespace/group/resource/name)
-		resourceKey := fmt.Sprintf("%s/%s/%s/%s", dataKey.Namespace, dataKey.Group, dataKey.Resource, dataKey.Name)
-
-		// If we've moved to a different resource, process the previous one
-		if currentResourceKey != "" && resourceKey != currentResourceKey {
-			processLastResource()
-		}
-
-		// Update tracking variables for the current resource
-		currentResourceKey = resourceKey
-		lastDataKey = &dataKey
 	}
-
-	// Process the final resource
-	processLastResource()
-
-	// Convert namespace counts to ResourceStats
-	stats := make([]ResourceStats, 0, len(namespaceCounts))
-	for ns, count := range namespaceCounts {
-		// Skip if count is below or equal to minimum
-		if count <= int64(minCount) {
-			continue
-		}
-
-		stats = append(stats, ResourceStats{
-			NamespacedResource: NamespacedResource{
-				Namespace: ns,
-				Group:     groupResource.Group,
-				Resource:  groupResource.Resource,
-			},
-			Count:           count,
-			ResourceVersion: namespaceVersions[ns],
-		})
-	}
-
 	return stats, nil
 }
 
@@ -560,9 +918,13 @@ func (d *dataStore) processGroupResourceStats(ctx context.Context, groupResource
 // between different group/resource prefixes without iterating through all keys.
 // Results are cached to improve performance.
 func (d *dataStore) getGroupResources(ctx context.Context) ([]GroupResource, error) {
+	ctx, span := tracer.Start(ctx, "resource.dataStore.getGroupResources")
+	defer span.End()
+
 	// Check cache first
 	if cached, found := d.cache.Get(groupResourcesCacheKey); found {
 		if cachedResults, ok := cached.([]GroupResource); ok {
+			span.SetAttributes(attribute.Bool("cacheHit", true))
 			return cachedResults, nil
 		}
 	}
@@ -629,4 +991,338 @@ func (d *dataStore) getGroupResources(ctx context.Context) ([]GroupResource, err
 	d.cache.Set(groupResourcesCacheKey, results, gocache.DefaultExpiration)
 
 	return results, nil
+}
+
+// TODO: remove when backwards compatibility is no longer needed.
+var (
+	sqlKVUpdateLegacyResourceHistory = mustTemplate("sqlkv_update_legacy_resource_history.sql")
+	sqlKVInsertLegacyResource        = mustTemplate("sqlkv_insert_legacy_resource.sql")
+	sqlKVUpdateLegacyResource        = mustTemplate("sqlkv_update_legacy_resource.sql")
+	sqlKVDeleteLegacyResource        = mustTemplate("sqlkv_delete_legacy_resource.sql")
+
+	// Bulk backwards compatibility templates
+	sqlKVDeleteLegacyResourceCollection  = mustTemplate("sqlkv_delete_legacy_resource_collection.sql")
+	sqlKVInsertLegacyResourceFromHistory = mustTemplate("sqlkv_insert_legacy_resource_from_history.sql")
+
+	// SQLBackend has case insensitive names with MySQL. This query is a workaround to support that while in compat mode
+	sqlKVLookupCanonicalName = mustTemplate("sqlkv_lookup_canonical_name.sql")
+)
+
+// TODO: remove when backwards compatibility is no longer needed.
+type sqlKVLegacySaveRequest struct {
+	sqltemplate.SQLTemplate
+	GUID       string
+	Group      string
+	Resource   string
+	Namespace  string
+	Name       string
+	Action     int64
+	Folder     string
+	PreviousRV int64
+}
+
+func (req sqlKVLegacySaveRequest) Validate() error {
+	return nil
+}
+
+// TODO: remove when backwards compatibility is no longer needed.
+type sqlKVLegacyUpdateHistoryRequest struct {
+	sqltemplate.SQLTemplate
+	GUID       string
+	PreviousRV int64
+	Generation int64
+}
+
+func (req sqlKVLegacyUpdateHistoryRequest) Validate() error {
+	return nil
+}
+
+// TODO: remove when backwards compatibility is no longer needed.
+type sqlKVLegacyCollectionRequest struct {
+	sqltemplate.SQLTemplate
+	Namespace string
+	Group     string
+	Resource  string
+}
+
+func (req sqlKVLegacyCollectionRequest) Validate() error {
+	return nil
+}
+
+// applyBackwardsCompatibleChanges updates the `resource` and `resource_history` tables
+// to make sure the sqlkv implementation is backwards-compatible with the existing sql backend.
+// Specifically, it will update the `resource_history` table to include the previous resource version
+// and generation, which come from the `WriteEvent`, and also make the corresponding change on the
+// `resource` table, no longer used in the storage backend.
+//
+// TODO: remove when backwards compatibility is no longer needed.
+func (d *dataStore) applyBackwardsCompatibleChanges(ctx context.Context, tx db.Tx, event WriteEvent, key DataKey) error {
+	_, isSQLKV := d.kv.(*kvpkg.SqlKV)
+	if !isSQLKV {
+		return nil
+	}
+
+	ctx, span := tracer.Start(ctx, "resource.dataStore.applyBackwardsCompatibleChanges", trace.WithAttributes(
+		attribute.String("action", string(key.Action)),
+	))
+	defer span.End()
+
+	generation := event.Object.GetGeneration()
+	if key.Action == DataActionDeleted {
+		generation = 0
+	}
+
+	// In compatibility mode, the previous RV, when available, is saved as a microsecond
+	// timestamp, as is done in the SQL backend.
+	previousRV := event.PreviousRV
+	if event.PreviousRV > 0 && IsSnowflake(event.PreviousRV) {
+		previousRV = rvmanager.RVFromSnowflake(event.PreviousRV)
+	}
+
+	// fill in remaining required fields for backwards compatibility: previous_resource_version and generation
+	_, err := dbutil.Exec(ctx, tx, sqlKVUpdateLegacyResourceHistory, sqlKVLegacyUpdateHistoryRequest{
+		SQLTemplate: sqltemplate.New(d.legacyDialect),
+		GUID:        key.GUID,
+		PreviousRV:  previousRV,
+		Generation:  generation,
+	})
+
+	if err != nil {
+		return fmt.Errorf("compatibility layer: failed to update resource_history: %w", err)
+	}
+
+	action, err := kvpkg.LegacyActionValue(key.Action)
+	if err != nil {
+		return err
+	}
+
+	switch key.Action {
+	case DataActionCreated:
+		_, err := dbutil.Exec(ctx, tx, sqlKVInsertLegacyResource, sqlKVLegacySaveRequest{
+			SQLTemplate: sqltemplate.New(d.legacyDialect),
+			GUID:        key.GUID,
+			Group:       key.Group,
+			Resource:    key.Resource,
+			Namespace:   key.Namespace,
+			Name:        key.Name,
+			Action:      action,
+			Folder:      key.Folder,
+			PreviousRV:  previousRV,
+		})
+
+		if err != nil {
+			if isRowAlreadyExistsError(err) {
+				// This can only happen if a concurrent write was attempted: the validation in
+				// WriteEvent guarantees that we return early when the resource already exists
+				// before entering the transaction.
+				d.metrics.recordConflict(event)
+				return conflictError(event, "concurrent create attempts detected")
+			}
+			return fmt.Errorf("compatibility layer: failed to insert to resource: %w", err)
+		}
+	case DataActionUpdated:
+		res, err := dbutil.Exec(ctx, tx, sqlKVUpdateLegacyResource, sqlKVLegacySaveRequest{
+			SQLTemplate: sqltemplate.New(d.legacyDialect),
+			GUID:        key.GUID,
+			Group:       key.Group,
+			Resource:    key.Resource,
+			Namespace:   key.Namespace,
+			Name:        key.Name,
+			Action:      action,
+			Folder:      key.Folder,
+			PreviousRV:  previousRV,
+		})
+
+		if err != nil {
+			return fmt.Errorf("compatibility layer: failed to update resource: %w", err)
+		}
+		if isConflict, err := checkLegacyCASConflict(res, event, key); err != nil {
+			if isConflict {
+				d.metrics.recordConflict(event)
+			}
+			return err
+		}
+	case DataActionDeleted:
+		res, err := dbutil.Exec(ctx, tx, sqlKVDeleteLegacyResource, sqlKVLegacySaveRequest{
+			SQLTemplate: sqltemplate.New(d.legacyDialect),
+			Group:       key.Group,
+			Resource:    key.Resource,
+			Namespace:   key.Namespace,
+			Name:        key.Name,
+			PreviousRV:  previousRV,
+		})
+
+		if err != nil {
+			return fmt.Errorf("compatibility layer: failed to delete from resource: %w", err)
+		}
+		if isConflict, err := checkLegacyCASConflict(res, event, key); err != nil {
+			if isConflict {
+				d.metrics.recordConflict(event)
+			}
+			return err
+		}
+	}
+
+	return nil
+}
+
+func checkLegacyCASConflict(res db.Result, event WriteEvent, key DataKey) (bool, error) {
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("compatibility layer: failed to verify optimistic lock result: %w", err)
+	}
+	if rows == 1 {
+		return false, nil
+	}
+	if rows > 1 {
+		return false, fmt.Errorf("compatibility layer: unexpected rows affected: %d", rows)
+	}
+
+	return true, conflictError(event, "requested RV does not match current RV")
+}
+
+func isRowAlreadyExistsError(err error) bool {
+	if sqlite.IsUniqueConstraintViolation(err) {
+		return true
+	}
+
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		return pg.Code == "23505"
+	}
+
+	var pqerr *pq.Error
+	if errors.As(err, &pqerr) {
+		return pqerr.Code == "23505"
+	}
+
+	var mysqlerr *mysql.MySQLError
+	if errors.As(err, &mysqlerr) {
+		return mysqlerr.Number == 1062
+	}
+
+	return false
+}
+
+// deleteLegacyResourceCollection deletes all rows from the `resource` table for a given collection.
+// This is used during the delete phase of ProcessBulk to clear legacy resource rows before re-importing.
+// TODO: remove when backwards compatibility is no longer needed.
+func (d *dataStore) deleteLegacyResourceCollection(ctx context.Context, execer db.ContextExecer, namespace, group, resource string) error {
+	_, isSQLKV := d.kv.(*kvpkg.SqlKV)
+	if !isSQLKV {
+		return nil
+	}
+
+	ctx, span := tracer.Start(ctx, "resource.dataStore.deleteLegacyResourceCollection")
+	defer span.End()
+
+	_, err := dbutil.Exec(ctx, execer, sqlKVDeleteLegacyResourceCollection, sqlKVLegacyCollectionRequest{
+		SQLTemplate: sqltemplate.New(d.legacyDialect),
+		Namespace:   namespace,
+		Group:       group,
+		Resource:    resource,
+	})
+	if err != nil {
+		return fmt.Errorf("compatibility layer: failed to delete legacy resource collection: %w", err)
+	}
+	return nil
+}
+
+// syncLegacyResourceFromHistory populates the `resource` table from `resource_history` for a given collection.
+// It selects the latest version of each resource (excluding deletes) and inserts them into the `resource` table.
+// TODO: remove when backwards compatibility is no longer needed.
+func (d *dataStore) syncLegacyResourceFromHistory(ctx context.Context, execer db.ContextExecer, namespace, group, resource string) error {
+	_, isSQLKV := d.kv.(*kvpkg.SqlKV)
+	if !isSQLKV {
+		return nil
+	}
+
+	ctx, span := tracer.Start(ctx, "resource.dataStore.syncLegacyResourceFromHistory")
+	defer span.End()
+
+	_, err := dbutil.Exec(ctx, execer, sqlKVInsertLegacyResourceFromHistory, sqlKVLegacyCollectionRequest{
+		SQLTemplate: sqltemplate.New(d.legacyDialect),
+		Namespace:   namespace,
+		Group:       group,
+		Resource:    resource,
+	})
+	if err != nil {
+		return fmt.Errorf("compatibility layer: failed to sync legacy resource from history: %w", err)
+	}
+	return nil
+}
+
+// TODO: remove when sql/backend backwards compatibility is no longer needed.
+type sqlKVLookupCanonicalNameRequest struct {
+	sqltemplate.SQLTemplate
+	Group     string
+	Resource  string
+	Namespace string
+	Name      string
+	Response  *sqlKVLookupCanonicalNameResponse
+}
+
+func (r *sqlKVLookupCanonicalNameRequest) Validate() error { return nil }
+
+func (r *sqlKVLookupCanonicalNameRequest) Results() (*sqlKVLookupCanonicalNameResponse, error) {
+	return &sqlKVLookupCanonicalNameResponse{Name: r.Response.Name}, nil
+}
+
+// TODO: remove when sql/backend backwards compatibility is no longer needed.
+type sqlKVLookupCanonicalNameResponse struct {
+	Name string
+}
+
+// lookupCanonicalName queries the legacy `resource` table for the stored name
+// of a resource matching (group, resource, namespace, name). MySQL's
+// case-insensitive collation on `name` makes this a case-insensitive lookup,
+// which lets us resolve rows the case-sensitive key_path lookup would miss.
+// Returns ("", nil) when no row matches; only meaningful when the underlying
+// KV is *kvpkg.SqlKV.
+//
+// TODO: remove when sql/backend backwards compatibility is no longer needed.
+func (d *dataStore) lookupCanonicalName(
+	ctx context.Context,
+	execer db.ContextExecer,
+	group, resource, namespace, name string,
+) (string, error) {
+	if _, isSQLKV := d.kv.(*kvpkg.SqlKV); !isSQLKV {
+		return "", nil
+	}
+
+	ctx, span := tracer.Start(ctx, "resource.dataStore.lookupCanonicalName")
+	defer span.End()
+
+	res, err := dbutil.Query(ctx, execer, sqlKVLookupCanonicalName, &sqlKVLookupCanonicalNameRequest{
+		SQLTemplate: sqltemplate.New(d.legacyDialect),
+		Group:       group,
+		Resource:    resource,
+		Namespace:   namespace,
+		Name:        name,
+		Response:    &sqlKVLookupCanonicalNameResponse{},
+	})
+	if err != nil {
+		return "", fmt.Errorf("compatibility layer: lookup canonical name: %w", err)
+	}
+	if len(res) == 0 {
+		return "", nil
+	}
+	return res[0].Name, nil
+}
+
+// snowflakeRVThreshold separates snowflake RVs (new) from legacy microsecond-timestamp
+// RVs (old). The two encodings occupy disjoint numeric bands for any realistic resource
+// timestamp: a snowflake is (ms_since_2010_epoch << 22), so its <<22 shift lifts it ~150x
+// above the microsecond form of the same instant. For resources dated 2013–2030, micro-RVs
+// span ~1.4e15–1.9e15 while snowflakes span ~2.9e17–2.5e18, leaving an empty gap between them.
+//
+// The cut sits in that gap. 1e17 as a UnixMicros timestamp is year ~5138, so no real
+// micro-RV reaches it; the smallest snowflake we can emit is ~1e16 (epoch + a few days),
+// and any snowflake from a post-2011 timestamp is well above 1e17.
+const snowflakeRVThreshold = int64(1e17)
+
+// IsSnowflake returns whether the argument is a snowflake ID (new) or a microsecond
+// timestamp (old).
+func IsSnowflake(rv int64) bool {
+	return rv >= snowflakeRVThreshold
 }

@@ -9,9 +9,12 @@ import (
 	"github.com/prometheus/common/model"
 
 	"github.com/grafana/grafana/pkg/components/simplejson"
+	ac "github.com/grafana/grafana/pkg/services/accesscontrol"
 	ngalertapi "github.com/grafana/grafana/pkg/services/ngalert/api/compat"
 	"github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
+	"github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/ngalert/provisioning"
+	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
 	"github.com/grafana/grafana/pkg/setting"
 )
@@ -34,9 +37,9 @@ func (s *Service) getAlertMuteTimings(ctx context.Context, signedInUser *user.Si
 
 	for _, muteTiming := range muteTimings {
 		muteTimeIntervals = append(muteTimeIntervals, muteTimeInterval{
-			UID: muteTiming.UID,
+			UID: string(muteTiming.UID),
 			MuteTimeInterval: config.MuteTimeInterval{
-				Name:          muteTiming.Name,
+				Name:          muteTiming.Title,
 				TimeIntervals: muteTiming.TimeIntervals,
 			},
 		})
@@ -61,9 +64,9 @@ func (s *Service) getNotificationTemplates(ctx context.Context, signedInUser *us
 
 	for _, template := range templates {
 		notificationTemplates = append(notificationTemplates, notificationTemplate{
-			UID:      template.UID,
-			Name:     template.Name,
-			Template: template.Template,
+			UID:      string(template.UID),
+			Name:     template.Title,
+			Template: template.Content,
 		})
 	}
 
@@ -79,6 +82,13 @@ type contactPoint struct {
 }
 
 func (s *Service) getContactPoints(ctx context.Context, signedInUser *user.SignedInUser) ([]contactPoint, error) {
+	userIsOrgAdmin := signedInUser.HasRole(org.RoleAdmin)
+	hasAccess, _ := s.accessControl.Evaluate(ctx, signedInUser, ac.EvalPermission(ac.ActionAlertingReceiversReadSecrets, models.ScopeReceiversAll))
+	if !userIsOrgAdmin && !hasAccess {
+		msg := "user '%s' is not allowed to read contact point secrets, missing 'alert.notifications.receivers.secrets:read' permission, which can be granted through the 'Admin' or 'Alerting > Full admin access' roles"
+		return nil, fmt.Errorf(msg, signedInUser.UserUID)
+	}
+
 	query := provisioning.ContactPointQuery{
 		OrgID:   signedInUser.GetOrgID(),
 		Decrypt: true, // needed to recreate the settings in the target instance.

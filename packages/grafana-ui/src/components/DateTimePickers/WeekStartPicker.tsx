@@ -4,7 +4,7 @@ import { selectors } from '@grafana/e2e-selectors';
 import { t } from '@grafana/i18n';
 
 import { Combobox } from '../Combobox/Combobox';
-import { ComboboxOption } from '../Combobox/types';
+import { type ComboboxOption } from '../Combobox/types';
 
 export interface Props {
   onChange: (weekStart?: WeekStart) => void;
@@ -39,6 +39,9 @@ export function getWeekStart(override?: string): WeekStart {
   return 'monday';
 }
 
+/**
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/date-time-pickers-weekstartpicker--docs
+ */
 export const WeekStartPicker = (props: Props) => {
   const { onChange, width, autoFocus = false, onBlur, value, disabled = false, inputId } = props;
   const weekStarts: ComboboxOption[] = useMemo(

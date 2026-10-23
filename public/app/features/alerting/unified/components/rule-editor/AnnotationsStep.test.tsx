@@ -1,3 +1,4 @@
+import type { JSX } from 'react';
 import { FormProvider, useForm } from 'react-hook-form';
 import { render, screen, within } from 'test/test-utils';
 import { byRole, byTestId } from 'testing-library-selector';
@@ -6,7 +7,7 @@ import { DashboardSearchItemType } from '../../../../search/types';
 import { mockDashboardApi, setupMswServer } from '../../mockApi';
 import { mockDashboardDto, mockDashboardSearchItem } from '../../mocks';
 import { getDefaultFormValues } from '../../rule-editor/formDefaults';
-import { RuleFormValues } from '../../types/rule-form';
+import { type RuleFormValues } from '../../types/rule-form';
 import { Annotation } from '../../utils/constants';
 
 import AnnotationsStep from './AnnotationsStep';

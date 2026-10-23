@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { JSX } from 'react';
 
 import { Tab } from './Tab';
 import { TabsBar } from './TabsBar';
@@ -61,6 +62,32 @@ describe('Tabs', () => {
     );
 
     expect(screen.getByText('5')).toBeInTheDocument();
+  });
+
+  it('should render capped counter when counter exceeds counterCappedAt', () => {
+    render(
+      <TabsBar>
+        <Tab
+          label="Tab with Capped Counter"
+          active={true}
+          onChangeTab={onChangeTab}
+          counter={120}
+          counterCappedAt={50}
+        />
+      </TabsBar>
+    );
+
+    expect(screen.getByText('50+')).toBeInTheDocument();
+  });
+
+  it('should render exact counter when counter does not exceed counterCappedAt', () => {
+    render(
+      <TabsBar>
+        <Tab label="Tab with Counter" active={true} onChangeTab={onChangeTab} counter={50} counterCappedAt={50} />
+      </TabsBar>
+    );
+
+    expect(screen.getByText('50')).toBeInTheDocument();
   });
 
   it('should render tabs with tooltips', async () => {

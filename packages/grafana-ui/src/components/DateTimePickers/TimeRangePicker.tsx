@@ -2,24 +2,23 @@ import { css, cx } from '@emotion/css';
 import { useDialog } from '@react-aria/dialog';
 import { FocusScope } from '@react-aria/focus';
 import { useOverlay } from '@react-aria/overlays';
-import { memo, createRef, useState, useEffect } from 'react';
+import { memo, createRef, useState, useEffect, type JSX } from 'react';
 
 import {
   rangeUtil,
-  GrafanaTheme2,
+  type GrafanaTheme2,
   dateTimeFormat,
-  timeZoneFormatUserFriendly,
-  TimeOption,
-  TimeRange,
-  TimeZone,
+  type TimeOption,
+  type TimeRange,
   dateMath,
-  getTimeZoneInfo,
 } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
 import { t, Trans } from '@grafana/i18n';
+import { type TimeZone } from '@grafana/schema';
 
 import { useStyles2 } from '../../themes/ThemeContext';
 import { ButtonGroup } from '../Button/ButtonGroup';
+import { Stack } from '../Layout/Stack/Stack';
 import { getModalStyles } from '../Modal/getModalStyles';
 import { getPortalContainer } from '../Portal/Portal';
 import { ToolbarButton } from '../ToolbarButton/ToolbarButton';
@@ -27,7 +26,9 @@ import { Tooltip } from '../Tooltip/Tooltip';
 
 import { TimePickerContent } from './TimeRangePicker/TimePickerContent';
 import { TimeZoneDescription } from './TimeZonePicker/TimeZoneDescription';
-import { WeekStart } from './WeekStartPicker';
+import { getTimeZoneTitle } from './TimeZonePicker/TimeZoneTitle';
+import { getTimeZoneDisplayInfo } from './TimeZonePicker/timeZoneUtils';
+import { type WeekStart } from './WeekStartPicker';
 import { getQuickOptions } from './options';
 import { useTimeSync } from './utils/useTimeSync';
 
@@ -69,10 +70,9 @@ export interface TimeRangePickerProps {
   weekStart?: WeekStart;
 }
 
-export interface State {
-  isOpen: boolean;
-}
-
+/**
+ * https://developers.grafana.com/ui/latest/index.html?path=/docs/date-time-pickers-timerangepicker--docs
+ */
 export function TimeRangePicker(props: TimeRangePickerProps) {
   const [isOpen, setOpen] = useState(false);
 
@@ -159,6 +159,7 @@ export function TimeRangePicker(props: TimeRangePickerProps) {
         icon="angle-double-left"
         type="button"
         iconSize="xl"
+        data-testid={selectors.components.TimePicker.moveBackwardButton}
         tooltip={
           moveBackwardTooltip ?? t('time-picker.range-picker.backwards-time-aria-label', 'Move time range backwards')
         }
@@ -219,6 +220,7 @@ export function TimeRangePicker(props: TimeRangePickerProps) {
         type="button"
         variant={variant}
         iconSize="xl"
+        data-testid={selectors.components.TimePicker.moveForwardButton}
         tooltip={
           moveForwardTooltip ?? t('time-picker.range-picker.forwards-time-aria-label', 'Move time range forwards')
         }
@@ -231,6 +233,7 @@ export function TimeRangePicker(props: TimeRangePickerProps) {
           onClick={onZoom}
           icon="search-minus"
           type="button"
+          data-testid={selectors.components.TimePicker.zoomOut}
           variant={variant}
         />
       </Tooltip>
@@ -240,23 +243,23 @@ export function TimeRangePicker(props: TimeRangePickerProps) {
 
 TimeRangePicker.displayName = 'TimeRangePicker';
 
-const ZoomOutTooltip = () => (
-  <>
-    <Trans i18nKey="time-picker.range-picker.zoom-out-tooltip">
-      Time range zoom out <br /> CTRL+Z
+const ZoomOutTooltip = () => {
+  return (
+    <Trans i18nKey="time-picker.range-picker.zoom-out-tooltip-new">
+      Time range zoom out <br /> t -
     </Trans>
-  </>
-);
+  );
+};
 
 export const TimePickerTooltip = ({ timeRange, timeZone }: { timeRange: TimeRange; timeZone?: TimeZone }) => {
   const styles = useStyles2(getLabelStyles);
   const now = Date.now();
 
   // Get timezone info only if timeZone is provided
-  const timeZoneInfo = timeZone ? getTimeZoneInfo(timeZone, now) : undefined;
+  const timeZoneInfo = timeZone ? getTimeZoneDisplayInfo(timeZone, now) : undefined;
 
   return (
-    <>
+    <Stack alignItems="center" direction="column" gap={0}>
       <div className="text-center">
         {dateTimeFormat(timeRange.from, { timeZone })}
         <div className="text-center">
@@ -265,10 +268,10 @@ export const TimePickerTooltip = ({ timeRange, timeZone }: { timeRange: TimeRang
         {dateTimeFormat(timeRange.to, { timeZone })}
       </div>
       <div className={styles.container}>
-        <span className={styles.utc}>{timeZoneFormatUserFriendly(timeZone)}</span>
+        <span className={styles.utc}>{timeZoneInfo ? getTimeZoneTitle(timeZoneInfo) : ''}</span>
         <TimeZoneDescription info={timeZoneInfo} />
       </div>
-    </>
+    </Stack>
   );
 };
 
@@ -330,19 +333,17 @@ const getStyles = (theme: GrafanaTheme2) => {
 };
 
 const getLabelStyles = (theme: GrafanaTheme2) => {
+  const visualRefreshEnabled = theme.flags.visualDesignRefresh;
   return {
     container: css({
       display: 'flex',
-      alignItems: 'center',
+      alignItems: 'baseline',
       whiteSpace: 'nowrap',
-      columnGap: theme.spacing(0.5),
+      columnGap: theme.spacing(0.75),
     }),
     utc: css({
-      color: theme.v1.palette.orange,
-      fontSize: theme.typography.size.sm,
-      paddingLeft: '6px',
-      lineHeight: '28px',
-      verticalAlign: 'bottom',
+      color: visualRefreshEnabled ? theme.colors.tertiary.text : theme.colors.warning.text,
+      fontSize: theme.typography.bodySmall.fontSize,
       fontWeight: theme.typography.fontWeightMedium,
     }),
   };

@@ -1,29 +1,129 @@
-import { Scope, ScopeDashboardBinding, ScopeNode } from '@grafana/data';
-import { getBackendSrv, config } from '@grafana/runtime';
+import { type Scope, type ScopeDashboardBinding, type ScopeNode } from '@grafana/data';
+import { FlagKeys, getFeatureFlagClient } from '@grafana/runtime/internal';
+import { scopeAPIv0alpha1 } from 'app/api/clients/scope/v0alpha1';
+import type { FindDefaultScope } from 'app/api/clients/scope/v0alpha1/endpoints.gen';
+import { getMessageFromError } from 'app/core/utils/errors';
+import { dispatch } from 'app/store/store';
 
-import { getAPINamespace } from '../../api/utils';
-
-import { ScopeNavigation } from './dashboards/types';
-
-const apiGroup = 'scope.grafana.app';
-const apiVersion = 'v0alpha1';
-const apiNamespace = getAPINamespace();
-const apiUrl = `/apis/${apiGroup}/${apiVersion}/namespaces/${apiNamespace}`;
+import { type ScopeNavigation } from './dashboards/types';
 
 export class ScopesApiClient {
+  /**
+   * Checks if the data is a Kubernetes Status error response.
+   * @param data The data to check
+   * @returns true if the data is a Status error, false otherwise
+   */
+  private isStatusError(data: unknown): data is { kind: 'Status'; status: 'Failure'; message?: string; code?: number } {
+    return (
+      data !== null &&
+      typeof data === 'object' &&
+      'kind' in data &&
+      data.kind === 'Status' &&
+      'status' in data &&
+      data.status === 'Failure'
+    );
+  }
+
+  /**
+   * Extracts and validates data from an RTK Query result, checking for error responses.
+   * @param result The RTK Query result
+   * @param context Context for error logging (e.g., resource name)
+   * @returns The data if valid, undefined if it's an error response
+   */
+  private extractDataOrHandleError<T>(result: { data?: T; error?: unknown }, context: string): T | undefined {
+    if ('data' in result && result.data) {
+      // Check if the data is actually an error response (Kubernetes Status object)
+      if (this.isStatusError(result.data)) {
+        const errorMessage = getMessageFromError(result.data);
+        console.error(`Failed to fetch %s:`, context, errorMessage);
+        return undefined;
+      }
+      return result.data;
+    }
+
+    if ('error' in result) {
+      const errorMessage = getMessageFromError(result.error);
+      console.error(`Failed to fetch %s:`, context, errorMessage);
+    }
+
+    return undefined;
+  }
   async fetchScope(name: string): Promise<Scope | undefined> {
+    const subscription = dispatch(scopeAPIv0alpha1.endpoints.getScope.initiate({ name }, { subscribe: false }));
     try {
-      return await getBackendSrv().get<Scope>(apiUrl + `/scopes/${name}`);
+      const result = await subscription;
+      return this.extractDataOrHandleError(result, `scope: ${name}`);
     } catch (err) {
-      // TODO: maybe some better error handling
-      console.error(err);
+      const errorMessage = getMessageFromError(err);
+      console.error('Failed to fetch scope:', name, errorMessage);
       return undefined;
+    } finally {
+      // Unsubscribe for extra safety, even though with subscribe: false and awaiting,
+      // the request completes before return, so this is mostly a no-op
+      subscription.unsubscribe();
     }
   }
 
   async fetchMultipleScopes(scopesIds: string[]): Promise<Scope[]> {
-    const scopes = await Promise.all(scopesIds.map((id) => this.fetchScope(id)));
-    return scopes.filter((scope) => scope !== undefined);
+    if (scopesIds.length === 0) {
+      return [];
+    }
+
+    try {
+      const scopes = await Promise.all(scopesIds.map((id) => this.fetchScope(id)));
+      const successfulScopes = scopes.filter((scope) => scope !== undefined);
+
+      if (successfulScopes.length < scopesIds.length) {
+        const failedCount = scopesIds.length - successfulScopes.length;
+        console.warn(
+          'Failed to fetch',
+          failedCount,
+          'of',
+          scopesIds.length,
+          'scope(s). Requested IDs:',
+          scopesIds.join(', ')
+        );
+      }
+
+      return successfulScopes;
+    } catch (err) {
+      const errorMessage = getMessageFromError(err);
+      console.error('Failed to fetch multiple scopes:', scopesIds, errorMessage);
+      return [];
+    }
+  }
+
+  async fetchMultipleScopeNodes(names: string[]): Promise<ScopeNode[]> {
+    if (names.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    const subscription = dispatch(
+      scopeAPIv0alpha1.endpoints.getFindScopeNodeChildrenResults.initiate({ names }, { subscribe: false })
+    );
+    try {
+      const result = await subscription;
+
+      if ('data' in result && result.data) {
+        // The generated API returns items compatible with @grafana/data ScopeNode
+        return result.data.items ?? [];
+      }
+
+      if ('error' in result) {
+        const errorMessage = getMessageFromError(result.error);
+        console.error('Failed to fetch multiple scope nodes:', names, errorMessage);
+      }
+
+      return [];
+    } catch (err) {
+      const errorMessage = getMessageFromError(err);
+      console.error('Failed to fetch multiple scope nodes:', names, errorMessage);
+      return [];
+    } finally {
+      // Unsubscribe for extra safety, even though with subscribe: false and awaiting,
+      // the request completes before return, so this is mostly a no-op
+      subscription.unsubscribe();
+    }
   }
 
   /**
@@ -42,58 +142,198 @@ export class ScopesApiClient {
       throw new Error('Limit must be between 1 and 10000');
     }
 
+    const subscription = dispatch(
+      scopeAPIv0alpha1.endpoints.getFindScopeNodeChildrenResults.initiate(
+        {
+          parent: options.parent,
+          query: options.query,
+          limit,
+        },
+        { subscribe: false, forceRefetch: true } // Force refetch for search. Revisit this when necessary
+      )
+    );
     try {
-      const nodes =
-        (
-          await getBackendSrv().get<{ items: ScopeNode[] }>(apiUrl + `/find/scope_node_children`, {
-            parent: options.parent,
-            query: options.query,
-            limit,
-          })
-        )?.items ?? [];
+      const result = await subscription;
 
-      return nodes;
-    } catch (err) {
+      if ('data' in result && result.data) {
+        // The generated API returns items compatible with @grafana/data ScopeNode
+        return result.data.items ?? [];
+      }
+
+      if ('error' in result) {
+        const errorMessage = getMessageFromError(result.error);
+        const contextParts: string[] = [];
+        if (options.parent) {
+          contextParts.push('parent="' + options.parent + '"');
+        }
+        if (options.query) {
+          contextParts.push('query="' + options.query + '"');
+        }
+        contextParts.push('limit=' + limit);
+        const context = contextParts.join(', ');
+        console.error('Failed to fetch scope nodes:', context, errorMessage);
+      }
+
       return [];
+    } catch (err) {
+      const errorMessage = getMessageFromError(err);
+      const contextParts: string[] = [];
+      if (options.parent) {
+        contextParts.push('parent="' + options.parent + '"');
+      }
+      if (options.query) {
+        contextParts.push('query="' + options.query + '"');
+      }
+      contextParts.push('limit=' + limit);
+      const context = contextParts.join(', ');
+      console.error('Failed to fetch scope nodes:', context, errorMessage);
+      return [];
+    } finally {
+      // Unsubscribe for extra safety, even though with subscribe: false and awaiting,
+      // the request completes before return, so this is mostly a no-op
+      subscription.unsubscribe();
     }
   }
 
   public fetchDashboards = async (scopeNames: string[]): Promise<ScopeDashboardBinding[]> => {
-    try {
-      const response = await getBackendSrv().get<{ items: ScopeDashboardBinding[] }>(
-        apiUrl + `/find/scope_dashboard_bindings`,
+    const subscription = dispatch(
+      scopeAPIv0alpha1.endpoints.getFindScopeDashboardBindingsResults.initiate(
         {
           scope: scopeNames,
-        }
-      );
+        },
+        { subscribe: false }
+      )
+    );
+    try {
+      const result = await subscription;
 
-      return response?.items ?? [];
-    } catch (err) {
+      if ('data' in result && result.data) {
+        // The generated API returns items compatible with @grafana/data ScopeDashboardBinding
+        return result.data.items ?? [];
+      }
+
+      if ('error' in result) {
+        const errorMessage = getMessageFromError(result.error);
+        console.error('Failed to fetch dashboards for scopes:', scopeNames, errorMessage);
+      }
+
       return [];
+    } catch (err) {
+      const errorMessage = getMessageFromError(err);
+      console.error('Failed to fetch dashboards for scopes:', scopeNames, errorMessage);
+      return [];
+    } finally {
+      // Unsubscribe for extra safety, even though with subscribe: false and awaiting,
+      // the request completes before return, so this is mostly a no-op
+      subscription.unsubscribe();
     }
   };
 
-  public fetchScopeNavigations = async (scopeNames: string[]): Promise<ScopeNavigation[]> => {
+  public fetchScopeNavigations = async (
+    scopeNames: string[],
+    options?: { depth?: number; rootScope?: string }
+  ): Promise<ScopeNavigation[]> => {
+    const subscription = dispatch(
+      scopeAPIv0alpha1.endpoints.getFindScopeNavigationsResults.initiate(
+        {
+          scope: scopeNames,
+          ...(options?.depth && { depth: options.depth }),
+          ...(options?.rootScope && { rootScope: options.rootScope }),
+        },
+        { subscribe: false }
+      )
+    );
     try {
-      const response = await getBackendSrv().get<{ items: ScopeNavigation[] }>(apiUrl + `/find/scope_navigations`, {
-        scope: scopeNames,
-      });
+      const result = await subscription;
 
-      return response?.items ?? [];
-    } catch (err) {
+      if ('data' in result && result.data) {
+        // The generated API returns items compatible with ScopeNavigation
+        return result.data.items ?? [];
+      }
+
+      if ('error' in result) {
+        const errorMessage = getMessageFromError(result.error);
+        console.error('Failed to fetch scope navigations for scopes:', scopeNames, errorMessage);
+      }
+
       return [];
+    } catch (err) {
+      const errorMessage = getMessageFromError(err);
+      console.error('Failed to fetch scope navigations for scopes:', scopeNames, errorMessage);
+      return [];
+    } finally {
+      // Unsubscribe for extra safety, even though with subscribe: false and awaiting,
+      // the request completes before return, so this is mostly a no-op
+      subscription.unsubscribe();
+    }
+  };
+
+  /**
+   * Fetches the default scope name to use when no scope is currently selected.
+   * Returns just the scope name; callers apply it via the normal pipeline.
+   *
+   * As a side effect, seeds the `getScope` RTK Query cache with the full
+   * Scope from the envelope, so the subsequent `applyScopes` →
+   * `fetchMultipleScopes` → `fetchScope` is a cache hit. This matters
+   * because the find endpoint returns scopes entitled to the caller, which
+   * is a different set than the addressable `/scopes/{name}` resources —
+   * without the seed, `fetchScope` could 404 and the metadata would never
+   * reach the selector state.
+   *
+   * Gated on `grafana.useDefaultScopesEndpoint`; returns undefined when the
+   * flag is off, when the server returns no default, or on error.
+   */
+  public fetchDefaultScope = async (): Promise<string | undefined> => {
+    if (!getFeatureFlagClient().getBooleanValue(FlagKeys.GrafanaUseDefaultScopesEndpoint, false)) {
+      return undefined;
+    }
+
+    const subscription = dispatch(
+      scopeAPIv0alpha1.endpoints.getFindDefaultScope.initiate(undefined, { subscribe: false })
+    );
+    try {
+      const result = await subscription;
+      const data = this.extractDataOrHandleError<FindDefaultScope>(result, 'default scope');
+      const scope = data?.scope;
+      const name = scope?.metadata?.name;
+      // `!name` already implies `!scope` at runtime (name derives from scope);
+      // the extra `|| !scope` is a TypeScript narrowing guard so `scope` is
+      // typed as non-undefined for the upsertQueryData call below.
+      if (!name || !scope) {
+        return undefined;
+      }
+
+      // Await the upsert so the cache entry transitions to `fulfilled` (with
+      // `fulfilledTimeStamp`) BEFORE we return. `upsertQueryData` dispatches
+      // `pending` synchronously but `fulfilled` only on the next microtask;
+      // without awaiting, the subsequent `fetchScope` from applyScopes can
+      // see `status: 'pending'` and fire a real network request.
+      await dispatch(scopeAPIv0alpha1.util.upsertQueryData('getScope', { name }, scope));
+      return name;
+    } catch (err) {
+      const errorMessage = getMessageFromError(err);
+      console.error('Failed to fetch default scope:', errorMessage);
+      return undefined;
+    } finally {
+      subscription.unsubscribe();
     }
   };
 
   public fetchScopeNode = async (scopeNodeId: string): Promise<ScopeNode | undefined> => {
-    if (!config.featureToggles.useScopeSingleNodeEndpoint) {
-      return Promise.resolve(undefined);
-    }
+    const subscription = dispatch(
+      scopeAPIv0alpha1.endpoints.getScopeNode.initiate({ name: scopeNodeId }, { subscribe: false })
+    );
     try {
-      const response = await getBackendSrv().get<ScopeNode>(apiUrl + `/scopenodes/${scopeNodeId}`);
-      return response;
+      const result = await subscription;
+      return this.extractDataOrHandleError(result, `scope node: ${scopeNodeId}`);
     } catch (err) {
+      const errorMessage = getMessageFromError(err);
+      console.error('Failed to fetch scope node:', scopeNodeId, errorMessage);
       return undefined;
+    } finally {
+      // Unsubscribe for extra safety, even though with subscribe: false and awaiting,
+      // the request completes before return, so this is mostly a no-op
+      subscription.unsubscribe();
     }
   };
 }

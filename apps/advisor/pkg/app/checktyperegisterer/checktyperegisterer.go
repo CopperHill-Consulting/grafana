@@ -9,6 +9,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/grafana/grafana-app-sdk/app"
 	"github.com/grafana/grafana-app-sdk/k8s"
 	"github.com/grafana/grafana-app-sdk/logging"
@@ -16,9 +19,15 @@ import (
 	advisorv0alpha1 "github.com/grafana/grafana/apps/advisor/pkg/apis/advisor/v0alpha1"
 	"github.com/grafana/grafana/apps/advisor/pkg/app/checkregistry"
 	"github.com/grafana/grafana/apps/advisor/pkg/app/checks"
-	"k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"github.com/grafana/grafana/pkg/services/org"
 )
+
+// CheckTypeSyncer syncs the CheckType resources stored in a namespace with
+// the in-process check registry, creating, updating and deleting CheckTypes
+// as needed.
+type CheckTypeSyncer interface {
+	RegisterCheckTypesInNamespace(ctx context.Context, logger logging.Logger, namespace string) error
+}
 
 // Runner is a "runnable" app used to be able to expose and API endpoint
 // with the existing checks types. This does not need to be a CRUD resource, but it is
@@ -26,24 +35,24 @@ import (
 type Runner struct {
 	checkRegistry checkregistry.CheckService
 	client        resource.Client
-	namespace     string
+	orgService    org.Service
+	stackID       string
 	log           logging.Logger
 	retryAttempts int
 	retryDelay    time.Duration
 }
 
+var _ app.Runnable = (*Runner)(nil)
+
 // NewRunner creates a new Runner.
-func New(cfg app.Config, log logging.Logger) (app.Runnable, error) {
+func New(cfg app.Config, log logging.Logger) (*Runner, error) {
 	// Read config
 	specificConfig, ok := cfg.SpecificConfig.(checkregistry.AdvisorAppConfig)
 	if !ok {
 		return nil, fmt.Errorf("invalid config type")
 	}
 	checkRegistry := specificConfig.CheckRegistry
-	namespace, err := checks.GetNamespace(specificConfig.StackID)
-	if err != nil {
-		return nil, err
-	}
+	orgService := specificConfig.OrgService
 
 	// Prepare storage client
 	clientGenerator := k8s.NewClientRegistry(cfg.KubeConfig, k8s.ClientConfig{})
@@ -55,7 +64,8 @@ func New(cfg app.Config, log logging.Logger) (app.Runnable, error) {
 	return &Runner{
 		checkRegistry: checkRegistry,
 		client:        client,
-		namespace:     namespace,
+		orgService:    orgService,
+		stackID:       specificConfig.StackID,
 		log:           log.With("runner", "advisor.checktyperegisterer"),
 		retryAttempts: 5,
 		retryDelay:    time.Second * 10,
@@ -64,43 +74,31 @@ func New(cfg app.Config, log logging.Logger) (app.Runnable, error) {
 
 func (r *Runner) Run(ctx context.Context) error {
 	logger := r.log.WithContext(ctx)
-	for _, t := range r.checkRegistry.Checks() {
-		steps := t.Steps()
-		stepTypes := make([]advisorv0alpha1.CheckTypeStep, len(steps))
-		for i, s := range steps {
-			stepTypes[i] = advisorv0alpha1.CheckTypeStep{
-				Title:       s.Title(),
-				Description: s.Description(),
-				StepID:      s.ID(),
-				Resolution:  s.Resolution(),
-			}
-		}
-		obj := &advisorv0alpha1.CheckType{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      t.ID(),
-				Namespace: r.namespace,
-				Annotations: map[string]string{
-					checks.NameAnnotation: t.Name(),
-					// Flag to indicate feature availability
-					checks.RetryAnnotation:       "1",
-					checks.IgnoreStepsAnnotation: "1",
-				},
-			},
-			Spec: advisorv0alpha1.CheckTypeSpec{
-				Name:  t.ID(),
-				Steps: stepTypes,
-			},
-		}
-		err := r.registerCheckType(ctx, logger, t.ID(), obj)
+	// If stackID is empty and OrgService is nil, do nothing (on-demand registration only)
+	if r.stackID == "" && r.orgService == nil {
+		logger.Debug("Auto-registration of checktypes disabled")
+		return nil
+	}
+
+	// Determine namespaces based on StackID or OrgID
+	namespaces, err := checks.GetNamespaces(ctx, r.stackID, r.orgService)
+	if err != nil {
+		return fmt.Errorf("failed to get namespaces: %w", err)
+	}
+	logger.Debug("Registering check types", "namespaces", len(namespaces))
+
+	// Register check types in each namespace
+	for _, namespace := range namespaces {
+		err := r.RegisterCheckTypesInNamespace(ctx, logger, namespace)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to register check types in namespace %s: %w", namespace, err)
 		}
 	}
 	return nil
 }
 
 func (r *Runner) registerCheckType(ctx context.Context, logger logging.Logger, checkType string, obj resource.Object) error {
-	for i := 0; i < r.retryAttempts; i++ {
+	for i := range r.retryAttempts {
 		current, err := r.client.Get(ctx, obj.GetStaticMetadata().Identifier())
 		if err != nil {
 			if errors.IsNotFound(err) {
@@ -222,8 +220,97 @@ func (r *Runner) update(ctx context.Context, log logging.Logger, obj resource.Ob
 
 func isAPIServerShuttingDown(err error, logger logging.Logger) bool {
 	if strings.Contains(err.Error(), "apiserver is shutting down") {
-		logger.Debug("Error creating check type, not retrying", "error", err)
+		logger.Debug("Error operating on check type, not retrying", "error", err)
 		return true
 	}
 	return false
+}
+
+func (r *Runner) RegisterCheckTypesInNamespace(ctx context.Context, logger logging.Logger, namespace string) error {
+	registeredIDs := make(map[string]struct{}, len(r.checkRegistry.Checks()))
+	for _, t := range r.checkRegistry.Checks() {
+		steps := t.Steps()
+		stepTypes := make([]advisorv0alpha1.CheckTypeStep, len(steps))
+		for i, s := range steps {
+			stepTypes[i] = advisorv0alpha1.CheckTypeStep{
+				Title:       s.Title(),
+				Description: s.Description(),
+				StepID:      s.ID(),
+				Resolution:  s.Resolution(),
+			}
+		}
+		obj := &advisorv0alpha1.CheckType{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      t.ID(),
+				Namespace: namespace,
+				Annotations: map[string]string{
+					checks.NameAnnotation: t.Name(),
+					// Flag to indicate feature availability
+					checks.RetryAnnotation:       "1",
+					checks.IgnoreStepsAnnotation: "1",
+				},
+			},
+			Spec: advisorv0alpha1.CheckTypeSpec{
+				Name:  t.ID(),
+				Steps: stepTypes,
+			},
+		}
+		if err := r.registerCheckType(ctx, logger, t.ID(), obj); err != nil {
+			return fmt.Errorf("failed to register check type %s: %w", t.ID(), err)
+		}
+		registeredIDs[t.ID()] = struct{}{}
+	}
+	if err := r.cleanupStaleCheckTypes(ctx, logger, namespace, registeredIDs); err != nil {
+		return fmt.Errorf("failed to cleanup stale check types in namespace %s: %w", namespace, err)
+	}
+	return nil
+}
+
+// cleanupStaleCheckTypes removes any CheckType resources in the given namespace
+// that are no longer present in the check registry. This keeps the API in sync
+// with the source of truth when a check type is removed from the binary.
+func (r *Runner) cleanupStaleCheckTypes(ctx context.Context, logger logging.Logger, namespace string, registeredIDs map[string]struct{}) error {
+	items, err := r.listAllCheckTypes(ctx, namespace)
+	if err != nil {
+		if isAPIServerShuttingDown(err, logger) {
+			return nil
+		}
+		return fmt.Errorf("error listing check types: %w", err)
+	}
+	for _, item := range items {
+		name := item.GetStaticMetadata().Name
+		if _, ok := registeredIDs[name]; ok {
+			continue
+		}
+		id := item.GetStaticMetadata().Identifier()
+		logger.Debug("Deleting stale check type", "check_type", name, "namespace", namespace)
+		if err := r.client.Delete(context.WithoutCancel(ctx), id, resource.DeleteOptions{}); err != nil {
+			if errors.IsNotFound(err) {
+				continue
+			}
+			if isAPIServerShuttingDown(err, logger) {
+				return nil
+			}
+			logger.Error("Unable to delete stale check type", "check_type", name, "error", err)
+			return fmt.Errorf("failed to delete stale check type %s: %w", name, err)
+		}
+		logger.Debug("Stale check type deleted successfully", "check_type", name)
+	}
+	return nil
+}
+
+func (r *Runner) listAllCheckTypes(ctx context.Context, namespace string) ([]resource.Object, error) {
+	list, err := r.client.List(ctx, namespace, resource.ListOptions{Limit: 1000})
+	if err != nil {
+		return nil, err
+	}
+	items := list.GetItems()
+	for list.GetContinue() != "" {
+		list, err = r.client.List(ctx, namespace, resource.ListOptions{Continue: list.GetContinue(), Limit: 1000})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, list.GetItems()...)
+	}
+	return items, nil
 }

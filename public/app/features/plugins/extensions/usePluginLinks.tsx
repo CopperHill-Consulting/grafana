@@ -1,18 +1,14 @@
-import { isString } from 'lodash';
 import { useMemo } from 'react';
-import { useObservable } from 'react-use';
 
-import { PluginExtensionLink, PluginExtensionTypes, usePluginContext } from '@grafana/data';
-import { UsePluginLinksOptions, UsePluginLinksResult } from '@grafana/runtime';
+import { type PluginExtensionLink, usePluginContext } from '@grafana/data';
+import { type UsePluginLinksOptions, type UsePluginLinksResult } from '@grafana/runtime';
 
-import { useAddedLinksRegistry } from './ExtensionRegistriesContext';
+import { useAddedLinksRegistrySlice } from './registry/useRegistrySlice';
 import { useLoadAppPlugins } from './useLoadAppPlugins';
 import {
-  generateExtensionId,
+  addedLinkToExtensionLink,
   getExtensionPointPluginDependencies,
-  getLinkExtensionOnClick,
   getLinkExtensionOverrides,
-  getLinkExtensionPathWithTracking,
   getReadOnlyProxy,
 } from './utils';
 import { validateExtensionPoint } from './validateExtensionPoint';
@@ -23,10 +19,9 @@ export function usePluginLinks({
   extensionPointId,
   context,
 }: UsePluginLinksOptions): UsePluginLinksResult {
-  const registry = useAddedLinksRegistry();
+  const registryItems = useAddedLinksRegistrySlice(extensionPointId);
   const pluginContext = usePluginContext();
-  const registryState = useObservable(registry.asObservable());
-  const { isLoading: isLoadingAppPlugins } = useLoadAppPlugins(getExtensionPointPluginDependencies(extensionPointId));
+  const { isLoading: isLoadingAppPlugins } = useLoadAppPlugins(extensionPointId, getExtensionPointPluginDependencies);
 
   return useMemo(() => {
     const { result, pointLog } = validateExtensionPoint({
@@ -46,13 +41,14 @@ export function usePluginLinks({
     const extensions: PluginExtensionLink[] = [];
     const extensionsByPlugin: Record<string, number> = {};
 
-    for (const addedLink of registryState?.[extensionPointId] ?? []) {
+    for (const addedLink of registryItems ?? []) {
       const { pluginId } = addedLink;
       const linkLog = pointLog.child({
         path: addedLink.path ?? '',
         title: addedLink.title,
         description: addedLink.description ?? '',
         onClick: typeof addedLink.onClick,
+        openInNewTab: addedLink.openInNewTab ? 'true' : 'false',
       });
 
       // Only limit if the `limitPerPlugin` is set
@@ -73,21 +69,14 @@ export function usePluginLinks({
         continue;
       }
 
-      const path = overrides?.path || addedLink.path;
-      const extension: PluginExtensionLink = {
-        id: generateExtensionId(pluginId, extensionPointId, addedLink.title),
-        type: PluginExtensionTypes.link,
-        pluginId: pluginId,
-        onClick: getLinkExtensionOnClick(pluginId, extensionPointId, addedLink, linkLog, frozenContext),
-
-        // Configurable properties
-        icon: overrides?.icon || addedLink.icon,
-        title: overrides?.title || addedLink.title,
-        description: overrides?.description || addedLink.description || '',
-        path: isString(path) ? getLinkExtensionPathWithTracking(pluginId, path, extensionPointId) : undefined,
-        category: overrides?.category || addedLink.category,
-      };
-
+      const extension = addedLinkToExtensionLink(
+        pluginId,
+        extensionPointId,
+        addedLink,
+        overrides,
+        linkLog,
+        frozenContext
+      );
       extensions.push(extension);
       extensionsByPlugin[pluginId] += 1;
     }
@@ -96,5 +85,5 @@ export function usePluginLinks({
       isLoading: false,
       links: extensions,
     };
-  }, [context, extensionPointId, limitPerPlugin, registryState, pluginContext, isLoadingAppPlugins]);
+  }, [context, extensionPointId, limitPerPlugin, registryItems, pluginContext, isLoadingAppPlugins]);
 }

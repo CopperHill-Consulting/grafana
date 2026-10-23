@@ -1,11 +1,11 @@
 import { css, cx } from '@emotion/css';
 
-import { DataSourceInstanceSettings, GrafanaTheme2 } from '@grafana/data';
-import { Card, TagList, useTheme2, Icon } from '@grafana/ui';
+import { type DataSourceInstanceSettings, type GrafanaTheme2 } from '@grafana/data';
+import { Card, Icon, TagList, useTheme2 } from '@grafana/ui';
 
 interface DataSourceCardProps {
   ds: DataSourceInstanceSettings;
-  onClick: () => void;
+  onClick?: () => void;
   selected: boolean;
   description?: string;
   isFavorite?: boolean;
@@ -27,6 +27,7 @@ export function DataSourceCard({
   return (
     <Card
       key={ds.uid}
+      noMargin
       onClick={onClick}
       className={cx(styles.card, selected ? styles.selected : undefined)}
       {...htmlProps}
@@ -40,6 +41,7 @@ export function DataSourceCard({
             <small className={styles.type}>{description || ds.meta.name}</small>
             {onToggleFavorite && !ds.meta.builtIn && (
               <Icon
+                key={(isFavorite ? 'favorite' : 'star') + '-' + ds.uid}
                 name={isFavorite ? 'favorite' : 'star'}
                 onClick={(e) => {
                   e.stopPropagation();
@@ -52,7 +54,7 @@ export function DataSourceCard({
         </div>
       </Card.Heading>
       <Card.Figure className={styles.logo}>
-        <img src={ds.meta.info.logos.small} alt={`${ds.meta.name} Logo`} />
+        <img src={ds.meta.info.logos.small || undefined} alt={`${ds.meta.name} Logo`} />
       </Card.Figure>
     </Card>
   );
@@ -60,23 +62,31 @@ export function DataSourceCard({
 
 // Get styles for the component
 function getStyles(theme: GrafanaTheme2, builtIn = false) {
+  const visualRefreshEnabled = theme.flags.visualDesignRefresh;
   return {
-    card: css({
-      cursor: 'pointer',
-      backgroundColor: 'transparent',
-      // Move to list component
-      marginBottom: 0,
-      padding: theme.spacing(1),
+    card: css(
+      {
+        cursor: 'pointer',
+        backgroundColor: 'transparent',
+        padding: theme.spacing(1),
+        [theme.transitions.handleMotion('no-preference', 'reduce')]: {
+          transition: 'none',
+        },
 
-      '&:hover': {
-        backgroundColor: theme.colors.action.hover,
+        '&:hover': {
+          backgroundColor: theme.colors.action.hover,
+        },
       },
-    }),
+      visualRefreshEnabled && {
+        border: 'none',
+      }
+    ),
     heading: css({
       width: '100%',
       overflow: 'hidden',
-      // This is needed to enable ellipsis when text overlfows
-      '> button': {
+      // This is needed to enable ellipsis when text overflows
+      // (the heading renders a button when the card is clickable, a span otherwise)
+      '> button, > span': {
         width: '100%',
       },
     }),
@@ -88,7 +98,14 @@ function getStyles(theme: GrafanaTheme2, builtIn = false) {
       whiteSpace: 'nowrap',
       display: 'flex',
       justifyContent: 'space-between',
+      columnGap: theme.spacing(1),
       alignItems: 'center',
+
+      [theme.breakpoints.down('sm')]: {
+        display: 'grid',
+        gridTemplateColumns: '1fr',
+        gridTemplateRows: 'repeat(2, 1fr)',
+      },
     }),
     rightSection: css({
       display: 'flex',
@@ -99,6 +116,9 @@ function getStyles(theme: GrafanaTheme2, builtIn = false) {
       justifyContent: 'flex-end',
       overflow: 'hidden',
       textOverflow: 'ellipsis',
+      [theme.breakpoints.down('sm')]: {
+        justifyContent: 'flex-start',
+      },
     }),
     logo: css({
       width: '32px',
@@ -144,7 +164,6 @@ function getStyles(theme: GrafanaTheme2, builtIn = false) {
         display: 'block',
         height: '100%',
         position: 'absolute',
-        transform: 'translateX(-50%)',
         width: theme.spacing(0.5),
         left: 0,
       },

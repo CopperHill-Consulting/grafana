@@ -12,44 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import { css } from '@emotion/css';
+import { css, cx } from '@emotion/css';
 import { SpanStatusCode } from '@opentelemetry/api';
-import { useCallback, useMemo } from 'react';
+import React, { useCallback, useMemo } from 'react';
 
 import {
-  CoreApp,
-  DataFrame,
+  type CoreApp,
+  type DataFrame,
   dateTimeFormat,
-  GrafanaTheme2,
-  LinkModel,
-  TimeRange,
-  TraceKeyValuePair,
-  TraceLog,
-  PluginExtensionResourceAttributesContext,
+  type GrafanaTheme2,
+  type LinkModel,
+  type TimeRange,
+  type TraceKeyValuePair,
+  type TraceLog,
+  type PluginExtensionResourceAttributesContext,
   PluginExtensionPoints,
-  IconName,
+  type IconName,
 } from '@grafana/data';
 import { t } from '@grafana/i18n';
-import { TraceToProfilesOptions } from '@grafana/o11y-ds-frontend';
+import { type TraceToProfilesOptions } from '@grafana/o11y-ds-frontend';
 import { usePluginLinks } from '@grafana/runtime';
-import { TimeZone } from '@grafana/schema';
-import { useStyles2 } from '@grafana/ui';
+import { type TimeZone } from '@grafana/schema';
+import { Icon, useStyles2, useTheme2 } from '@grafana/ui';
 
 import { pyroscopeProfileIdTagKey } from '../../../createSpanLink';
 import { autoColor } from '../../Theme';
 import LabeledList from '../../common/LabeledList';
 import { KIND, LIBRARY_NAME, LIBRARY_VERSION, STATUS, STATUS_MESSAGE, TRACE_STATE } from '../../constants/span';
-import { SpanLinkFunc } from '../../types/links';
-import { TraceProcess, TraceSpan, TraceSpanReference } from '../../types/trace';
-import { formatDuration } from '../utils';
+import { type SpanLinkFunc } from '../../types/links';
+import { type TraceProcess, type TraceSpan, type TraceSpanReference } from '../../types/trace';
+import { formatDuration } from '../../utils/date';
+import { getServiceDisplayName } from '../../utils/service-name';
+import { getSummaryCountBadgeStyle, getSummaryDurationStats, partitionAggregationTags } from '../../utils/summary-span';
 
-import AccordianKeyValues from './AccordianKeyValues';
-import AccordianLogs from './AccordianLogs';
-import AccordianReferences from './AccordianReferences';
-import DetailState from './DetailState';
-import { ShareSpanButton } from './ShareSpanButton';
-import { getSpanDetailLinkButtons } from './SpanDetailLinkButtons';
+import AccordionCategorizedKeyValues from './AccordionCategorizedKeyValues';
+import AccordionKeyValues from './AccordionKeyValues';
+import AccordionLogs from './AccordionLogs';
+import AccordionReferences from './AccordionReferences';
+import type DetailState from './DetailState';
+import { SpanDetailLinkButtons } from './SpanDetailLinkButtons';
 import SpanFlameGraph from './SpanFlameGraph';
+import { useAttributePluginPromoGetter } from './pluginPromo/attributePluginPromos';
 
 const useResourceAttributesExtensionLinks = ({
   process,
@@ -57,12 +60,18 @@ const useResourceAttributesExtensionLinks = ({
   datasourceType,
   datasourceUid,
   timeRange,
+  traceID,
+  spanID,
+  spanStartTime,
 }: {
   process: TraceProcess;
   spanTags: TraceKeyValuePair[];
   datasourceType: string;
   datasourceUid: string;
   timeRange: TimeRange;
+  traceID: string;
+  spanID: string;
+  spanStartTime: number;
 }) => {
   // Stable context for useMemo inside usePluginLinks
   const context: PluginExtensionResourceAttributesContext = useMemo(() => {
@@ -92,19 +101,22 @@ const useResourceAttributesExtensionLinks = ({
         type: datasourceType,
         uid: datasourceUid,
       },
+      traceID,
+      spanID,
+      spanStartTime,
     };
-  }, [process.tags, spanTags, datasourceType, datasourceUid, timeRange]);
+  }, [process.tags, spanTags, datasourceType, datasourceUid, timeRange, traceID, spanID, spanStartTime]);
 
   const { links } = usePluginLinks({
     extensionPointId: PluginExtensionPoints.TraceViewResourceAttributes,
-    limitPerPlugin: 10,
+    limitPerPlugin: 15,
     context,
   });
 
   const resourceLinksGetter = useCallback(
     (pairs: TraceKeyValuePair[], index: number) => {
       const { key } = pairs[index] ?? {};
-      return links.filter((link) => link.category === key);
+      return links.filter((link) => (link.group?.name ?? link.category) === key);
     },
     [links]
   );
@@ -114,17 +126,43 @@ const useResourceAttributesExtensionLinks = ({
 
 const getStyles = (theme: GrafanaTheme2) => {
   return {
+    card: css({
+      ':not(:empty)': {
+        border: '1px solid ' + theme.colors.border.weak,
+        '&:hover': {
+          border: '1px solid ' + theme.colors.border.strong,
+        },
+      },
+      borderRadius: theme.shape.radius.md,
+      margin: '6px',
+      padding: '5px',
+      minWidth: 0,
+    }),
     header: css({
+      label: 'SpanDetailHeader',
       display: 'flex',
       alignItems: 'flex-start',
       justifyContent: 'space-between',
       gap: '0 1rem',
       marginBottom: '0.25rem',
+      flexDirection: 'column',
     }),
     content: css({
+      label: 'SpanDetailContent',
       fontSize: theme.typography.bodySmall.fontSize,
     }),
+    cards: css({
+      label: 'SpanDetailCards',
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0, 1fr)',
+      alignItems: 'start',
+      // Side-by-side when the span detail container is wide enough; otherwise stack.
+      [theme.breakpoints.container.up(1000)]: {
+        gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+      },
+    }),
     listWrapper: css({
+      label: 'SpanDetailListWrapper',
       overflow: 'hidden',
       flexGrow: 1,
       display: 'flex',
@@ -133,35 +171,64 @@ const getStyles = (theme: GrafanaTheme2) => {
     list: css({
       textAlign: 'left',
     }),
+    spanDetailComponent: css({
+      label: 'SpanDetailComponent',
+      display: 'flex',
+      flexDirection: 'column', // On bigger screens display attributes below service name
+      containerType: 'inline-size',
+    }),
+    serviceNameAndLinks: css({
+      label: 'ServiceNameAndLinks',
+      display: 'flex',
+      width: '100%',
+      marginBottom: theme.spacing(1),
+    }),
     operationName: css({
+      label: 'SpanDetailOperationName',
       margin: 0,
       overflow: 'hidden',
       textOverflow: 'ellipsis',
       whiteSpace: 'nowrap',
       maxWidth: '50%',
-      flexGrow: 0,
+      flexGrow: 1,
       flexShrink: 0,
     }),
-    AccordianWarnings: css({
-      label: 'AccordianWarnings',
+    summaryHeader: css({
+      label: 'SpanDetailSummaryHeader',
+      display: 'inline-flex',
+      alignItems: 'center',
+      flexShrink: 0,
+    }),
+    summaryCountBadge: cx(
+      getSummaryCountBadgeStyle(theme),
+      css({ label: 'SpanDetailSummaryCountBadge', marginInline: '0.25rem' })
+    ),
+    summaryLabel: css({
+      label: 'SpanDetailSummaryLabel',
+      color: theme.colors.text.secondary,
+    }),
+    inheritedNote: css({
+      label: 'SpanDetailInheritedNote',
+      color: theme.colors.text.secondary,
+      fontWeight: theme.typography.fontWeightRegular,
+    }),
+    AccordionWarnings: css({
+      label: 'AccordionWarnings',
       background: autoColor(theme, '#fafafa'),
       border: `1px solid ${autoColor(theme, '#e4e4e4')}`,
       marginBottom: '0.25rem',
     }),
-    AccordianWarningsHeader: css({
-      label: 'AccordianWarningsHeader',
+    AccordionWarningsHeader: css({
+      label: 'AccordionWarningsHeader',
       background: autoColor(theme, '#fff7e6'),
       padding: '0.25rem 0.5rem',
-      '&:hover': {
-        background: autoColor(theme, '#ffe7ba'),
-      },
     }),
-    AccordianWarningsHeaderOpen: css({
-      label: 'AccordianWarningsHeaderOpen',
+    AccordionWarningsHeaderOpen: css({
+      label: 'AccordionWarningsHeaderOpen',
       borderBottom: `1px solid ${autoColor(theme, '#e8e8e8')}`,
     }),
-    AccordianWarningsLabel: css({
-      label: 'AccordianWarningsLabel',
+    AccordionWarningsLabel: css({
+      label: 'AccordionWarningsLabel',
       color: autoColor(theme, '#d36c08'),
     }),
     Textarea: css({
@@ -173,6 +240,23 @@ const getStyles = (theme: GrafanaTheme2) => {
       flexWrap: 'wrap',
       gap: '10px',
       marginBottom: theme.spacing(2),
+    }),
+    debugInfo: css({
+      label: 'debugInfo',
+      display: 'block',
+      letterSpacing: '0.25px',
+      margin: '0.5em 0 -0.75em',
+      textAlign: 'right',
+    }),
+    debugLabel: css({
+      label: 'debugLabel',
+      '&::before': {
+        color: theme.colors.text.secondary,
+        content: 'attr(data-label)',
+      },
+    }),
+    LinkIcon: css({
+      fontSize: '1.5em',
     }),
   };
 };
@@ -195,6 +279,7 @@ export type SpanDetailProps = {
   traceToProfilesOptions?: TraceToProfilesOptions;
   timeZone: TimeZone;
   tagsToggle: (spanID: string) => void;
+  summaryAttributesToggle: (spanID: string) => void;
   traceStartTime: number;
   traceDuration: number;
   traceName: string;
@@ -223,6 +308,7 @@ export default function SpanDetail(props: SpanDetailProps) {
     processToggle,
     span,
     tagsToggle,
+    summaryAttributesToggle,
     traceStartTime,
     traceDuration,
     traceName,
@@ -244,6 +330,7 @@ export default function SpanDetail(props: SpanDetailProps) {
   const {
     isTagsOpen,
     isProcessOpen,
+    isSummaryAttributesOpen,
     logs: logsState,
     isWarningsOpen,
     references: referencesState,
@@ -268,16 +355,30 @@ export default function SpanDetail(props: SpanDetailProps) {
   const durationIcon: IconName = 'hourglass';
   const startIcon: IconName = 'clock-nine';
 
+  // Summary spans carry aggregate stats over the collapsed group; their wall-clock
+  // duration is a window across many operations, so show min/median/max instead of a
+  // single figure and surface the group's end time.
+  const isSummarySpan = span.aggregation?.isSummary === true;
+  const summaryDurationStats = isSummarySpan && span.aggregation ? getSummaryDurationStats(span.aggregation) : null;
+  // On summary spans, present the raw `aggregation.*` tags in their own accordion rather
+  // than mixed into the regular span attributes.
+  const { aggregationTags, otherTags } = isSummarySpan
+    ? partitionAggregationTags(tags)
+    : { aggregationTags: [], otherTags: tags };
+  const durationValue = summaryDurationStats
+    ? summaryDurationStats.map((stat) => `${stat.value} (${stat.labelLower})`).join(' | ')
+    : formatDuration(duration);
+
   let overviewItems = [
     {
       key: 'svc',
       label: t('explore.span-detail.overview-items.label.service', 'Service:'),
-      value: process.serviceName,
+      value: getServiceDisplayName(process),
     },
     {
       key: 'duration',
       label: t('explore.span-detail.overview-items.label.duration', 'Duration:'),
-      value: formatDuration(duration),
+      value: durationValue,
       icon: durationIcon,
     },
     {
@@ -286,6 +387,16 @@ export default function SpanDetail(props: SpanDetailProps) {
       value: formatDuration(relativeStartTime) + getAbsoluteTime(startTime, timeZone),
       icon: startIcon,
     },
+    ...(isSummarySpan
+      ? [
+          {
+            key: 'end',
+            label: t('explore.span-detail.overview-items.label.end-time', 'End Time:'),
+            value: formatDuration(relativeStartTime + duration) + getAbsoluteTime(startTime + duration, timeZone),
+            icon: startIcon,
+          },
+        ]
+      : []),
     ...(span.childSpanCount > 0
       ? [
           {
@@ -298,6 +409,7 @@ export default function SpanDetail(props: SpanDetailProps) {
   ];
 
   const styles = useStyles2(getStyles);
+  const theme = useTheme2();
   if (span.kind) {
     overviewItems.push({
       key: KIND,
@@ -341,120 +453,217 @@ export default function SpanDetail(props: SpanDetailProps) {
     });
   }
 
-  const linksComponent = getSpanDetailLinkButtons({
-    span,
-    createSpanLink,
-    datasourceType,
-    traceToProfilesOptions,
-    timeRange,
-    app,
-  });
-
-  const focusSpanLink = createFocusSpanLink(traceID, spanID);
+  const { interpolatedParams, ...focusSpanLink } = createFocusSpanLink(traceID, spanID);
   const resourceLinksGetter = useResourceAttributesExtensionLinks({
     process,
     spanTags: tags,
     datasourceType,
     datasourceUid,
     timeRange,
+    traceID,
+    spanID,
+    spanStartTime: startTime,
   });
+  const promoGetter = useAttributePluginPromoGetter();
+
+  const listOfContentCards = [];
+
+  if (isSummarySpan && aggregationTags.length > 0) {
+    listOfContentCards.push(
+      <AccordionKeyValues
+        data={aggregationTags}
+        label={t('explore.span-detail.label-summary-attributes', 'Summary attributes')}
+        isOpen={isSummaryAttributesOpen}
+        linksGetter={resourceLinksGetter}
+        onToggle={() => summaryAttributesToggle(spanID)}
+        promoGetter={promoGetter}
+        datasourceType={datasourceType}
+      />
+    );
+  }
+
+  listOfContentCards.push(
+    <AccordionCategorizedKeyValues
+      data={otherTags}
+      sectionType="span"
+      label={t('explore.span-detail.label-span-attributes', 'Span attributes')}
+      isOpen={isTagsOpen}
+      linksGetter={resourceLinksGetter}
+      onToggle={() => tagsToggle(spanID)}
+      promoGetter={promoGetter}
+      datasourceType={datasourceType}
+    />
+  );
+
+  if (process.tags) {
+    listOfContentCards.push(
+      <AccordionCategorizedKeyValues
+        data={process.tags}
+        sectionType="resource"
+        label={
+          isSummarySpan ? (
+            <>
+              {t('explore.span-detail.label-resource-attributes', 'Resource attributes')}{' '}
+              <span className={styles.inheritedNote}>
+                {t('explore.span-detail.resource-attributes-inherited', '(inherited from slowest span)')}
+              </span>
+            </>
+          ) : (
+            t('explore.span-detail.label-resource-attributes', 'Resource attributes')
+          )
+        }
+        linksGetter={resourceLinksGetter}
+        isOpen={isProcessOpen}
+        onToggle={() => processToggle(spanID)}
+        promoGetter={promoGetter}
+        datasourceType={datasourceType}
+      />
+    );
+  }
+
+  if (logs && logs.length > 0) {
+    listOfContentCards.push(
+      <AccordionLogs
+        logs={logs}
+        isOpen={logsState.isOpen}
+        openedItems={logsState.openedItems}
+        onToggle={() => logsToggle(spanID)}
+        onItemToggle={(logItem) => logItemToggle(spanID, logItem)}
+        timestamp={traceStartTime}
+      />
+    );
+  }
+
+  if (warnings && warnings.length > 0) {
+    listOfContentCards.push(
+      <AccordionKeyValues
+        data={warnings.map((warning) => ({
+          key: '',
+          value: warning,
+          type: 'warning',
+        }))}
+        onlyValues={true}
+        showSummary={false}
+        showCountBadge={true}
+        isOpen={isWarningsOpen}
+        onToggle={() => warningsToggle(spanID)}
+        label={t('explore.span-detail.label-warnings', 'Warnings')}
+      />
+    );
+  }
+
+  if (stackTraces?.length) {
+    listOfContentCards.push(
+      <AccordionKeyValues
+        data={stackTraces.map((stackTrace) => ({
+          key: '',
+          value: stackTrace,
+          type: 'code',
+        }))}
+        onlyValues={true}
+        showSummary={false}
+        showCountBadge={true}
+        isOpen={isStackTracesOpen}
+        onToggle={() => stackTracesToggle(spanID)}
+        label={t('explore.span-detail.label-stack-trace', 'Stack trace')}
+      />
+    );
+  }
+
+  if (references && references.length > 0 && (references.length > 1 || references[0].refType !== 'CHILD_OF')) {
+    listOfContentCards.push(
+      <AccordionReferences
+        data={references}
+        isOpen={referencesState.isOpen}
+        openedItems={referencesState.openedItems}
+        onToggle={() => referencesToggle(spanID)}
+        onItemToggle={(reference) => referenceItemToggle(spanID, reference)}
+        createFocusSpanLink={createFocusSpanLink}
+      />
+    );
+  }
+
+  if (span.tags.some((tag) => tag.key === pyroscopeProfileIdTagKey)) {
+    listOfContentCards.push(
+      <SpanFlameGraph
+        span={span}
+        timeZone={timeZone}
+        traceFlameGraphs={traceFlameGraphs}
+        setTraceFlameGraphs={setTraceFlameGraphs}
+        traceToProfilesOptions={traceToProfilesOptions}
+        setRedrawListView={setRedrawListView}
+        traceDuration={traceDuration}
+        traceName={traceName}
+      />
+    );
+  }
 
   return (
-    <div data-testid="span-detail-component">
+    <div data-testid="span-detail-component" className={styles.spanDetailComponent}>
       <div className={styles.header}>
-        <h6 className={styles.operationName} title={operationName}>
-          {operationName}
-        </h6>
+        <div className={styles.serviceNameAndLinks}>
+          <h6 className={styles.operationName} title={operationName}>
+            {operationName}
+          </h6>
+          {isSummarySpan && (
+            <span className={styles.summaryHeader}>
+              {span.aggregation && (span.aggregation.spanCount ?? 0) > 0 && (
+                <span
+                  className={styles.summaryCountBadge}
+                  style={color ? { background: color, color: theme.colors.getContrastText(color) } : undefined}
+                  aria-label={t('explore.span-detail.summary-count-aria', '', {
+                    count: span.aggregation.spanCount,
+                    defaultValue_one: '{{count}} aggregated span',
+                    defaultValue_other: '{{count}} aggregated spans',
+                  })}
+                >
+                  {span.aggregation.spanCount}
+                </span>
+              )}
+              <span className={styles.summaryLabel}>{t('explore.span-detail.summary-label', '(summary)')}</span>
+            </span>
+          )}
+          <SpanDetailLinkButtons
+            span={span}
+            createSpanLink={createSpanLink}
+            datasourceType={datasourceType}
+            datasourceUid={datasourceUid}
+            traceToProfilesOptions={traceToProfilesOptions}
+            timeRange={timeRange}
+            app={app}
+            focusSpanLink={focusSpanLink}
+          />
+        </div>
         <div className={styles.listWrapper}>
           <LabeledList className={styles.list} divider={false} items={overviewItems} color={color} />
         </div>
-        <ShareSpanButton focusSpanLink={focusSpanLink} />
       </div>
-      <div className={styles.linkList}>{linksComponent}</div>
       <div className={styles.content}>
-        <div>
-          <AccordianKeyValues
-            data={tags}
-            label={t('explore.span-detail.label-span-attributes', 'Span attributes')}
-            isOpen={isTagsOpen}
-            linksGetter={resourceLinksGetter}
-            onToggle={() => tagsToggle(spanID)}
-          />
-          {process.tags && (
-            <AccordianKeyValues
-              data={process.tags}
-              label={t('explore.span-detail.label-resource-attributes', 'Resource attributes')}
-              linksGetter={resourceLinksGetter}
-              isOpen={isProcessOpen}
-              onToggle={() => processToggle(spanID)}
-            />
-          )}
-        </div>
-        {logs && logs.length > 0 && (
-          <AccordianLogs
-            logs={logs}
-            isOpen={logsState.isOpen}
-            openedItems={logsState.openedItems}
-            onToggle={() => logsToggle(spanID)}
-            onItemToggle={(logItem) => logItemToggle(spanID, logItem)}
-            timestamp={traceStartTime}
-          />
-        )}
+        <CardsContainer listOfContentCards={listOfContentCards} />
 
-        {warnings && warnings.length > 0 && (
-          <AccordianKeyValues
-            data={warnings.map((warning) => ({
-              key: '',
-              value: warning,
-              type: 'text',
-            }))}
-            showSummary={false}
-            showCountBadge={true}
-            isOpen={isWarningsOpen}
-            onlyValues={true}
-            onToggle={() => warningsToggle(spanID)}
-            label={t('explore.span-detail.warnings', 'Warnings')}
-          />
-        )}
-
-        {stackTraces?.length ? (
-          <AccordianKeyValues
-            data={stackTraces.map((stackTrace) => ({
-              key: '',
-              value: stackTrace,
-              type: 'code',
-            }))}
-            onlyValues={true}
-            showSummary={false}
-            showCountBadge={true}
-            isOpen={isStackTracesOpen}
-            onToggle={() => stackTracesToggle(spanID)}
-            label={t('explore.span-detail.label-stack-trace', 'Stack trace')}
-          />
-        ) : null}
-
-        {references && references.length > 0 && (references.length > 1 || references[0].refType !== 'CHILD_OF') && (
-          <AccordianReferences
-            data={references}
-            isOpen={referencesState.isOpen}
-            openedItems={referencesState.openedItems}
-            onToggle={() => referencesToggle(spanID)}
-            onItemToggle={(reference) => referenceItemToggle(spanID, reference)}
-            createFocusSpanLink={createFocusSpanLink}
-          />
-        )}
-        {span.tags.some((tag) => tag.key === pyroscopeProfileIdTagKey) && (
-          <SpanFlameGraph
-            span={span}
-            timeZone={timeZone}
-            traceFlameGraphs={traceFlameGraphs}
-            setTraceFlameGraphs={setTraceFlameGraphs}
-            traceToProfilesOptions={traceToProfilesOptions}
-            setRedrawListView={setRedrawListView}
-            traceDuration={traceDuration}
-            traceName={traceName}
-          />
-        )}
+        <small className={styles.debugInfo}>
+          {/* TODO: fix keyboard a11y */}
+          {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+          <a
+            {...focusSpanLink}
+            onClick={(e) => {
+              // click handling logic copied from react router:
+              // https://github.com/remix-run/react-router/blob/997b4d67e506d39ac6571cb369d6d2d6b3dda557/packages/react-router-dom/index.tsx#L392-L394s
+              if (
+                focusSpanLink.onClick &&
+                e.button === 0 && // Ignore everything but left clicks
+                (!e.currentTarget.target || e.currentTarget.target === '_self') && // Let browser handle "target=_blank" etc.
+                !(e.metaKey || e.altKey || e.ctrlKey || e.shiftKey) // Ignore clicks with modifier keys
+              ) {
+                e.preventDefault();
+                focusSpanLink.onClick(e);
+              }
+            }}
+          >
+            <Icon name={'link'} className={cx(alignIcon, styles.LinkIcon)}></Icon>
+          </a>
+          <span className={styles.debugLabel} data-label="SpanID:" /> {spanID}
+        </small>
       </div>
     </div>
   );
@@ -465,4 +674,18 @@ export const getAbsoluteTime = (startTime: number, timeZone: TimeZone) => {
   const match = dateStr.split(' ');
   const absoluteTime = match[1] ? match[1] : dateStr;
   return ` (${absoluteTime})`;
+};
+
+const CardsContainer = ({ listOfContentCards }: { listOfContentCards: React.ReactNode[] }) => {
+  const styles = useStyles2(getStyles);
+
+  return (
+    <div data-testid="span-detail-cards-column" className={styles.cards}>
+      {listOfContentCards.map((card, index) => (
+        <div className={styles.card} key={index}>
+          {card}
+        </div>
+      ))}
+    </div>
+  );
 };

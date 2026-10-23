@@ -1,4 +1,5 @@
-import { ExtensionInfo } from '@grafana/data';
+import { type ExtensionInfo } from '@grafana/data';
+import { useFlagAssistantFullscreenWorkspace } from '@grafana/runtime/internal';
 import { Dropdown, Menu } from '@grafana/ui';
 
 import { NavToolbarSeparator } from '../NavToolbar/NavToolbarSeparator';
@@ -16,21 +17,39 @@ type Props = {
   compact?: boolean;
 };
 
-const compactAllowedComponents = ['grafana-assistant-app'];
+const compactAllowedComponents = ['grafana-assistant-app', 'grafana-assistant-onboarding-app'];
+const interactiveLearningPluginIds = ['grafana-pathfinder-app', 'grafana-grafanadocsplugin-app'];
 
 export function ExtensionToolbarItem({ compact }: Props) {
   const { availableComponents, dockedComponentId, setDockedComponentId } = useExtensionSidebarContext();
+  const fullscreenWorkspaceEnabled = useFlagAssistantFullscreenWorkspace();
 
-  if (availableComponents.size === 0) {
+  // Don't render the toolbar if the only available plugins are interactive learning plugins.
+  // They're opened by the interactive learning menu.
+  const nonInteractiveLearningPlugins = Array.from(availableComponents.keys()).filter(
+    (pluginId) => !interactiveLearningPluginIds.includes(pluginId)
+  );
+  if (nonInteractiveLearningPlugins.length === 0) {
     return null;
   }
 
   const dockedMeta = dockedComponentId ? getComponentMetaFromComponentId(dockedComponentId) : null;
 
   const renderPluginButton = (pluginId: string, components: ComponentWithPluginId[]) => {
+    // Don't render any button for the interactive learning plugins.
+    // They're opened by the interactive learning button.
+    if (interactiveLearningPluginIds.includes(pluginId)) {
+      return null;
+    }
+    // Fullscreen workspace renders its own Chat/Workspace buttons (`AssistantToolbarButtons`
+    // in `SingleTopBar`) instead of the generic extension-sidebar button for this plugin
+    if (fullscreenWorkspaceEnabled && pluginId === 'grafana-assistant-app') {
+      return null;
+    }
+
     if (components.length === 1) {
       const component = components[0];
-      const componentId = getComponentIdFromComponentMeta(pluginId, component);
+      const componentId = getComponentIdFromComponentMeta(pluginId, component.title);
       const isActive = dockedComponentId === componentId;
 
       // we now allow more components in the extension sidebar
@@ -54,7 +73,7 @@ export function ExtensionToolbarItem({ compact }: Props) {
     const MenuItems = (
       <Menu>
         {components.map((c) => {
-          const id = getComponentIdFromComponentMeta(pluginId, c);
+          const id = getComponentIdFromComponentMeta(pluginId, c.title);
           return (
             <Menu.Item
               key={id}
@@ -82,15 +101,25 @@ export function ExtensionToolbarItem({ compact }: Props) {
     );
   };
 
+  // Don't render the toolbar (or its separators) if nothing actually renders a button
+  const buttons = Array.from(availableComponents.entries())
+    .map(([pluginId, { addedComponents }]: [string, { addedComponents: ExtensionInfo[] }]) =>
+      renderPluginButton(
+        pluginId,
+        addedComponents.map((c: ExtensionInfo) => ({ ...c, pluginId }))
+      )
+    )
+    .filter(Boolean);
+
+  if (buttons.length === 0) {
+    return null;
+  }
+
   return (
     <>
       {/* renders a single `ExtensionToolbarItemButton` for each plugin; if a plugin has multiple components, it renders them inside a `Dropdown` */}
-      {Array.from(availableComponents.entries()).map(
-        ([pluginId, { addedComponents }]: [string, { addedComponents: ExtensionInfo[] }]) =>
-          renderPluginButton(
-            pluginId,
-            addedComponents.map((c: ExtensionInfo) => ({ ...c, pluginId }))
-          )
+      {buttons.flatMap((button, index, arr) =>
+        index < arr.length - 1 ? [button, <NavToolbarSeparator key={`sep-${index}`} />] : [button]
       )}
       <NavToolbarSeparator />
     </>

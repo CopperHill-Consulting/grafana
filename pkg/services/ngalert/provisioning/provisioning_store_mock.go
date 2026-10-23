@@ -5,6 +5,7 @@ package provisioning
 import (
 	context "context"
 
+	utils "github.com/grafana/grafana/pkg/apimachinery/utils"
 	models "github.com/grafana/grafana/pkg/services/ngalert/models"
 	mock "github.com/stretchr/testify/mock"
 )
@@ -66,6 +67,124 @@ func (_c *MockProvisioningStore_DeleteProvenance_Call) Return(_a0 error) *MockPr
 }
 
 func (_c *MockProvisioningStore_DeleteProvenance_Call) RunAndReturn(run func(context.Context, models.Provisionable, int64) error) *MockProvisioningStore_DeleteProvenance_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetAllManagerProperties provides a mock function with given fields: ctx, org, resourceType
+func (_m *MockProvisioningStore) GetAllManagerProperties(ctx context.Context, org int64, resourceType string) (map[string]utils.ManagerProperties, error) {
+	ret := _m.Called(ctx, org, resourceType)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetAllManagerProperties")
+	}
+
+	var r0 map[string]utils.ManagerProperties
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64, string) (map[string]utils.ManagerProperties, error)); ok {
+		return rf(ctx, org, resourceType)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, int64, string) map[string]utils.ManagerProperties); ok {
+		r0 = rf(ctx, org, resourceType)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]utils.ManagerProperties)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, int64, string) error); ok {
+		r1 = rf(ctx, org, resourceType)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockProvisioningStore_GetAllManagerProperties_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetAllManagerProperties'
+type MockProvisioningStore_GetAllManagerProperties_Call struct {
+	*mock.Call
+}
+
+// GetAllManagerProperties is a helper method to define mock.On call
+//   - ctx context.Context
+//   - org int64
+//   - resourceType string
+func (_e *MockProvisioningStore_Expecter) GetAllManagerProperties(ctx interface{}, org interface{}, resourceType interface{}) *MockProvisioningStore_GetAllManagerProperties_Call {
+	return &MockProvisioningStore_GetAllManagerProperties_Call{Call: _e.mock.On("GetAllManagerProperties", ctx, org, resourceType)}
+}
+
+func (_c *MockProvisioningStore_GetAllManagerProperties_Call) Run(run func(ctx context.Context, org int64, resourceType string)) *MockProvisioningStore_GetAllManagerProperties_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(int64), args[2].(string))
+	})
+	return _c
+}
+
+func (_c *MockProvisioningStore_GetAllManagerProperties_Call) Return(_a0 map[string]utils.ManagerProperties, _a1 error) *MockProvisioningStore_GetAllManagerProperties_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockProvisioningStore_GetAllManagerProperties_Call) RunAndReturn(run func(context.Context, int64, string) (map[string]utils.ManagerProperties, error)) *MockProvisioningStore_GetAllManagerProperties_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetManagerProperties provides a mock function with given fields: ctx, o, org
+func (_m *MockProvisioningStore) GetManagerProperties(ctx context.Context, o models.Provisionable, org int64) (utils.ManagerProperties, error) {
+	ret := _m.Called(ctx, o, org)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetManagerProperties")
+	}
+
+	var r0 utils.ManagerProperties
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, models.Provisionable, int64) (utils.ManagerProperties, error)); ok {
+		return rf(ctx, o, org)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, models.Provisionable, int64) utils.ManagerProperties); ok {
+		r0 = rf(ctx, o, org)
+	} else {
+		r0 = ret.Get(0).(utils.ManagerProperties)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, models.Provisionable, int64) error); ok {
+		r1 = rf(ctx, o, org)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockProvisioningStore_GetManagerProperties_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetManagerProperties'
+type MockProvisioningStore_GetManagerProperties_Call struct {
+	*mock.Call
+}
+
+// GetManagerProperties is a helper method to define mock.On call
+//   - ctx context.Context
+//   - o models.Provisionable
+//   - org int64
+func (_e *MockProvisioningStore_Expecter) GetManagerProperties(ctx interface{}, o interface{}, org interface{}) *MockProvisioningStore_GetManagerProperties_Call {
+	return &MockProvisioningStore_GetManagerProperties_Call{Call: _e.mock.On("GetManagerProperties", ctx, o, org)}
+}
+
+func (_c *MockProvisioningStore_GetManagerProperties_Call) Run(run func(ctx context.Context, o models.Provisionable, org int64)) *MockProvisioningStore_GetManagerProperties_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(models.Provisionable), args[2].(int64))
+	})
+	return _c
+}
+
+func (_c *MockProvisioningStore_GetManagerProperties_Call) Return(_a0 utils.ManagerProperties, _a1 error) *MockProvisioningStore_GetManagerProperties_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockProvisioningStore_GetManagerProperties_Call) RunAndReturn(run func(context.Context, models.Provisionable, int64) (utils.ManagerProperties, error)) *MockProvisioningStore_GetManagerProperties_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -184,6 +303,116 @@ func (_c *MockProvisioningStore_GetProvenances_Call) Return(_a0 map[string]model
 }
 
 func (_c *MockProvisioningStore_GetProvenances_Call) RunAndReturn(run func(context.Context, int64, string) (map[string]models.Provenance, error)) *MockProvisioningStore_GetProvenances_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetProvenancesByUIDs provides a mock function with given fields: ctx, org, resourceType, uids
+func (_m *MockProvisioningStore) GetProvenancesByUIDs(ctx context.Context, org int64, resourceType string, uids []string) (map[string]models.Provenance, error) {
+	ret := _m.Called(ctx, org, resourceType, uids)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetProvenancesByUIDs")
+	}
+
+	var r0 map[string]models.Provenance
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context, int64, string, []string) (map[string]models.Provenance, error)); ok {
+		return rf(ctx, org, resourceType, uids)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, int64, string, []string) map[string]models.Provenance); ok {
+		r0 = rf(ctx, org, resourceType, uids)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(map[string]models.Provenance)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, int64, string, []string) error); ok {
+		r1 = rf(ctx, org, resourceType, uids)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockProvisioningStore_GetProvenancesByUIDs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetProvenancesByUIDs'
+type MockProvisioningStore_GetProvenancesByUIDs_Call struct {
+	*mock.Call
+}
+
+// GetProvenancesByUIDs is a helper method to define mock.On call
+//   - ctx context.Context
+//   - org int64
+//   - resourceType string
+//   - uids []string
+func (_e *MockProvisioningStore_Expecter) GetProvenancesByUIDs(ctx interface{}, org interface{}, resourceType interface{}, uids interface{}) *MockProvisioningStore_GetProvenancesByUIDs_Call {
+	return &MockProvisioningStore_GetProvenancesByUIDs_Call{Call: _e.mock.On("GetProvenancesByUIDs", ctx, org, resourceType, uids)}
+}
+
+func (_c *MockProvisioningStore_GetProvenancesByUIDs_Call) Run(run func(ctx context.Context, org int64, resourceType string, uids []string)) *MockProvisioningStore_GetProvenancesByUIDs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(int64), args[2].(string), args[3].([]string))
+	})
+	return _c
+}
+
+func (_c *MockProvisioningStore_GetProvenancesByUIDs_Call) Return(_a0 map[string]models.Provenance, _a1 error) *MockProvisioningStore_GetProvenancesByUIDs_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockProvisioningStore_GetProvenancesByUIDs_Call) RunAndReturn(run func(context.Context, int64, string, []string) (map[string]models.Provenance, error)) *MockProvisioningStore_GetProvenancesByUIDs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SetManagerProperties provides a mock function with given fields: ctx, o, org, m
+func (_m *MockProvisioningStore) SetManagerProperties(ctx context.Context, o models.Provisionable, org int64, m utils.ManagerProperties) error {
+	ret := _m.Called(ctx, o, org, m)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SetManagerProperties")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, models.Provisionable, int64, utils.ManagerProperties) error); ok {
+		r0 = rf(ctx, o, org, m)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockProvisioningStore_SetManagerProperties_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetManagerProperties'
+type MockProvisioningStore_SetManagerProperties_Call struct {
+	*mock.Call
+}
+
+// SetManagerProperties is a helper method to define mock.On call
+//   - ctx context.Context
+//   - o models.Provisionable
+//   - org int64
+//   - m utils.ManagerProperties
+func (_e *MockProvisioningStore_Expecter) SetManagerProperties(ctx interface{}, o interface{}, org interface{}, m interface{}) *MockProvisioningStore_SetManagerProperties_Call {
+	return &MockProvisioningStore_SetManagerProperties_Call{Call: _e.mock.On("SetManagerProperties", ctx, o, org, m)}
+}
+
+func (_c *MockProvisioningStore_SetManagerProperties_Call) Run(run func(ctx context.Context, o models.Provisionable, org int64, m utils.ManagerProperties)) *MockProvisioningStore_SetManagerProperties_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(models.Provisionable), args[2].(int64), args[3].(utils.ManagerProperties))
+	})
+	return _c
+}
+
+func (_c *MockProvisioningStore_SetManagerProperties_Call) Return(_a0 error) *MockProvisioningStore_SetManagerProperties_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockProvisioningStore_SetManagerProperties_Call) RunAndReturn(run func(context.Context, models.Provisionable, int64, utils.ManagerProperties) error) *MockProvisioningStore_SetManagerProperties_Call {
 	_c.Call.Return(run)
 	return _c
 }

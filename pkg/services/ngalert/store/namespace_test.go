@@ -8,23 +8,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/dashboards"
 	"github.com/grafana/grafana/pkg/services/folder"
 	"github.com/grafana/grafana/pkg/services/folder/foldertest"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/user"
-	"github.com/grafana/grafana/pkg/util"
-
-	"github.com/grafana/grafana/pkg/infra/db"
 	"github.com/grafana/grafana/pkg/setting"
+	"github.com/grafana/grafana/pkg/util"
 	"github.com/grafana/grafana/pkg/util/testutil"
 )
 
 func TestIntegration_GetUserVisibleNamespaces(t *testing.T) {
 	testutil.SkipIntegrationTestInShortMode(t)
 
-	sqlStore := db.InitTestDB(t)
+	sqlStore := db.InitTestDB(t) //nolint:staticcheck // legacy shared-DB test setup; migrate to NewTestStore
 	cfg := setting.NewCfg()
 	folderService := foldertest.NewFakeService()
 	b := &fakeBus{}
@@ -68,7 +67,7 @@ func TestGetNamespaceByTitle(t *testing.T) {
 	store := DBstore{
 		FolderService: folderService,
 	}
-	_, err := store.GetNamespaceByTitle(context.Background(), "Test Folder", 1, nil, folder.RootFolderUID)
+	_, err := store.GetNamespaceByTitle(context.Background(), "Test Folder", 1, nil, folder.LegacyRootFolderUID) //nolint:staticcheck
 	require.Error(t, err)
 	require.ErrorIs(t, err, dashboards.ErrFolderNotFound)
 
@@ -77,7 +76,7 @@ func TestGetNamespaceByTitle(t *testing.T) {
 
 func TestGetOrCreateNamespaceByTitle(t *testing.T) {
 	store := DBstore{}
-	_, created, err := store.GetOrCreateNamespaceByTitle(context.Background(), "", 1, nil, folder.RootFolderUID)
+	_, created, err := store.GetOrCreateNamespaceByTitle(context.Background(), "", 1, nil, folder.LegacyRootFolderUID) //nolint:staticcheck
 	require.False(t, created)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "title is empty")
