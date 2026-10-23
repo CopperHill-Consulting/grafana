@@ -68,6 +68,7 @@ import { getStandardTransformers } from 'app/features/transformers/standardTrans
 import getDefaultMonacoLanguages from '../lib/monaco-languages';
 
 import { AppWrapper } from './AppWrapper';
+import { initChc } from './chc/initChc';
 import { appEvents } from './core/app_events';
 import { AppChromeService } from './core/components/AppChrome/AppChromeService';
 import { useChromeHeaderHeight } from './core/components/AppChrome/TopBar/useChromeHeaderHeight';
@@ -246,6 +247,7 @@ export class GrafanaApp {
       initExtensions();
 
       initAlerting();
+      initChc(); // CHC: CopperHill customizations
 
       standardEditorsRegistry.setInit(getAllOptionEditors);
       standardFieldConfigEditorRegistry.setInit(getAllStandardFieldConfigs);
