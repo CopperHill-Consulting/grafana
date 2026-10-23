@@ -382,6 +382,8 @@
           #reactRoot {
             flex: 1 !important;
             overflow-y: auto !important;
+            /* Makes Grafana's fixed-position docked menu sit below the banner instead of under it */
+            transform: translateZ(0);
           }
 
           .grafana-app {
@@ -414,6 +416,7 @@
           #chc-banner > :last-child {
             align-self: center;
             font-size: calc(var(--banner-height) / 4.5);
+            color: #fff;
             line-height: 1.4em;
             width: calc(var(--banner-height) * 1200 / 240);
           }
