@@ -157,7 +157,7 @@ jobs:
             cp "$f" "upload/${ARTIFACT_NAME}/"
             cp "${f}.sha256" "upload/${ARTIFACT_NAME}/"
           done
-      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ${{ matrix.artifact-name-prefix }}-${{ inputs.name }}
           path: upload/${{ matrix.artifact-name-prefix }}-${{ inputs.name }}
