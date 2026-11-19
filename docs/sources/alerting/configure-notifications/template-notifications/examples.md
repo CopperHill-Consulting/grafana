@@ -18,7 +18,7 @@ weight: 103
 
 # Notification template examples
 
-Notification templates allows you to change the default notification messages.
+Notification templates allow you to change the default notification messages.
 
 You can modify the content and format of notification messages. For example, you can customize the content to show only specific information or adjust the format to suit a particular contact point, such as Slack or Email.
 
@@ -168,7 +168,7 @@ Execute the template by passing the dot (`.`):
 
   Summary: The web server web1 has been responding to 5% of HTTP requests with 5xx errors for the last 5 minutes.
   Status: resolved
-  Description: This alert fires when a web server responds with more 5xx errors than is expected. This could be an issue with the web server or a backend service.
+  Description: This alert fires when a web server responds with more 5xx errors than expected. This could be an issue with the web server or a backend service.
 ```
 
 ## Print firing and resolved alerts
@@ -212,7 +212,7 @@ Run the template by passing the dot (`.`):
 
   Summary: The web server web1 has been responding to 5% of HTTP requests with 5xx errors for the last 5 minutes.
   Status: firing
-  Description: This alert fires when a web server responds with more 5xx errors than is expected. This could be an issue with the web server or a backend service.
+  Description: This alert fires when a web server responds with more 5xx errors than expected. This could be an issue with the web server or a backend service.
 ```
 
 ## Print common labels and annotations
@@ -313,7 +313,7 @@ Alert labels: 4
 
 Alert annotations: 2
 - summary = The web server web1 has been responding to 5% of HTTP requests with 5xx errors for the last 5 minutes.
-- description = This alert fires when a web server responds with more 5xx errors than is expected. This could be an issue with the web server or a backend service.
+- description = This alert fires when a web server responds with more 5xx errors than expected. This could be an issue with the web server or a backend service.
 ```
 
 ## Print URLs for runbook and alert data in Grafana

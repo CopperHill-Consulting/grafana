@@ -2,7 +2,7 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import { type DataSourceInstanceSettings, type DataSourcePluginMeta, type TimeRange, store } from '@grafana/data';
-import { initDataSourceInstanceSettings, setDatasourcePluginMetas } from '@grafana/runtime/internal';
+import { setDataSourceInstanceSettings, setDatasourcePluginMetas } from '@grafana/runtime/internal';
 import { type DataQuery } from '@grafana/schema';
 
 import { CONTENT_OUTLINE_LOCAL_STORAGE_KEYS, ContentOutline, shouldBeActive } from './ContentOutline';
@@ -66,7 +66,7 @@ const setup = async (
 
   // SignalExplorer resolves a card's datasource and logo through the async datasource APIs, so
   // both of the caches behind them are seeded rather than the legacy `DataSourceSrv`.
-  initDataSourceInstanceSettings({ 'gdev-prometheus': promSettings }, 'gdev-prometheus');
+  setDataSourceInstanceSettings({ 'gdev-prometheus': promSettings }, 'gdev-prometheus');
   setDatasourcePluginMetas({ prometheus: promMeta });
 
   // Mock useContentOutlineContext with custom outlineItems
@@ -371,16 +371,14 @@ describe('<ContentOutline />', () => {
       await setup(false, true, promQueries);
       expect(screen.getByText('Datasource explorer')).toBeInTheDocument();
       expect(screen.getByTestId('signal-card-A')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Jump to query A (gdev-prometheus)' })).toBeInTheDocument();
+      expect(
+        screen.getByRole('button', { name: 'Collapse datasource explorer for query A (gdev-prometheus)' })
+      ).toBeInTheDocument();
     });
 
-    it('renders the metrics explorer once a Prometheus card is expanded', async () => {
+    it('renders the metrics explorer of a leading Prometheus card, which opens by default', async () => {
       useBooleanFlagValueMock.mockReturnValue(true);
       await setup(false, true, promQueries);
-      expect(screen.queryByPlaceholderText('Search metrics')).not.toBeInTheDocument();
-
-      await userEvent.click(screen.getByRole('button', { name: 'Expand datasource explorer for query A' }));
-
       // Only that the list mounted: its contents come from the datasource now, which this test does
       // not stand up. `MetricsList.test.tsx` covers what the list does with a catalog.
       expect(screen.getByPlaceholderText('Search metrics')).toBeInTheDocument();

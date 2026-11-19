@@ -149,9 +149,9 @@ const LogLineComponent = memo(
       const calculatedHeight = typeof height === 'number' ? height : undefined;
       const actualHeight = getLogLineDOMHeight(logLineRef.current, calculatedHeight);
       if (actualHeight) {
-        onOverflow(index, log.uid, actualHeight);
+        onOverflow(index, log.uniqueKey, actualHeight);
       }
-    }, [height, index, intersection?.isIntersecting, log.uid, onOverflow]);
+    }, [height, index, intersection?.isIntersecting, log.uniqueKey, onOverflow]);
 
     useLayoutEffect(() => {
       handleLogLineResize();
@@ -186,7 +186,7 @@ const LogLineComponent = memo(
       } else {
         setCollapsed(log.collapsed ?? undefined);
       }
-    }, [log.uid, log.collapsed, wrapLogMessage]);
+    }, [log.uniqueKey, log.collapsed, wrapLogMessage]);
 
     const handleMouseOver = useCallback(() => onLogLineHover?.(log), [log, onLogLineHover]);
 
@@ -194,7 +194,7 @@ const LogLineComponent = memo(
       const newState = !collapsed;
       log.setCollapsedState(newState);
       setCollapsed(newState);
-      onOverflow?.(index, log.uid);
+      onOverflow?.(index, log.uniqueKey);
     }, [collapsed, index, log, onOverflow]);
 
     const handleClick = useCallback(
@@ -646,7 +646,7 @@ export const getStyles = (
     }),
     currentLog: css({
       background: hoverColor,
-      fontWeight: theme.typography.fontWeightBold,
+      fontWeight: theme.flags.visualDesignRefresh ? theme.typography.fontWeightMedium : theme.typography.fontWeightBold,
       '& .log-line-menu': {
         background: hoverColor,
       },

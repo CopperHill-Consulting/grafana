@@ -14,6 +14,7 @@ import (
 	"github.com/grafana/grafana-plugin-sdk-go/data"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/grafana/grafana/pkg/apimachinery/errutil"
 	"github.com/grafana/grafana/pkg/apimachinery/identity"
 	"github.com/grafana/grafana/pkg/components/simplejson"
 	"github.com/grafana/grafana/pkg/infra/log"
@@ -24,11 +25,17 @@ import (
 	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
 	"github.com/grafana/grafana/pkg/services/ngalert/state"
 	history_model "github.com/grafana/grafana/pkg/services/ngalert/state/historian/model"
+	rulestore "github.com/grafana/grafana/pkg/services/ngalert/store/rules"
 )
 
 const (
 	annotationTagKeyColumnMaxLength   = 100
-	annotationTagValueColumnMaxLength = 100
+	annotationTagValueColumnMaxLength = 512
+)
+
+var errRuleUIDRequired = errutil.BadRequest(
+	"alerting.state-history.ruleUIDRequired",
+	errutil.WithPublicMessage("ruleUID is required when using the annotations state-history backend. Querying history across rules requires Loki."),
 )
 
 type AccessControl interface {
@@ -51,7 +58,7 @@ type AnnotationBackend struct {
 type RuleStore interface {
 	GetAlertRuleByUID(ctx context.Context, query *ngmodels.GetAlertRuleByUIDQuery) (*ngmodels.AlertRule, error)
 	GetUserVisibleNamespaces(ctx context.Context, orgID int64, user identity.Requester) (map[string]*folder.Folder, error)
-	GetAlertRuleVersionFolders(ctx context.Context, orgID int64, guid string) ([]string, error)
+	rulestore.RuleVersionFolderReader
 }
 
 type AnnotationStore interface {
@@ -122,7 +129,7 @@ func (h *AnnotationBackend) Record(ctx context.Context, rule history_model.RuleM
 func (h *AnnotationBackend) Query(ctx context.Context, query ngmodels.HistoryQuery) (*data.Frame, error) {
 	logger := h.log.FromContext(ctx)
 	if query.RuleUID == "" {
-		return nil, fmt.Errorf("ruleUID is required to query annotations")
+		return nil, errRuleUIDRequired.Errorf("ruleUID is required to query annotations")
 	}
 
 	if query.Labels != nil {

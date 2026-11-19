@@ -8,7 +8,6 @@ import (
 	"iter"
 	"math"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -16,7 +15,6 @@ import (
 
 	"github.com/fullstorydev/grpchan/inprocgrpc"
 	"github.com/go-sql-driver/mysql"
-	"github.com/google/uuid"
 	"github.com/grafana/dskit/services"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lib/pq"
@@ -26,10 +24,9 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/grafana/grafana-app-sdk/logging"
-
-	"github.com/grafana/grafana/pkg/infra/log"
 	"github.com/grafana/grafana/pkg/services/apiserver/options"
 	"github.com/grafana/grafana/pkg/setting"
 	"github.com/grafana/grafana/pkg/storage/unified/resource"
@@ -55,6 +52,8 @@ const defaultGarbageCollectionBatchWait = 1 * time.Second
 type GarbageCollectionConfig struct {
 	Enabled          bool
 	DryRun           bool
+	BlobEnabled      bool
+	BlobDryRun       bool
 	Interval         time.Duration // how often the process runs
 	BatchSize        int           // max number of candidates to delete (unique NGR)
 	BatchWait        time.Duration // wait between batches to avoid overwhelming the datastore
@@ -68,20 +67,14 @@ func NewGarbageCollectionConfig(cfg *setting.Cfg) GarbageCollectionConfig {
 	return GarbageCollectionConfig{
 		Enabled:          cfg.EnableGarbageCollection,
 		DryRun:           cfg.GarbageCollectionDryRun,
+		BlobEnabled:      cfg.BlobGarbageCollectionEnabled,
+		BlobDryRun:       cfg.BlobGarbageCollectionDryRun,
 		Interval:         cfg.GarbageCollectionInterval,
 		BatchSize:        cfg.GarbageCollectionBatchSize,
 		BatchWait:        cfg.GarbageCollectionBatchWait,
 		MaxAge:           cfg.GarbageCollectionMaxAge,
 		DashboardsMaxAge: cfg.DashboardsGarbageCollectionMaxAge,
 	}
-}
-
-func ProvideStorageBackend(
-	cfg *setting.Cfg,
-) (resource.StorageBackend, error) {
-	// TODO: make this the central place to provide SQL backend
-	// Currently it is skipped as we need to handle the cases of Diagnostics and Lifecycle
-	return nil, nil
 }
 
 type Backend interface {
@@ -132,17 +125,12 @@ func WithNatsNotifierShadow(s resource.EventSubscriber) StorageBackendOption {
 // WithNatsNotifier feeds the watch pipeline directly from the NATS bus instead
 // of polling. Delivery is at-most-once; the backend falls back to polling when
 // the subscriber is disabled. KV backend only.
-func WithNatsNotifier(s resource.EventSubscriber) StorageBackendOption {
+func WithNatsNotifier(s resource.EventSubscriber, invalidator resource.Invalidator) StorageBackendOption {
 	return func(o *resource.KVBackendOptions) {
 		o.EventSubscriber = s
 		o.EnableNatsNotifier = true
+		o.WatchInvalidator = invalidator
 	}
-}
-
-// WithExperimentalKV routes flagged experimental use-cases to an alternative
-// KV. Nil preserves existing behavior. KV backend only.
-func WithExperimentalKV(e *resource.ExperimentalKVOptions) StorageBackendOption {
-	return func(o *resource.KVBackendOptions) { o.ExperimentalKV = e }
 }
 
 // NewStorageBackend creates the unified storage backend based on options.StorageType.
@@ -166,6 +154,8 @@ func NewStorageBackend(
 		return NewFileBackend(cfg, kvStore)
 	case options.StorageTypeUnifiedGrpc:
 		return nil, nil
+	case options.StorageTypeUnifiedKVGrpc:
+		return newKVGrpcBackend(cfg, reg, disableStorageServices, kvStore, gcGate, opts...)
 	default: // fall back to SQL backend
 	}
 
@@ -173,6 +163,10 @@ func NewStorageBackend(
 		cfg.SectionWithEnvOverrides("resource_api"))
 
 	if !cfg.EnableSQLKVBackend {
+		blobURL, err := resolvedBlobURL(cfg.SectionWithEnvOverrides("grafana-apiserver").Key("blob_url").MustString(""), cfg.DataPath)
+		if err != nil {
+			return nil, err
+		}
 		return NewBackend(BackendOptions{
 			DBProvider:              eDB,
 			Reg:                     reg,
@@ -181,6 +175,7 @@ func NewStorageBackend(
 			LastImportTimeMaxAge:    cfg.MaxFileIndexAge,
 			GCGate:                  gcGate,
 			GarbageCollection:       NewGarbageCollectionConfig(cfg),
+			BlobURL:                 blobURL,
 			SimulatedNetworkLatency: cfg.SimulatedNetworkLatency,
 			MigrationParquetBuffer:  cfg.MigrationParquetBuffer,
 			MigrationChunkedWrites:  cfg.MigrationChunkedWrites,
@@ -213,7 +208,7 @@ func NewStorageBackend(
 	kvBackendOpts.KvStore = kvStore
 	kvBackendOpts.Reg = reg
 	kvBackendOpts.UseChannelNotifier = !isHA
-	kvBackendOpts.Log = log.New("storage-backend")
+	kvBackendOpts.Log = logging.DefaultLogger.With("logger", "storage-backend")
 	kvBackendOpts.DBKeepAlive = eDB
 	kvBackendOpts.GCGate = gcGate
 	// The KV backend has one switch for all background write jobs, so the older
@@ -229,6 +224,7 @@ func NewStorageBackend(
 			Dialect:                 dialect,
 			DB:                      dbConn,
 			BatchTransactionTimeout: cfg.ResourceVersionBatchTransactionTimeout,
+			Reg:                     reg,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resource version manager: %w", err)
@@ -237,14 +233,29 @@ func NewStorageBackend(
 		kvBackendOpts.RvManager = rvManager
 	}
 
-	if cfg.EnableKVLeases {
-		kvBackendOpts.EnableKVLeases = true
-		kvBackendOpts.Holder = ResolveLeaseHolder(cfg)
-		kvBackendOpts.LeaseTTL = cfg.KVLeaseTTL
-		kvBackendOpts.LeaseAutoRenew = cfg.KVLeaseAutoRenew
+	return resource.NewKVStorageBackend(kvBackendOpts)
+}
+
+func newKVGrpcBackend(cfg *setting.Cfg, reg prometheus.Registerer, disableStorageServices bool, kvStore kv.KV, gcGate *resource.GCGate, opts ...StorageBackendOption) (resource.StorageBackend, error) {
+	if kvStore == nil {
+		return nil, fmt.Errorf("storage_type=%s needs a kv client dialed by the wiring, and this build provides none (enterprise only)", options.StorageTypeUnifiedKVGrpc)
+	}
+	return resource.NewKVStorageBackend(newKVGrpcBackendOptions(cfg, reg, disableStorageServices, kvStore, gcGate, opts...))
+}
+
+func newKVGrpcBackendOptions(cfg *setting.Cfg, reg prometheus.Registerer, disableStorageServices bool, kvStore kv.KV, gcGate *resource.GCGate, opts ...StorageBackendOption) resource.KVBackendOptions {
+	kvBackendOpts := resource.NewKVBackendOptions(cfg)
+	kvBackendOpts.KvStore = kvStore
+	kvBackendOpts.Reg = reg
+	kvBackendOpts.Log = logging.DefaultLogger.With("logger", "storage-backend")
+	kvBackendOpts.GCGate = gcGate
+	kvBackendOpts.DisableStorageServices = disableStorageServices || cfg.DisablePruner
+
+	for _, opt := range opts {
+		opt(&kvBackendOpts)
 	}
 
-	return resource.NewKVStorageBackend(kvBackendOpts)
+	return kvBackendOpts
 }
 
 func NewFileBackend(cfg *setting.Cfg, kvStore kv.KV) (resource.StorageBackend, error) {
@@ -253,27 +264,11 @@ func NewFileBackend(cfg *setting.Cfg, kvStore kv.KV) (resource.StorageBackend, e
 	}
 	return resource.NewKVStorageBackend(resource.KVBackendOptions{
 		KvStore:                 kvStore,
-		Log:                     log.New("storage-backend"),
+		Log:                     logging.DefaultLogger.With("logger", "storage-backend"),
 		DashboardVersionsToKeep: cfg.DashboardVersionsToKeep,
+		ResourceVersionMaxWait:  cfg.ResourceVersionMaxWait,
+		FastLatestKeyLookup:     cfg.FastLatestKeyLookupEnabled,
 	})
-}
-
-// ResolveLeaseHolder builds a stable-per-process identifier used for KV
-// lease ownership. Exported so other unified-storage backend wirings
-// (e.g. the enterprise unified-kv-grpc backend) can produce the same
-// holder format without duplicating the logic.
-func ResolveLeaseHolder(cfg *setting.Cfg) string {
-	id := "unknown"
-	if cfg.InstanceID != "" {
-		id = cfg.InstanceID
-	}
-
-	hostname, err := os.Hostname()
-	if err == nil {
-		id = hostname
-	}
-
-	return fmt.Sprintf("%s-%s", id, uuid.NewString())
 }
 
 type BackendOptions struct {
@@ -323,6 +318,9 @@ type BackendOptions struct {
 	// an exported method of the SQL backend.
 	// TODO: remove after confirming sql/backend receives no production traffic.
 	LogCalls bool
+
+	// BlobURL selects the same external blob backend as the resource server.
+	BlobURL string
 }
 
 func NewBackend(opts BackendOptions) (Backend, error) {
@@ -364,6 +362,8 @@ func NewBackend(opts BackendOptions) (Backend, error) {
 		lastImportTimeMaxAge:    opts.LastImportTimeMaxAge,
 		batchTxnTimeout:         opts.BatchTransactionTimeout,
 		garbageCollection:       garbageCollection,
+		blobGCMetrics:           resource.NewBlobGCMetricsIfEnabled(opts.Reg, "sql", garbageCollection.Enabled && garbageCollection.BlobEnabled),
+		blobURL:                 opts.BlobURL,
 		gcGate:                  opts.GCGate,
 		logCalls:                opts.LogCalls,
 	}
@@ -428,6 +428,9 @@ type backend struct {
 
 	garbageCollection GarbageCollectionConfig
 	gcGate            *resource.GCGate
+	blobGC            *resource.BlobGarbageCollector
+	blobGCMetrics     *resource.BlobGCMetrics
+	blobURL           string
 
 	// When true, bulk migrations buffer data through a temporary Parquet file
 	migrationParquetBuffer bool
@@ -496,6 +499,7 @@ func (b *backend) initLocked(ctx context.Context) error {
 		Dialect:                 b.dialect,
 		DB:                      b.db,
 		BatchTransactionTimeout: b.batchTxnTimeout,
+		Reg:                     b.reg,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create resource version manager: %w", err)
@@ -632,6 +636,9 @@ func (b *backend) initGarbageCollection(ctx context.Context) error {
 func (b *backend) runGarbageCollection(ctx context.Context, cutoffTimeStamp int64) map[string]int64 {
 	ctx, span := tracer.Start(ctx, "sql.backend.runGarbageCollection")
 	defer span.End()
+	if b.garbageCollection.BlobEnabled {
+		defer b.collectBlobs(ctx)
+	}
 	start := time.Now()
 
 	deletedByKey := map[string]int64{}
@@ -959,20 +966,17 @@ func IsRowAlreadyExistsError(err error) bool {
 		return true
 	}
 
-	var pg *pgconn.PgError
-	if errors.As(err, &pg) {
+	if pg, ok := errors.AsType[*pgconn.PgError](err); ok {
 		// https://www.postgresql.org/docs/current/errcodes-appendix.html
 		return pg.Code == "23505" // unique_violation
 	}
 
-	var pqerr *pq.Error
-	if errors.As(err, &pqerr) {
+	if pqerr, ok := errors.AsType[*pq.Error](err); ok {
 		// https://www.postgresql.org/docs/current/errcodes-appendix.html
 		return pqerr.Code == "23505" // unique_violation
 	}
 
-	var mysqlerr *mysql.MySQLError
-	if errors.As(err, &mysqlerr) {
+	if mysqlerr, ok := errors.AsType[*mysql.MySQLError](err); ok {
 		// https://dev.mysql.com/doc/mysql-errors/8.0/en/server-error-reference.html
 		return mysqlerr.Number == 1062 // ER_DUP_ENTRY
 	}
@@ -1112,6 +1116,12 @@ func (b *backend) checkConflict(res db.Result, key *resourcepb.ResourceKey, rv i
 	return resource.NewConflictStatusError(key.Group, key.Resource, key.Name, "requested RV does not match current RV")
 }
 
+// BatchReadResource is unsupported: the SQL backend is retiring, so batched
+// search-list reads live only on the KV backend.
+func (*backend) BatchReadResource(context.Context, []resource.BatchReadRequest, bool) (iter.Seq[*resource.BackendReadResponse], error) {
+	return nil, resource.ErrBatchReadUnsupported
+}
+
 func (b *backend) ReadResource(ctx context.Context, req *resourcepb.ReadRequest) *resource.BackendReadResponse {
 	b.logCall("ReadResource")
 	_, span := tracer.Start(ctx, "sql.backend.ReadResource")
@@ -1202,7 +1212,12 @@ func (b *backend) listLatest(ctx context.Context, req *resourcepb.ListRequest, c
 		return 0, fmt.Errorf("only works for the 'latest' resource version")
 	}
 
-	iter := &listIter{sortAsc: false}
+	iter := &listIter{
+		sortAsc:     false,
+		keysOnly:    req.KeysOnly,
+		listScope:   req.Options.Key.Namespace,
+		clusterWide: req.KeysOnly && req.Options.Key.Namespace == "",
+	}
 	err := b.db.WithTx(ctx, ReadCommittedRO, func(ctx context.Context, tx db.Tx) error {
 		var err error
 		iter.listRV, err = b.fetchLatestRV(ctx, tx, b.dialect, req.Options.Key.Group, req.Options.Key.Resource)
@@ -1314,17 +1329,39 @@ func (b *backend) ListModifiedSince(ctx context.Context, key resource.Namespaced
 	return latestRv, seq
 }
 
+func continueTokenMatchesListRequest(token *ContinueToken, req *resourcepb.ListRequest) bool {
+	if !token.KeysOnly {
+		return !req.KeysOnly || req.Options.Key.Namespace == ""
+	}
+	if !req.KeysOnly {
+		return false
+	}
+	if req.Options.Key.Namespace == "" {
+		return token.ClusterWide
+	}
+	return !token.ClusterWide && token.Namespace == req.Options.Key.Namespace
+}
+
 // listAtRevision fetches the resources from the resource_history table at a specific revision.
 func (b *backend) listAtRevision(ctx context.Context, req *resourcepb.ListRequest, cb func(resource.ListIterator) error) (int64, error) {
 	ctx, span := tracer.Start(ctx, "sql.backend.listAtRevision")
 	defer span.End()
 
 	// Get the RV
-	iter := &listIter{listRV: req.ResourceVersion, sortAsc: false}
+	iter := &listIter{
+		listRV:      req.ResourceVersion,
+		sortAsc:     false,
+		keysOnly:    req.KeysOnly,
+		listScope:   req.Options.Key.Namespace,
+		clusterWide: req.KeysOnly && req.Options.Key.Namespace == "",
+	}
 	if req.NextPageToken != "" {
 		continueToken, err := GetContinueToken(req.NextPageToken)
 		if err != nil {
 			return 0, fmt.Errorf("get continue token (%q): %w", req.NextPageToken, err)
+		}
+		if !continueTokenMatchesListRequest(continueToken, req) {
+			return 0, apierrors.NewBadRequest("continue token scope does not match request")
 		}
 		iter.listRV = toMicrosecondRV(continueToken.ResourceVersion)
 		iter.offset = continueToken.StartOffset
@@ -1492,6 +1529,12 @@ func (b *backend) getHistory(ctx context.Context, req *resourcepb.ListRequest, c
 	return iter.listRV, err
 }
 
+// WatchWrittenKeys is not supported: only the KV backend reads written keys
+// from NATS.
+func (b *backend) WatchWrittenKeys(context.Context, []schema.GroupResource, func(string)) (<-chan *resource.WrittenEvent, error) {
+	return nil, resource.ErrWrittenKeysUnsupported
+}
+
 func (b *backend) WatchWriteEvents(ctx context.Context) (<-chan *resource.WrittenEvent, error) {
 	b.logCall("WatchWriteEvents")
 	if b.disableStorageServices {
@@ -1589,6 +1632,31 @@ func (b *backend) lastImportTimeDB(ctx context.Context) db.ContextExecer {
 	}
 
 	return b.db
+}
+
+func (b *backend) GetResourceLastImportTime(ctx context.Context, nsr resource.NamespacedResource) (time.Time, error) {
+	for importTime, err := range b.GetResourceLastImportTimes(ctx) {
+		if err != nil {
+			return time.Time{}, err
+		}
+		if importTime.NamespacedResource == nsr {
+			return importTime.LastImportTime, nil
+		}
+	}
+	return time.Time{}, nil
+}
+
+func (b *backend) ListResourceLastImportTimes(ctx context.Context) (map[resource.NamespacedResource]time.Time, error) {
+	result := make(map[resource.NamespacedResource]time.Time)
+	for entry, err := range b.GetResourceLastImportTimes(ctx) {
+		if err != nil {
+			return result, err
+		}
+		if entry.LastImportTime.After(result[entry.NamespacedResource]) {
+			result[entry.NamespacedResource] = entry.LastImportTime
+		}
+	}
+	return result, nil
 }
 
 func (b *backend) GetResourceLastImportTimes(ctx context.Context) iter.Seq2[resource.ResourceLastImportTime, error] {

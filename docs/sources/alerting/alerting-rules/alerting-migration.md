@@ -27,6 +27,12 @@ Importing rules is a safe operation: the original data source–managed rules re
 
 Choose the method that best fits your workflow. As a best practice, test and validate your import process before migrating all alert rules.
 
+## Import your notification configuration first
+
+Rules only tell you about a problem if the notification reaches someone. Grafana-managed rules route through the Grafana Alertmanager, not through the Alertmanager your data source-managed rules used, so imported rules notify through whatever contact points and notification policies already exist in Grafana.
+
+Consider [importing your Alertmanager configuration](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/import-alertmanager-configuration/) before you import rules. Grafana imports the configuration as it is and runs it the way your Prometheus or Mimir Alertmanager does. You can then route the rules you import through the imported policy tree.
+
 ## How it works
 
 When you use any of the import methods, data source–managed rules are copied to another folder as Grafana-managed rules.

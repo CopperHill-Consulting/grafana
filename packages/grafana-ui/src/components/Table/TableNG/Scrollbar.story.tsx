@@ -16,6 +16,7 @@ interface Args {
   footer: boolean;
   wrapText: boolean;
   enablePagination: boolean;
+  tableRefreshEnabled: boolean;
 }
 
 const meta: Meta<Args> = {
@@ -27,10 +28,19 @@ const meta: Meta<Args> = {
     footer: true,
     wrapText: false,
     enablePagination: false,
+    tableRefreshEnabled: false,
   },
 };
 
-export const ScrollbarBoundary: StoryFn<Args> = ({ width, height, rowCount, footer, wrapText, enablePagination }) => {
+export const ScrollbarBoundary: StoryFn<Args> = ({
+  width,
+  height,
+  rowCount,
+  footer,
+  wrapText,
+  enablePagination,
+  tableRefreshEnabled,
+}) => {
   const [moreRows, setMoreRows] = useState(false);
   const [compact, setCompact] = useState(false);
   const panelHeight = compact ? height / 2 : height;
@@ -67,13 +77,20 @@ export const ScrollbarBoundary: StoryFn<Args> = ({ width, height, rowCount, foot
       <Button onClick={() => setMoreRows(!moreRows)}>{moreRows ? 'Show fewer rows' : 'Show more rows'}</Button>
       <Button onClick={() => setCompact(!compact)}>{compact ? 'Restore panel height' : 'Shrink panel height'}</Button>
       <div style={{ width, height: panelHeight }}>
-        <TableNG data={data} width={width} height={panelHeight} structureRev={1} enablePagination={enablePagination} />
+        <TableNG
+          data={data}
+          width={width}
+          height={panelHeight}
+          structureRev={1}
+          enablePagination={enablePagination}
+          tableRefreshEnabled={tableRefreshEnabled}
+        />
       </div>
     </>
   );
 };
 
-export const NestedScrollbar: StoryFn<Args> = ({ width, height }) => {
+export const NestedScrollbar: StoryFn<Args> = ({ width, height, tableRefreshEnabled }) => {
   const theme = useTheme2();
   const data = useMemo(() => {
     const nested = prepDataForStorybook(
@@ -101,7 +118,7 @@ export const NestedScrollbar: StoryFn<Args> = ({ width, height }) => {
   }, [theme]);
   return (
     <div style={{ width, height }}>
-      <TableNG data={data} width={width} height={height} />
+      <TableNG data={data} width={width} height={height} tableRefreshEnabled={tableRefreshEnabled} />
     </div>
   );
 };

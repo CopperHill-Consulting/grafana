@@ -53,7 +53,7 @@ test.describe('Table scrollbar geometry', () => {
       .toEqual({ overflowing: true, horizontalOverflow: false, policy: 'auto' });
   });
 
-  for (const refreshed of [false]) {
+  for (const refreshed of [false, true]) {
     test(`nested grids do not reserve an unused gutter (refreshed ${refreshed})`, async ({ page }) => {
       await page.goto(
         `/iframe.html?id=plugins-table-ng--nested-scrollbar&viewMode=story&args=tableRefreshEnabled:${refreshed}`
@@ -86,7 +86,7 @@ test.describe('Table scrollbar geometry', () => {
   for (const { zoom, refreshed, width = 800.5, wrapText = false, footer = true, rowCount = 8 } of [
     { zoom: 1, refreshed: false },
     { zoom: 0.75, refreshed: false },
-    { zoom: 0.67, refreshed: false },
+    { zoom: 0.67, refreshed: true },
     { zoom: 1, refreshed: false, width: 320.5, wrapText: true, rowCount: 2 },
     { zoom: 1, refreshed: false, footer: false },
   ]) {

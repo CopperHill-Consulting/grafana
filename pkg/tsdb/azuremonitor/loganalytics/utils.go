@@ -52,25 +52,25 @@ func AddConfigLinks(frame data.Frame, dl string, title *string) data.Frame {
 	return frame
 }
 
-// Check whether a query should be handled as basic logs query
+// Check whether a query should use the Log Analytics search endpoint
 // 1. resource selected is a workspace
 // 2. query is not an alerts query
 // 3. number of selected resources is exactly one
 // 4. the ds toggle is set to true
-func meetsBasicLogsCriteria(resources []string, fromAlert bool, basicLogsEnabled bool) (bool, error) {
+func meetsSearchLogsCriteria(resources []string, fromAlert bool, logsEnabled bool, logTier dataquery.AzureLogsQueryLogTier) (bool, error) {
 	if fromAlert {
-		return false, backend.DownstreamError(fmt.Errorf("basic Logs queries cannot be used for alerts"))
+		return false, backend.DownstreamError(fmt.Errorf("%s Logs queries cannot be used for alerts", logTier))
 	}
 	if len(resources) != 1 {
-		return false, backend.DownstreamError(fmt.Errorf("basic logs queries cannot be run against multiple resources"))
+		return false, backend.DownstreamError(fmt.Errorf("%s Logs queries cannot be run against multiple resources", logTier))
 	}
 
 	if !strings.Contains(strings.ToLower(resources[0]), "microsoft.operationalinsights/workspaces") {
-		return false, backend.DownstreamError(fmt.Errorf("basic logs queries may only be run against Log Analytics workspaces"))
+		return false, backend.DownstreamError(fmt.Errorf("%s Logs queries may only be run against Log Analytics workspaces", logTier))
 	}
 
-	if !basicLogsEnabled {
-		return false, backend.DownstreamError(fmt.Errorf("basic Logs queries are disabled for this data source"))
+	if !logsEnabled {
+		return false, backend.DownstreamError(fmt.Errorf("%s Logs queries are disabled for this data source", logTier))
 	}
 
 	return true, nil
@@ -90,6 +90,38 @@ func ParseResultFormat(queryResultFormat *dataquery.ResultFormat, queryType data
 		return dataquery.ResultFormatTable
 	}
 	return ""
+}
+
+// validateAzureResourcePath ensures a user-supplied ARM resource ID is safe to
+// place on an Azure management URL path. Values that omit the leading slash or
+// contain authority/userinfo markers can otherwise change the request host.
+func validateAzureResourcePath(resource string) error {
+	if !strings.HasPrefix(resource, "/subscriptions/") {
+		return backend.DownstreamError(fmt.Errorf("invalid Azure resource path"))
+	}
+	if strings.ContainsAny(resource, "@?\\# \t\n\r") || strings.Contains(resource, "://") {
+		return backend.DownstreamError(fmt.Errorf("invalid Azure resource path"))
+	}
+	for _, segment := range strings.Split(strings.TrimPrefix(resource, "/"), "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return backend.DownstreamError(fmt.Errorf("invalid Azure resource path"))
+		}
+	}
+	return nil
+}
+
+// traceOperationIDPattern matches ai.operation.id: a string of at most 128 characters
+// that cannot change the correlation URL path or break out of the KQL string it is
+// interpolated into. The telemetry schema does not restrict the character set beyond that.
+var traceOperationIDPattern = regexp.MustCompile(`^[^/?\\#'"@\s]{1,128}$`)
+
+func validateTraceOperationID(operationID string) error {
+	// "." and ".." are not rejected by the pattern, but JoinPath cleans them and
+	// rewrites the correlation path.
+	if operationID == "." || operationID == ".." || !traceOperationIDPattern.MatchString(operationID) {
+		return backend.DownstreamError(fmt.Errorf("invalid operation ID"))
+	}
+	return nil
 }
 
 func getApiURL(resourceOrWorkspace string, isAppInsightsQuery bool, basicLogsQuery bool) string {

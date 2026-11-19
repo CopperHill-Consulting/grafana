@@ -63,7 +63,7 @@ To add a silence, complete the following steps.
 
 Use [labels](/docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/alert-rules/annotation-label/) and label matchers to link alert rules to [notification policies](/docs/grafana/<GRAFANA_VERSION>/alerting/fundamentals/notifications/notification-policies/) and [silences](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/create-silence/). This allows for a flexible way to manage your alert instances, specify which policy should handle them, and which alerts to silence.
 
-A label matchers consists of 3 distinct parts, the **label**, the **value** and the **operator**.
+A label matcher consists of 3 distinct parts, the **label**, the **value** and the **operator**.
 
 - The **Label** field is the name of the label to match. It must exactly match the label name.
 

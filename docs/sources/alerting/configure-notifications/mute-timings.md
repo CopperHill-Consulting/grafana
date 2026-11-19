@@ -60,10 +60,12 @@ The following table highlights the key differences between mute timings and sile
 
 ## Assign a time interval to a notification policy
 
+After you create a time interval, assign it as a mute timing or an active time interval on a [child notification policy](/docs/grafana/<GRAFANA_VERSION>/alerting/configure-notifications/create-notification-policy/#add-a-child-policy). You can't assign these settings to the root policy. They aren't inherited from a parent policy.
+
 1. In the left-side menu, click **Alerts & IRM**, and then **Alerting**.
 1. Click **Notification configuration**, then select the **Notification policies** tab.
-1. Find the notification policy you would like to add the time intervals to and click **...** -> **Edit**.
-1. From either the **Mute timings** or **Active time intervals** dropdowns, choose the time intervals you would like to add to the policy.
+1. Find a child notification policy and click **...** -> **Edit**.
+1. From **Mute timings** or **Active timings**, choose the time intervals to add to the policy.
 1. Save your changes.
 
 ## Time intervals

@@ -20,6 +20,7 @@ import (
 	"github.com/grafana/grafana/pkg/services/featuremgmt"
 	"github.com/grafana/grafana/pkg/services/folder"
 	"github.com/grafana/grafana/pkg/services/folder/foldertest"
+	"github.com/grafana/grafana/pkg/services/ngalert/store/rules"
 	"github.com/grafana/grafana/pkg/services/org"
 	"github.com/grafana/grafana/pkg/services/org/orgimpl"
 	"github.com/grafana/grafana/pkg/services/quota/quotatest"
@@ -77,6 +78,7 @@ func TestIntegrationStatsDataAccess(t *testing.T) {
 		features:       featuremgmt.WithFeatures(),
 		namespacer:     request.GetNamespaceMapper(cfg),
 		unifiedStorage: unifiedStorage,
+		ruleStore:      &rules.RuleStore{SQLStore: db},
 	}
 
 	t.Run("Get system stats should not results in error", func(t *testing.T) {
@@ -153,7 +155,7 @@ func populateDB(t *testing.T, db db.DB, cfg *setting.Cfg) org.Service {
 
 	orgService, _ := orgimpl.ProvideService(legacysql.NewDatabaseProvider(db), cfg, quotatest.New(false, nil))
 	userSvc, _ := userimpl.ProvideService(
-		db, orgService, cfg, nil, nil, tracing.InitializeTracerForTest(),
+		legacysql.NewDatabaseProvider(db), orgService, cfg, nil, nil, tracing.InitializeTracerForTest(),
 		&quotatest.FakeQuotaService{}, supportbundlestest.NewFakeBundleService(), nil,
 	)
 
